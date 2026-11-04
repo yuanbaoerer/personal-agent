@@ -1,6 +1,14 @@
 # 01 · 可行性与技术栈核实
 
-> 核查日期：2026-11-04。结论只对应当前公开文档与实测；beta/experimental 组件的变化风险单独标注。
+> 原始核查日期：2026-11-04。本轮保留技术、硬件与成本资料作为调研快照，没有重新核验全部第三方信息。当前产品范围见 [00](00-product-plan.md)，架构见 [02](02-architecture.md)，实施门槛见 [04](04-build-plan.md)。
+
+## 0. 本轮规划修订
+
+产品调整为聊天软件主入口：默认飞书应用机器人私聊，微信和 QQ 后续适配；一个主 Agent 协调最多两个并发 Worker，参考 dsh-superagent 的任务授权、派工与持久消息投递。
+
+MVP 先用一个模型、SQLite、真实天气工具与 MCP mock 灯，交付可修改/取消的任务、审批、显式记忆和一次性提醒。本地真机、完整 Web UI、Python harness、向量检索、多模型与浏览器能力均后置。这些能力的历史可行性描述不代表已经选入首版。
+
+技术路线在前三个工作日形成验证结论；下面已同步当前决策，但报价、岗位和硬件描述仍是原始调研背景。
 
 ## 1. 结论
 
@@ -23,7 +31,7 @@
 |---|---|---|
 | “本地推荐 pi durable + pi sdk” | **基本准确，但表述省略了关键限定。** `pi` 是 Earendil Works 的 minimal agent harness；`@earendil-works/pi-durable` 是 2026-10-01 随 Pi 1.0 发布的 experimental durable harness；`pi sdk` 指 `@earendil-works/pi-coding-agent` 的进程内 SDK。Pi Durable 是独立包，不等于 coding agent SDK。 | 选型成立；但要接受 experimental API 变动，锁定版本。 |
 | “cloud flare 托管你的 personal agent” | **成立。** Cloudflare Agents SDK 提供 `PiHarness`，把 Pi Durable 跑在 Durable Object 里；transcript/inbox/tasks 存在 DO 的 SQLite，object 被驱逐后由 alarm 唤醒继续。 | 托管可行；但 `PiHarness` 是 beta，且 DO 有 CPU/内存/时长限制。 |
-| “搭配 kimi 的 computer use mcp” | **要分两层。** 官方确实有 **Kimi Computer Use**（Kimi Work 插件 + 本地 macOS 桌面操作 MCP server，`KimiCU.app`，18 工具），但它不是云端 computer-use API，只支持 Apple Silicon macOS 14+、锁屏即失效。另有社区 `songkeys/kimi-computer-use`，把本机 OpenAI Computer Use 桥接给 Kimi Code CLI，依赖 ChatGPT/Codex、签名启动器、辅助功能/录屏权限。 | 只能作为“本地可选能力”，不能作为云端核心链路，更不能作为第一个 demo；本机 x64 跑不了官方 KimiCU。 |
+| “搭配 kimi 的 computer use mcp” | **要分两层。** 官方确实有 **Kimi Computer Use**（Kimi Work 插件 + 本地 macOS 桌面操作 MCP server，`KimiCU.app`，18 工具），但它不是云端 computer-use API，只支持 Apple Silicon macOS 14+、锁屏即失效。另有社区 `songkeys/kimi-computer-use`，把本机 OpenAI Computer Use 桥接给 Kimi Code CLI，依赖 ChatGPT/Codex、签名启动器、辅助功能/录屏权限。 | 只能作为“本地可选能力”，不能作为云端核心链路，更不能作为第一个 demo；原始 x64 macOS 验证环境跑不了官方 KimiCU。 |
 | “再接一些米家 mcp” | **成立但非官方。** 多个社区 MCP 通过米家二维码登录拿 `passToken`，再换 `serviceToken` 调小米云 API；支持设备发现、属性读写、场景执行。token 长则数周/数月，失效需重扫。 | 适合做“家庭设备”演示；要隔离 token、只做低风险设备、写操作必须审批。 |
 | “这样的项目会在秋招中让你脱颖而出” | **方向对，但作品价值取决于工程深度，不是技术名词堆叠。** 招聘方更关心：为什么需要 durable、如何防止副作用、如何评测、失败如何恢复。 | 项目叙事要从“我用了 Pi/Cloudflare”转成“我解决了长任务 agent 的可靠性/安全问题”。 |
 
@@ -90,11 +98,11 @@ Cloudflare 的 `MCPClientManager` 支持注册 server、OAuth、重连、工具�
 这意味着：
 
 - Cloudflare Worker 不能直接 `http://192.168.x.x:3000/mcp` 或 `http://localhost:...`；
-- **首选（如果可用）**：**Cloudflare Workers VPC**（beta，Free/Paid 可用）。`cloudflared` 只做出站，Worker 通过 `vpc_services` / `vpc_networks` binding 直连私有主机，**不生成公网 hostname**；官方把 “Build MCP servers that aggregate data from multiple private services” 列为用例。注意：`MCPClientManager` 仍会拒绝 private/internal URL，所以通常需要一个 Worker 侧 MCP aggregator 或自定义 transport 来走 VPC binding。
-- **备选**：**Cloudflare Tunnel + Access service token**（`CF-Access-Client-Id` / `CF-Access-Client-Secret`）。Access 不是 MCP 的 OAuth Authorization Server，只适合机器认证；不要把它当 MCP OAuth 发现端点。
+- **后续可选**：**Cloudflare Workers VPC**（beta，Free/Paid 可用）。`cloudflared` 只做出站，Worker 通过 `vpc_services` / `vpc_networks` binding 直连私有主机，**不生成公网 hostname**；官方把 “Build MCP servers that aggregate data from multiple private services” 列为用例。注意：`MCPClientManager` 仍会拒绝 private/internal URL，所以通常需要一个 Worker 侧 MCP aggregator 或自定义 transport 来走 VPC binding。
+- **本地增强项首选**：**Cloudflare Tunnel + Access service token**（`CF-Access-Client-Id` / `CF-Access-Client-Secret`）。Access 不是 MCP 的 OAuth Authorization Server，只适合机器认证；不要把它当 MCP OAuth 发现端点。
 - **V1 可选**：自建 **outbound WebSocket connector**，本地主动连云端，云端发命令；无公网入口、双向事件、低延迟，但要自己做协议/重连/背压/审计。
 
-推荐 MVP 用 **Workers VPC**（若 beta 行为可接受），否则用 Tunnel + Access；V1 再评估 WebSocket connector。
+当前核心 MVP 使用云端/测试工具，不依赖本地网络穿透；接真实灯时先实现 Tunnel + Access 一种路径。Workers VPC、自定义 transport 与 outbound WSS 后续按需要评估，不同时维护三条链路。
 
 MCP 规范的安全最佳实践明确提示：confused deputy、token passthrough（规范禁止）、per-client consent、redirect URI 精确匹配、state 防 CSRF 等。个人 Agent 还额外面对 **prompt injection**：网页/邮件/工具结果里的恶意指令可能诱导模型调用副作用工具。OWASP LLM Top 10 2025 把 Prompt Injection、Sensitive Information Disclosure、Excessive Agency、Unbounded Consumption 列为核心风险。
 
@@ -112,7 +120,7 @@ MCP 规范的安全最佳实践明确提示：confused deputy、token passthroug
 | 数据 | 二进制未见 login/token；存在遥测子系统与 `gator.volces.com` 端点（载荷未验证） | 明确把 AX 文本 + 截图回传 Kimi 的模型 provider |
 | 云端 | **不能** Linux / Cloudflare | **不能** Linux / Cloudflare |
 
-**本机约束（重要）**：当前开发机是 **x64 macOS**；官方 KimiCU 是 **arm64-only**，直接运行不了。要用 KimiCU，需要一台 Apple Silicon Mac；否则请用 Playwright MCP / Browser Run 做 Web 任务。
+**原始验证环境**：旧调研使用 x64 macOS，对应官方 KimiCU 的 arm64-only 限制；这不是当前工作区宿主的自动检测结果。桌面自动化不在首版范围，需要时重新核对实际机器、版本与权限。
 
 **社区桥的安全风险**（源码级）：它为绕过 OpenAI 的进程血缘鉴权，借用签名的 Codex 可执行文件作为启动器，并把 sandbox 设为 `disabled/unrestricted`，同时**自动接受 app-access elicitation**。这等于把“是否允许访问某 app”的确认权交给模型侧；不建议用于任何正式链路。
 
@@ -159,8 +167,8 @@ Pi AI 支持大量 provider，包括 **Moonshot AI（含中国区）**、**Cloud
 1. 注册一个 `danger` 工具；
 2. 用 `beforeTool` hook 拦截它，返回 `{ block: "Needs human approval" }`；
 3. 模型先发起工具调用，再给出最终回答；
-4. 检查工具 `execute` 没有执行；
-5. 关闭 harness，重新打开同一个 SQLite 文件，检查 root 与 entry 仍在。
+4. 输出工具是否执行，供人工比对；脚本尚未对这一字段作自动断言；
+5. 在任务完成后正常关闭 harness，再打开同一个 SQLite 文件，输出 root 与 entry 的比对结果。
 
 实测输出：
 
@@ -180,7 +188,8 @@ Pi AI 支持大量 provider，包括 **Moonshot AI（含中国区）**、**Cloud
 **验证结论**：
 
 - Pi Durable 的 SQLite 持久化、root session 复用、`beforeTool` 拦截都按文档工作；
-- 但 `beforeTool` 只是“阻断 + 错误结果”，不是“暂停后恢复执行”。真正的审批需要额外的 **pending action + signed approval + host executor**，见架构文档；
+- 但 `beforeTool` 只是“阻断 + 错误结果”，不是“暂停后恢复执行”。真正的审批需要额外的 **pending action + 经验证的主人决定 + host executor**；平台身份、参数和版本由服务端校验，本地命令再使用签名，见架构文档；
+- 没有验证真实模型、运行中独立进程被杀后的恢复、多 Worker 或聊天投递；本轮文档修改也未重跑该 spike。
 - 没有验证 Cloudflare `PiHarness` 的真实部署（需要 Cloudflare 账号/凭据）；该部分依赖官方文档与平台限制，属于“文档可行、待部署验证”。
 
 ---
@@ -190,9 +199,9 @@ Pi AI 支持大量 provider，包括 **Moonshot AI（含中国区）**、**Cloud
 | 风险 | 概率 | 影响 | 缓解 | 验收门槛 |
 |---|---|---|---|---|
 | PiHarness beta / Pi minor 升级导致会话不可读 | 高 | 高 | 锁定 `agents@0.33.0` + `pi-durable@1.5.0`；升级前跑 golden session 回归；演示前冻结 | 升级 PR 必须通过 30 条历史会话回放 |
-| DO 驱逐/CPU/15 分钟 alarm 切断长任务 | 中 | 高 | 任务切步骤；每步 checkpoint；工具幂等；maxTurns；长任务拆成多个 alarm | 杀 object 后任务能继续，成功率 ≥ 95% |
+| DO 驱逐/CPU/15 分钟 alarm 切断长任务 | 中 | 高 | 任务切步骤；每步 checkpoint；工具幂等；maxTurns；长任务拆成多个 alarm | 按故障点记录成功次数/总次数；关键恢复契约全部通过 |
 | 审批被绕过 / 模型直接执行副作用 | 中 | 致命 | 副作用 executor 不暴露给模型；模型只能 `propose_action`；审批 token 绑定 action hash/用户/过期时间 | 红队用例 0 次未授权副作用 |
-| Prompt injection 诱导外发/删数据 | 高 | 高 | 不可信内容标记；工具 allowlist；高风险动作强制审批；最小权限；预算/速率限制 | 注入用例拦截率 100% |
+| Prompt injection 诱导外发/删数据 | 高 | 高 | 不可信内容标记；工具 allowlist；高风险动作强制审批；最小权限；预算/速率限制 | 固定注入集全部通过，报告数量与范围，不推广为整体安全保证 |
 | 本地 connector 被攻破 | 中 | 高 | mTLS/短期 token；命令 allowlist；设备能力白名单；kill switch；审计 | connector 失窃 token 不能重放 |
 | 米家 API 变更/风控/token 失效 | 中 | 中 | 只做低风险设备；CI 用 mock；官方 Miloco fallback；token 加密存储；pin `mijiaAPI` 版本 | 断网/失效时优雅降级，不阻塞聊天 |
 | 米家 `mijiaAPI` GPL-3.0 / 依赖未封顶 | 中 | 中 | 分发前替换依赖；pin 版本或 fork；不要直接闭源分发 | 许可证审计通过 |
@@ -208,12 +217,12 @@ Pi AI 支持大量 provider，包括 **Moonshot AI（含中国区）**、**Cloud
 | 方案 | 成熟度 | 运维复杂度 | 差异化/求职信号 | 适合场景 | 结论 |
 |---|---|---|---|---|---|
 | **Pi Durable + Cloudflare PiHarness** | 低（experimental/beta） | 低 | **高**（durable task、MCP、edge） | 个人项目、Agent runtime 作品 | **主选**，但锁定版本、准备 fallback |
-| Cloudflare Agent + AI SDK | 中高（Agents SDK stable 部分） | 低 | 中（内置 HITL、WebSocket、调度） | 快速做聊天/审批 demo | **Fallback**；若 PiHarness 阻塞，2 天切换 |
+| Cloudflare Agent + AI SDK | 中高（Agents SDK stable 部分） | 低 | 中（内置 HITL、WebSocket、调度） | 快速做聊天/审批 demo | **候选替代**；按前三个工作日门槛决定，切换后重新估时与验收 |
 | LangGraph + Postgres/Redis/Temporal | 高 | 中高 | 中高（Python、生态、JD 常见） | 复杂 workflow、算法/平台岗 | 备选；需要更多基础设施 |
 | OpenAI Agents SDK + Temporal | 中高 | 中高 | 中（OpenAI 生态） | 已有 Temporal/OpenAI 栈 | 备选；供应商绑定较强 |
 | Home Assistant + MCP | 高（智能家居） | 中 | 中（家庭自动化） | 家庭场景为主 | 可作为本地设备层，不替代通用 agent |
 
-**建议**：主选 Pi + Cloudflare；把 `AgentRuntime` 抽象成一个窄接口（`submit/watch/approve/execute`），不要把所有业务逻辑写进 Pi 的 hook。这样 PiHarness 出问题时可以切 Cloudflare Agent，而不重写产品层。
+**当前建议**：主选 Pi + Cloudflare，先验证多个独立 session 与恢复。AgentRuntime 仅负责会话、提交、快照/订阅和中断；审批、任务状态和动作执行由应用模块负责。替换运行时仍需验证幂等交付、恢复和历史迁移，不承诺无成本切换，见 [02](02-architecture.md)。
 
 ---
 
@@ -248,21 +257,18 @@ Pi AI 支持大量 provider，包括 **Moonshot AI（含中国区）**、**Cloud
 
 ## 8. Go / No-Go
 
-**Go（做）**，但按以下边界：
+Go 的条件是形成可检验的聊天任务闭环：
 
-- ✅ 用 Pi Durable 做 **durable runtime 的核心演示**；
-- ✅ 用 Cloudflare DO 做 **单用户托管**；
-- ✅ 用 MCP 接 **2–3 个低风险工具**（天气、日历、米家只读/单控）；
-- ✅ 用本地 connector 做 **云端触达本地** 的架构亮点；
-- ✅ 用 Python eval harness + OTel 做 **可验证性**；
-- ❌ 不把 Kimi CUA 作为核心链路；
-- ❌ 不把米家非官方 API 作为唯一设备层；
-- ❌ 不做多租户/大规模并发；
-- ❌ 不在 beta 版本上做“不可回滚”的会话格式升级。
+- 一个真实渠道和已绑定主人，一个真实模型；
+- 主 Agent 与最多两个 Worker 的独立上下文和调度；
+- 有授权的业务 Task、版本化派工、修改/取消；
+- 确定动作审批、未知结果核对、持久 Inbox/Outbox；
+- 显式记忆与一次性提醒；
+- 从第一周积累确定性与真实模型证据。
 
-**No-Go 信号**：如果 2 周内无法稳定跑通 “Cloudflare 部署 + 一次审批 + 一次重启恢复”，就切 Cloudflare Agent + AI SDK fallback，不要继续堆功能。
+**唯一技术门槛**：前三个工作日验证渠道、运行时、多会话、运行中恢复与未知动作。受阻时按 [04](04-build-plan.md) 的规则选择宿主或运行时替代，并重跑同一关键契约；不再使用“两周后再决定”“两天完成切换”的旧假设。
 
----
+真实设备、Kimi CUA、Vectorize、Python eval、多模型与复杂 Web UI 都不是通过门槛的前置条件。
 
 ## 9. 关键来源
 

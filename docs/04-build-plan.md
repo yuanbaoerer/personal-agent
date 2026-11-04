@@ -1,256 +1,194 @@
-# 04 · 6 周 MVP 构建计划
+# 04 · MVP 构建与验收计划
 
-> 目标：6 周内做出一个**可部署、可演示、可评测**的 personal agent 竖切，而不是一个功能很多但讲不清的 demo。每周都有可验收的产物；第 6 周必须能录 5 分钟视频。
+> 2026-11-04 修订。产品范围见 [00](00-product-plan.md)，实现语义见 [02](02-architecture.md)。当前只完成旧本地 spike，下面里程碑均未完成。六周按每周 15–20 小时、总计 90–120 小时作为预算参考；按门槛调整范围，不以日历到点冒充验收通过。
 
-## 1. MVP 定义
+## 1. 执行原则
 
-### 必须有的能力
+1. 先做一个真实聊天渠道；默认飞书应用机器人私聊，账号及发布权限尚待验证。
+2. 第一周开始真实模型、小规模回归和运行中恢复测试；不能只用 faux provider 宣布技术路线成立。
+3. 先跑通一个 Router、两个任务 Worker，再接更多工具；后台任务不阻塞主人的补充与取消。
+4. 审批、任务撤销、未知副作用和消息投递是核心验收，不因延期减少关键用例。
+5. 灯控制先 mock 后真机；真实设备、日历、第二渠道与管理页在核心稳定后增加。
+6. 每周都有可复现记录，包含代码版本、环境、fake/真实模型、mock/真机区别及失败原因。
 
-1. **聊天 + 流式**：Web/PWA 发消息，Agent 流式回答；刷新/重连不丢。
-2. **工具调用**：至少 3 类 MCP（天气、日历、米家/家庭），带超时、重试、输出上限。
-3. **审批**：所有写操作走 `propose_action → approve → execute`；审批卡片展示设备/参数/风险/来源；高风险 step-up。
-4. **持久化**：transcript、pending action、schedule 落 SQLite；杀 DO/重启后恢复。
-5. **定时任务**：至少 2 个（早间简报、一次性提醒）；时区/quiet hours/错过策略。
-6. **记忆**：至少 20 条事实/偏好；可查看/编辑/删除；检索带 provenance。
-7. **本地 connector**：Mac mini/家庭服务器；Workers VPC（beta）优先，Tunnel + Access 备选；米家只读 + 1 个低风险控制。
-8. **审计**：每个副作用记录 before/after、approver、trace_id。
-9. **评测**：30–50 条任务；确定性 grader + LLM judge；故障注入；报告。
-10. **可观测**：run/model/tool/approval/connector span；成本/延迟面板。
+## 2. 技术门槛：前三个工作日
 
-### 明确不做（MVP）
+这是一轮明确的 timebox，须在第一周内形成结论，不延至两周后。兼职按可投入工时安排三个工作日；凭据与硬件未具备时记录阻塞项，不伪造成功。
 
-- 多租户、计费、团队权限；
-- 任意 macOS GUI 自动化（KimiCU 只做可选、有人值守）；
-- 支付/门锁/摄像头/密码管理器；
-- 自训练模型；
-- 复杂 Multi-Agent 自治；
-- 移动原生 App。
+| 检查 | 最小实验 | 通过证据 |
+| --- | --- | --- |
+| 渠道 | 飞书真实私聊收发、主动发信、一个卡片回调 | 事件与消息 ID、验签记录、回调时延；不要求模型参与 |
+| 运行时 | DO + Lifecycle + PiHarness，接一个真实模型 | 部署配置、锁定依赖、真实模型返回与持久会话 |
+| 多会话 | 同一主人 Router + 两个独立 Worker 会话 | Worker 忙碌时能受理新消息，三个上下文互不污染 |
+| 恢复 | 处理中断进程/对象，恢复未完成只读任务及待审批状态 | 独立运行前后对照、状态断言、交付 ID；不能用正常 close/open 代替 |
+| 动作语义 | 用可控 mock 复现“外部已生效，成功记录未写入” | 能明确进入结果未知并核对；完整聊天审批留到第三周 |
 
-### 验收 Demo（5 分钟）
+本轮实验中的待审批记录可以由测试夹具生成，不将其描述成完整审批流程。对象终止方式、测试环境及其能模拟的故障范围必须写清。
 
-1. “明早 7:30 如果下雨就提前 20 分钟叫我” → 创建 schedule → 模拟触发 → 简报；
-2. “客厅灯太亮，调到 40%” → propose → 审批 → 执行 → 审计；
-3. “以后空调默认 26℃” → 记忆写入 → 下一轮生效；
-4. 杀掉 DO / 断开 connector → 恢复 → 继续；
-5. 打开 eval 报告 → 成功率/失败模式/成本。
+### 唯一替代规则
 
----
+- 飞书账号、发布或回调条件不满足：在具备账号条件的官方渠道中选一个替代，并同步 00/02/README；不同时接三个平台。无真实渠道时明确入口未完成。
+- 只被 Cloudflare 宿主/集成阻塞，而本地 Pi 语义已通过：先用 Node + SQLite 保持聊天产品可验收，部署结果标为本地服务，不声称已经云端恢复。
+- Pi 多会话/恢复语义本身不能通过：评估独立任务 DO 或 Cloudflare Agent + AI SDK，选择一种替代方案重新估时，暂停增强功能。
+- 替代路线必须重跑同一组关键契约；旧 Pi 会话迁移另行验证，不承诺“两天切换”。
+- 门槛未通过时先解决或替换阻塞层，不继续叠加向量库、浏览器或更多渠道。
 
-## 2. 里程碑
+## 3. 六周里程碑
 
-```mermaid
-gantt
-  title Personal Agent 6 周计划
-  dateFormat  YYYY-MM-DD
-  axisFormat  %m/%d
-  section Foundation
-  Spike + 版本锁定           :done, w0, 2026-11-04, 2d
-  Cloudflare 骨架 + 流式聊天 :w1, 2026-11-06, 7d
-  section Core
-  工具网关 + 3 个 MCP        :w2, 2026-11-13, 7d
-  审批状态机 + 审计          :w2b, 2026-11-16, 4d
-  section Personal
-  记忆 + 定时任务            :w3, 2026-11-20, 7d
-  本地 connector + 米家      :w3b, 2026-11-23, 4d
-  section UX
-  Web 审批/记忆/审计 UI      :w4, 2026-11-27, 7d
-  浏览器任务 + 恢复测试      :w4b, 2026-11-30, 4d
-  section Proof
-  Eval harness + 故障注入    :w5, 2026-12-04, 7d
-  可观测 + 成本面板          :w5b, 2026-12-07, 4d
-  section Ship
-  打磨 + 视频 + 文档         :w6, 2026-12-11, 7d
-  模拟面试 + 复盘            :w6b, 2026-12-14, 4d
-```
+| 阶段 | 主要产物 | 通过门槛 |
+| --- | --- | --- |
+| Week 1 | 技术门槛结论、真实渠道、Inbox/Outbox、真实模型、首批关键检查 | 真实收发、去重、重启补投；环境与依赖可复现 |
+| Week 2 | Task / Mandate / Assignment、Router、两个 Worker、状态/修改/取消 | 两任务并发、人工输入优先、旧派工失效 |
+| Week 3 | MCP mock 灯、审批、ActionExecutor、unknown/reconcile、审计 | 重复/过期/越权/撤销审批与中断测试通过 |
+| Week 4 | 一次性天气提醒、显式记忆、连续日常使用 | 客户端关闭和重启后提醒仍投递，记忆可查改删 |
+| Week 5 | 扩展到 40 条场景、真实模型重复运行、故障与成本报告 | 固定关键用例全通过，真实模型质量与 mock 证据分别呈现 |
+| Week 6 | 修复、演示、部署说明与缓冲 | 陌生人可按说明复现核心流程，未完成项明确标注 |
 
-> 日期是示意；如果目标是 2027 秋招补录/春招，按实际截止日倒排。全职投入可压到 3 周，但不要砍掉评测和恢复测试。
+本地 Connector / 真实灯在 Week 4–6 的余量中实现；管理页只补聊天命令不能高效处理的排查需求。它们都不能挤占核心验收修复时间。
 
----
+### Week 1：入口与恢复
 
-## 3. 每周工作分解
+- 配置一个应用机器人，只允许已验证主人私聊；记录所需平台权限。
+- 入站验证、唯一事件键、持久 Inbox，回调快速响应；异步模型处理。
+- Outbox 支持目的/接收人限制、稳定业务键、平台消息 ID、失败与结果未知。
+- 先用程序状态查询，逐步接 Router；真实模型回复不强求平台逐 token 流式。
+- 补旧 spike 缺失的断言和独立进程中断；保留旧脚本用于历史对照。
+- 建立 TypeScript 检查、锁文件安装、最小 CI、部署 dry-run；预留后续契约用例清单，先运行已具备的入站/投递/恢复用例。
 
-### Week 0（已完成）：可行性 spike
+交付：技术门槛记录、真实消息证据、首批机器可判定检查、明确的替代决策。新测试尚未实现的用例必须列 pending，不能算通过。
 
-- 安装 `pi-durable@1.5.0`，跑通 SQLite + faux provider + `beforeTool` 拦截 + 重开恢复；
-- 产出：`spikes/pi-durable-smoke/`、README、可行性文档。
+### Week 2：任务与调度
 
-**验收**：`node --experimental-strip-types smoke.ts` 输出 `executed:false`、`reopenedEntryCount === entryCount`。
+- 创建业务 Task，保存 goal、完成条件、Mandate、revision 与原对话。
+- 一个逻辑 Router、同一 Worker 实现的两个独立会话；最多两个活跃 Worker。
+- Assignment 租约与 fencingToken；持久派工与 Report，报告按版本校验。
+- 有引用/任务编号的补充、修改、取消；无法确定对象时请求澄清。
+- 状态查询走持久状态，取消先落库再请求中断；不以工具立即停止作为确认取消已受理的条件。
+- 测试暂停、恢复、重复输入、旧 Worker 迟到报告和上下文隔离。
 
-### Week 1：Cloudflare 骨架 + 流式聊天
+交付：两项文本资料整理任务并发，期间继续查询天气、修改和取消；重启后任务仍可查询。
 
-- `wrangler` 项目；DO + Lifecycle + PiHarness；`agents@0.33.0` / `pi-durable@1.5.0` 锁定；
-- `POST /api/messages` + WebSocket/SSE；`watch` 推送；
-- 用 Workers AI 或 faux provider 跑通；记录 run/model span；
-- CI：typecheck + unit test + `wrangler deploy --dry-run`。
+### Week 3：审批与结果核对
 
-**验收**：部署后浏览器能发消息并看到流式回答；刷新后 transcript 还在；`wrangler tail` 能看到 trace id。
+- mock 灯 MCP 支持状态读取、绝对亮度设置、可控延迟和故障点。
+- propose_action → 审批卡片/明确文本确认 → 原子领取 → 执行 → 核对。
+- 批准人、对话、argsHash、taskRevision、nonce、有效期校验；模型不持有写动作执行工具。
+- 补 approved/executing/unknown/reconciling/needs_manual 路径与审计。
+- 注入重复点击、批准后修改、取消时请求已发出、设备已生效但本地未写成功等故障。
+- 测试结果发回对话失败的恢复，区分平台已接受与用户已读。
 
-### Week 2：工具网关 + 审批
+交付：下述 12 项关键契约中本阶段具备的全部通过；提醒相关 K12 在第四周补齐。mock 最终状态和调用次数都能由程序检查。
 
-- MCP → Pi Tool 适配器；接天气（Open-Meteo，无 key）、日历（fixture 或 Google/Feishu）、家庭（mock 先）；
-- 工具元数据：risk/replay/timeout/maxOutput/scopes；
-- `propose_action` + `PendingAction` + `Approval` 表；审批 API；审计；
-- `beforeTool` 双保险：即使模型绕过，也阻断未批准的写工具；
-- 红队：10 条注入/越权用例。
+### Week 4：开始日常使用
 
-**验收**：3 个写操作 100% 走审批；10 条红队 0 未授权副作用；审批后结果回到对话；审计可查。
+- 一个一次性天气简报：明确时区、时间、有效期和接收对话，主人确认后保存。
+- Schedule 与 Lifecycle 共用唤醒机制，runKey 去重；提醒取消/过期可恢复。
+- 显式记忆：主人要求保存事实/偏好，展示确认内容；聊天内查看、修改、忘记。
+- 至少三天真实使用，记录错路由、过多通知、未送达和需要人工接管的情况。
+- 若关键测试已经通过且有硬件，接一条 Connector + 一个真实灯；沿用 Action 协议，不新建另一套权限体系。
 
-### Week 3：记忆 + 定时 + 本地 connector
+交付：K01–K12 全通过，完成真实渠道提醒和记忆管理。真机未完成时保留 mock 演示并标注，不将 mock 成功率写成设备成功率。
 
-- 记忆表 + 抽取/去重/冲突 + Vectorize；记忆 UI API；
-- Schedule 表 + DO alarm + quiet hours + 幂等 run_key；
-- 本地 connector：Node/Bun + Workers VPC 或 Tunnel；能力 manifest；签名命令；
-- 米家 MCP：先只读（设备/状态），再加一个低风险控制（灯亮度）；**先 mock，后接真机**；注意社区 MCP 走小米云，不是 LAN；
-- 本地失败降级：设备离线时明确告知，不阻塞聊天。
+### Week 5：证据与回归
 
-**验收**：记忆写入后下一轮生效、可删除；schedule 到点触发；connector 断线重连；米家只读/单控成功。
+- 扩展到 40 条固定场景，保留开发集和不参与日常调参的验收集。
+- 确定性检查以外部状态、调用记录和数据库为准；真实模型场景至少覆盖十项代表任务，每项独立运行三次。
+- 保存输入、模型/参数、工具版本、环境、耗时、token、费用、失败原因与 traceId。
+- 真实模型运行设置单次和整套费用上限，未知价格时先记录 token 与调用次数。
+- 回归失败先修核心路径；LLM judge 仅补充解释质量，不能替代权限和最终状态检查。
 
-### Week 4：Web UI + 浏览器任务 + 恢复测试
+交付：一条命令生成 JSON / Markdown 报告；实现后 CI 每次运行确定性关键集，真实模型评测按预算独立触发。
 
-- 审批收件箱、记忆管理、审计页、connector 状态；
-- Browser Run / Playwright MCP 任务（只读网页/无障碍快照/摘要）；不碰登录态；桌面 CUA 不进 MVP（KimiCU 仅 Apple Silicon + 有人值守）；
-- 故障注入：kill DO、部署中断、MCP 超时、connector 断线、审批过期；
-- 补 10 条恢复/安全用例。
+### Week 6：交付缓冲
 
-**验收**：10 次 kill/restart 中 ≥9 次恢复；无重复副作用；UI 能显示“恢复中/待审批/失败”。
+- 修复未通过的核心用例，再决定是否补最小任务/审计管理页。
+- 明确环境变量、平台权限、部署、停止与故障处理步骤。
+- 完成约五分钟演示，保留失败和恢复分支；备份材料与实测报告。
+- 编写真实实现清单、限制和后续项，使用实测证据更新岗位文档。
+- 不在最后一周新增第二平台或完整浏览器自动化。
 
-### Week 5：Eval harness + 可观测
+## 4. 必须保留的关键契约
 
-- Python `evals/`：隔离测试用户、fake MCP、任务定义、grader、报告；
-- 30–50 条任务，覆盖 6 类；
-- OTel → Langfuse/Phoenix；成本/延迟面板；
-- 基线 vs 优化对比；失败归因 top 5；
-- CI：PR 跑 unit/integration，nightly 跑 eval。
+| ID | 故障或场景 | 程序判据 |
+| --- | --- | --- |
+| K01 | 伪造事件/未绑定发送人 | 不创建任务、不暴露个人状态 |
+| K02 | 同一平台事件重复投递 | 一条受理记录，同一业务任务 |
+| K03 | 运行时已接受 Input、应用尚未记回执就中断 | 同 deliveryId 核对/补投，不重复进入会话 |
+| K04 | 平台已接受结果、应用尚未记回执就中断 | 平台幂等/查询或 delivery_unknown；不虚报未发送/已读 |
+| K05 | 两个 Worker 忙碌时收到状态/取消 | 人工指令不等待新 Worker 名额，任务撤销先持久化 |
+| K06 | 两个资料任务并发 | 结果与工具范围不串任务，Worker 数不超上限 |
+| K07 | 修改后旧 Worker 交回报告/动作 | 旧 revision / fencingToken 无权推进或执行 |
+| K08 | 重复/并发点击同一审批 | 原子消费一次，不生成第二次有效执行 |
+| K09 | 拒绝、过期、不同主人或不同参数的审批 | 全部不能进入 executing |
+| K10 | 取消时外部动作已在途 | 停止未来动作、核对在途结果，不虚报撤销物理效果 |
+| K11 | 写工具已生效但成功未落库 | unknown → 核对/人工处理，不盲目重复调用 |
+| K12 | 提醒重复唤醒、时区、过期与取消 | runKey 唯一，按 TTL/取消状态投递或跳过 |
 
-**验收**：一条命令生成 Markdown/JSON 报告；成功率、未授权副作用、p95、成本/task 都有数；报告能复现。
+通过单进程正常关闭不能替代运行中中断测试。每个故障点标明 local process、DO 仿真或真实部署，不能把局部测试结果推广为完整平台保证。
 
-### Week 6：打磨 + 交付
+## 5. 场景集与指标
 
-- README/架构图/演示视频（5 分钟）；录屏备份；
-- 简历 bullet（用实测数字替换 X/Y/Z）；3 次模拟面试；
-- 代码清理：删除 scaffold、无 secrets、版本锁定、LICENSE；
-- 复盘：哪些没做、为什么、下一步。
+### 5.1 40 条场景的目标分布
 
-**验收**：陌生人按 README 能在 30 分钟内跑起来；视频能讲清“为什么 durable/审批/评测”；面试 Q&A 不卡壳。
+| 类别 | 数量 | 例子 |
+| --- | ---: | --- |
+| 渠道与消息投递 | 8 | 验签、重复事件、回调、发信超时、顺序 |
+| 任务与多 Agent 协调 | 10 | 两任务并行、补充路由、取消、过时报告、预算 |
+| 审批、工具与权限 | 10 | 参数约束、过期、重复批准、越权、工具结果注入 |
+| 崩溃与恢复 | 8 | 派工、Input、Action、Outbox 各窗口中断 |
+| 显式记忆与提醒 | 4 | 保存/修改/删除、时区、重复触发及取消 |
+| **合计** | **40** | 每项标注确定性/真实模型、mock/真机与环境 |
 
----
+K01–K12 是这套场景的强制契约标签，不另算 12 项，也不能通过删用例提高通过率。阶段未实现功能在报告中列 pending。
 
-## 4. 评测体系
+### 5.2 验收口径
 
-### 4.1 任务集
+- **关键确定性契约：12/12。** 失败则修复或缩小产品范围并明确未完成项，不减少故障注入次数。
+- **未授权写与无意重复写：在已执行测试中为 0。** 同时报告用例数、运行次数、权限范围；不是对所有攻击的安全保证。
+- **真实模型质量：目标成功率 ≥85%。** 单独列出任务数、总运行次数、分任务成功率与波动；以外部完成条件判定，不混入 fake 通过数。
+- **恢复：按故障点报告成功次数/总次数与未决项。** 例如 10/10，不将十次实验包装成有统计保证的“恢复率 ≥95%”。
+- **响应：分别记录平台回调、人工状态/取消确认、Router 回复和任务完成耗时。** 平台回调须满足实际官方时限；用户查询/取消以 p95 两秒内持久受理为初始目标，平台延迟和实际停止时间另计。
+- **成本：每任务与整套评测分别统计 Router、Worker、重试的调用与 token。** 测得基线后再定货币预算，不预先承诺所有任务都低于固定单价。
+- **通知：记录重复、过时、失败、结果未知与有用结果的数量。** 只统计成功生成文本不能证明提醒送达。
+- **记忆：按固定样例检查值、来源、修改和删除。** 不把结构化查询通过等同于语义记忆质量。
 
-| 类别 | 数量（MVP） | 例子 | 主要 grader |
-|---|---:|---|---|
-| 工具选择 | 8 | “查明天北京天气” | 工具名/参数断言 |
-| 多步规划 | 6 | “查天气→建议穿衣→建提醒” | 外部状态 + 步骤断言 |
-| 审批/安全 | 8 | “把灯调到 40%” / “删除日历” | 审批状态 + 副作用计数 |
-| 记忆 | 6 | “以后默认 26℃” → 下一轮 | 记忆命中 + 回答 |
-| 定时/持久 | 6 | “明早 7:30 提醒” | schedule 状态 + 触发 |
-| 注入/恢复 | 6 | 网页要求“发 token” / 杀 DO | 拦截 + 恢复 |
-| **合计** | **40** | | |
+## 6. 范围控制与风险门槛
 
-### 4.2 Grader 组合
+| 风险 | 处理 |
+| --- | --- |
+| 首发渠道/运行时不成立 | 执行前三个工作日的唯一替代规则 |
+| 多会话不能真实并发或恢复 | 停止增强能力，补调度/部署验证，重新估时 |
+| 审批/取消/未知副作用不可靠 | 不接真实设备，不以降低测试强度放行 |
+| 预算或时间不足 | 依次后移管理页、真机、日历/第二渠道；保留核心契约 |
+| 模型质量不达标 | 限制支持任务类型、改上下文与工具；报告失败，不改成功定义 |
+| 通知太多 | 缩减通知目的与主动规则，不用更多消息解释内部进度 |
+| 硬件或平台权限缺失 | 保留真实聊天 + mock 工具链，明确真实设备/对应平台未验证 |
 
-- **确定性**：SQLite 状态、设备状态、工具调用参数、审批记录、副作用计数；
-- **LLM rubric**：解释质量、是否说明不确定性、是否给出下一步；
-- **人工抽检**：每周 10 条，校准 LLM judge；
-- **回归**：每次 PR 跑 10 条 smoke；nightly 跑 40 条；发版前全量。
+不承诺全职投入后自动压缩到三周。技术替代后的排期必须重新计算。
 
-### 4.3 指标
+## 7. 版本、部署与交付清单
 
-| 指标 | 目标（MVP） | 说明 |
-|---|---|---|
-| 任务成功率 | ≥ 85% | 以外部状态为准，不以模型自述 |
-| 未授权副作用 | **0** | 红队 + 审批绕过测试 |
-| 审批误报率 | ≤ 20% | 只读/低风险被要求审批的比例 |
-| 恢复成功率 | ≥ 95% | 10 次故障注入 |
-| p95 首 token | ≤ 3s | 不含工具长任务 |
-| 单任务成本 | ≤ $0.05 | 可配置上限 |
-| 记忆精确率 | ≥ 90% | 抽检 20 条 |
-| 注入拦截率 | 100% | 固定红队集 |
+- 当前旧 spike 固定 Pi packages 1.5.0；Cloudflare 集成先验证 agents 0.33.0 候选组合，采用实际兼容且通过门槛的版本并锁定。
+- Pi 1.5 会话可能无法由旧 minor 运行时读取；升级前备份和兼容性检查，遇到不兼容时向前修复。不要把同 minor 的所有代码回滚一概当成禁止。
+- 应用数据库 migration、派工版本和旧报告格式都需要兼容性检查；换运行时不等于自动迁移历史。
+- MVP 先使用结构化日志和导出报告；完整 OTel 后端、Python harness、Vectorize 与 Browser Run 后置。
+- 费用用调用量和官方计费项估算；不把原调研中的平台报价当成当前采购承诺。
+- 仅更新文档不需要安装依赖或运行付费模型；以下清单由实施阶段逐项完成。
 
-### 4.4 故障注入
+Definition of Done：
 
-- 杀 DO / 部署中断；
-- MCP 超时/500/返回超大结果；
-- connector 断线/重连/重放；
-- 模型 429/超时/上下文溢出；
-- 审批过期/重复点击；
-- 重复 webhook/requestId；
-- 磁盘/存储错误（模拟）。
+- [ ] 一个真实聊天渠道 + 主人身份绑定；真实模型运行证据。
+- [ ] 一个 Router、最多两个并发 Worker，补充、修改、取消可复现。
+- [ ] 审批后执行、unknown/reconcile、审计与消息投递状态可查。
+- [ ] 一个持久提醒、显式记忆的查改删。
+- [ ] K01–K12 全通过；40 条场景与真实模型重复运行报告，无隐藏跳过。
+- [ ] 运行中故障注入、环境和 mock/真实能力区分。
+- [ ] 部署或本地一键启动文档，明确环境限制；真实云端能力仅在部署通过后勾选。
+- [ ] 约五分钟演示、失败恢复说明、当前实现清单。
+- [ ] 锁定依赖，无凭据入库，必要 CI 与部署检查通过。
 
-> 每次故障注入都要记录：是否恢复、是否重复副作用、用户看到什么、trace 在哪。
+## 8. 后续版本
 
----
+核心通过后再做：一个真实灯与 Connector、只读日历、最小管理页、第二渠道、周期提醒、语义记忆与浏览器任务。每次增加能力都扩展相应故障和权限用例。
 
-## 5. 发布与版本管理
-
-- **锁定**：`agents@0.33.0`、`pi-durable@1.5.0`、`pi-ai@1.5.0`；`package.json` 用精确版本，不用 `^`。
-- **不可回滚**：Pi 1.5 会话在旧 Agents SDK 上不可读；发布只 roll-forward；升级前导出 transcript；灰度用新 DO 命名空间。
-- **升级流程**：读 changelog → 跑 golden sessions（30 条）→ 部署 staging → 观察 24h → 生产。
-- **数据备份**：每日导出 transcript/记忆/审计到 R2；保留 7/30 天。
-- **Secrets**：Cloudflare Secrets；本地 keychain；不提交 `.env`。
-- **License**：MIT（与 Pi 一致）；第三方依赖清单。
-
----
-
-## 6. 资源与成本
-
-| 项 | 需求 | 估算 |
-|---|---|---|
-| Cloudflare | Workers Paid + DO + D1/R2/Vectorize + Browser Run | $5–15/月 |
-| 模型 | Kimi/Claude/GPT + 小模型 | $10–50/月（取决于用量） |
-| 硬件 | Mac mini / 家庭服务器（已有则 0） | 一次性 |
-| 米家设备 | 灯/插座/传感器（已有则 0） | 一次性 |
-| 时间 | 6 周 × 15–20h | 90–120h |
-| 演示 | 录屏工具、测试账号 | 低 |
-
-**省钱技巧**：分类/压缩用 Workers AI 小模型；prompt cache；maxTurns；CUA 默认关闭；Browser Run 只在需要时开；eval 用 fixture，不打真实设备。
-
----
-
-## 7. 风险与 Gate
-
-| Gate | 时间 | 不通过怎么办 |
-|---|---|---|
-| G0：spike 通过 | Week 0 | 已通过 |
-| G1：Cloudflare 部署 + 流式 | Week 1 末 | 切本地 Node + 后续再部署；或 Cloudflare Agent fallback |
-| G2：审批 + 3 工具 | Week 2 末 | 砍到 2 工具；先 mock，后接真实 |
-| G3：记忆 + 定时 + connector | Week 3 末 | 砍 connector，只做云端；Demo 改“纯云端” |
-| G4：恢复测试 | Week 4 末 | 降低到 5 次；记录失败原因；不作为核心卖点 |
-| G5：eval 报告 | Week 5 末 | 至少 20 条；没有报告不能算完成 |
-| G6：Demo | Week 6 末 | 录屏 + 文档必须完成；功能可砍，叙事不能缺 |
-
-**最高风险**：PiHarness beta 阻塞。触发条件：Week 1 结束仍无法稳定部署/恢复。动作：切 Cloudflare Agent + AI SDK，保留 policy/approval/memory/connector；2 天内完成 runtime adapter。
-
----
-
-## 8. Definition of Done
-
-- [ ] 部署可访问（或本地一键启动）；
-- [ ] 5 分钟视频 + README + 架构图；
-- [ ] 40 条 eval 报告，指标齐全；
-- [ ] 审批/恢复/注入测试通过；
-- [ ] 无 secrets、版本锁定、CI 绿；
-- [ ] 简历 3 版 bullet（应用/平台/算法）；
-- [ ] 3 次模拟面试，Q1–Q10 能答；
-- [ ] 复盘文档：做了什么、没做什么、为什么。
-
----
-
-## 9. 关键来源
-
-- Pi Durable README：https://github.com/earendil-works/pi/blob/main/packages/durable/README.md
-- Cloudflare PiHarness：https://developers.cloudflare.com/agents/harnesses/pi/
-- Cloudflare Lifecycle：https://developers.cloudflare.com/agents/runtime/lifecycle/
-- Cloudflare Durable Objects limits：https://developers.cloudflare.com/durable-objects/platform/limits/
-- Cloudflare Browser Run limits：https://developers.cloudflare.com/browser-run/limits/
-- Cloudflare Containers pricing：https://developers.cloudflare.com/containers/platform/pricing/
-- Cloudflare Workers VPC（beta）：https://developers.cloudflare.com/workers-vpc/
-- Anthropic agent evals：https://www.anthropic.com/research/demystifying-evals-for-ai-agents
-- OWASP LLM Top 10 2025：https://genai.owasp.org/llm-top-10/
-- MCP security best practices：https://modelcontextprotocol.io/specification/2025-11-25/basic/security_best_practices
-- Kimi 官方能力说明：https://www.kimi.com/zh-cn/help/others/capability
-- Playwright MCP：https://github.com/microsoft/playwright-mcp
-- 米家 MCP：https://github.com/javen-yan/miot-mcp
-- Xiaomi Miloco：https://github.com/XiaoMi/xiaomi-miloco
+岗位表达与简历只使用已经完成的证据；K8s、Go、训练、多租户和大规模压测不作为本 MVP 的附加必修项。资料与技术来源见 [00](00-product-plan.md)、[01](01-feasibility.md)、[02](02-architecture.md)。

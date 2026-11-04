@@ -1,862 +1,337 @@
-# 02 · 目标架构与技术方案
+# 02 · 架构与可靠性设计
 
-> 目标：做一个“住在云上、手在本地、可审计”的个人 Agent。它不是聊天机器人，而是一个能长期运行、主动做事、在副作用前停下来等人确认的系统。
+> 2026-11-04 修订。本文是目标设计，尚未实现。产品范围以 [00](00-product-plan.md) 为准，交付门槛以 [04](04-build-plan.md) 为准，术语以 [CONTEXT.md](../CONTEXT.md) 为准。
 
-## 1. 设计原则
+## 1. 架构约束
 
-1. **Durable by default**：模型调用、工具调用、审批等待、定时任务都必须可恢复；进程死了不能靠“再问一遍”。
-2. **副作用与模型隔离**：模型只能“提议”副作用，不能直接持有执行权；执行器由宿主在审批后调用。
-3. **Local-first for sensitive capabilities**：桌面控制、家庭局域网、文件系统留在本地；云端只拿最小必要结果。
-4. **Least privilege**：每个工具声明 risk/scope/timeout/是否可重放；默认拒绝，按需授权。
-5. **Provider-agnostic**：模型、MCP server、通知渠道都可替换；不把业务逻辑写进某个厂商的 hook。
-6. **Eval-driven**：每个能力都要有可复现的任务集、成功判定、失败归因；没有 eval 的功能不算完成。
-7. **Boring where it matters**：审批、幂等、审计用简单明确的状态机，不用“让模型自己记得”。
+- 单主人、一个首发聊天渠道，MVP 仅主人私聊；默认飞书应用机器人。
+- 一个逻辑主 Agent / Router，最多两个并发任务 Worker；先用一个真实模型。
+- 业务 Task 是获准的工作，Assignment 是一次派工，Action 是具体状态变更；均不同于 Pi 内部的模型/工具 task。
+- Router 做意图理解与协调；Coordinator 的代码决定状态、授权、并发、预算和投递。
+- Worker 有独立上下文与工具范围，只能提议写动作；ActionExecutor 是程序，不是另一个模型 Agent。
+- 收到消息先持久化，回调不等待模型生成；发信、派工、执行动作先入持久队列。
+- 关键测试从第一周建立；完整 Web 聊天、多模型、向量记忆和任意桌面控制后置。
 
-### 产品边界（MVP）
-
-- 单用户、单 Agent、单区域部署；
-- Web/PWA 聊天 + 审批收件箱 + 记忆管理 + 审计；
-- 6 类工具：天气、日历、Web 搜索/抓取、记忆、提醒/定时、米家（只读 + 单个低风险控制）；
-- 一条本地 connector：Mac mini/家庭服务器，接米家 MCP + 一个 macOS 安全动作（如 Shortcuts）；
-- 可选的 Browser Run 任务（Web，不是桌面）。
-
-**非目标**：多租户 SaaS、任意 GUI 自动化、训练模型、替代米家 App、金融/医疗高风险决策。
-
----
-
-## 2. 总体架构
+## 2. 总体结构
 
 ```mermaid
 flowchart TB
-  subgraph Client["客户端"]
-    WEB["Web / PWA<br/>聊天 · 审批 · 记忆 · 审计"]
-    IM["IM / 邮件 / Webhook<br/>（V1）"]
-  end
-
-  subgraph Edge["Cloudflare 边缘"]
-    API["Worker API<br/>REST + WebSocket/SSE"]
-    DO["Durable Object / 用户<br/>PiHarness + Lifecycle"]
-    RT["Agent Runtime<br/>Pi Durable 1.5"]
-    POL["Policy Engine<br/>风险分级 · 审批 · 预算"]
-    MCPC["MCP Adapter<br/>OAuth · 重连 · 工具发现"]
-    SCH["Scheduler<br/>DO alarm / job queue"]
-    MEM["Memory Service<br/>抽取 · 检索 · 冲突"]
-    OBS["Observability<br/>OTel spans / metrics"]
-  end
-
-  subgraph Data["存储"]
-    SQL["DO SQLite<br/>transcript · tasks · app state"]
-    D1["D1<br/>eval / analytics"]
-    VEC["Vectorize<br/>memory embeddings"]
-    R2["R2<br/>screenshots · exports"]
-  end
-
-  subgraph Local["本地执行面"]
-    CONN["Connector<br/>VPC / Tunnel / WSS"]
-    HOME["米家 MCP<br/>MIoT cloud/LAN"]
-    MAC["macOS 动作<br/>Shortcuts / AppleScript"]
-    CUA["可选 CUA<br/>Kimi/OpenAI bridge"]
-  end
-
-  subgraph External["外部服务"]
-    LLM["Kimi / Claude / GPT<br/>AI Gateway"]
-    SAAS["Calendar / GitHub / Notion<br/>MCP"]
-    WEBX["Web / Browser Run"]
-  end
-
-  WEB --> API
-  IM --> API
-  API --> DO
-  DO --> RT
-  RT --> POL
-  RT --> MCPC
-  RT --> MEM
-  RT --> SCH
-  RT --> OBS
-  RT --> LLM
-  MCPC --> SAAS
-  MCPC --> WEBX
-  MCPC -->|VPC / Tunnel + Access| CONN
-  CONN --> HOME
-  CONN --> MAC
-  CONN --> CUA
-  RT --> SQL
-  MEM --> VEC
-  MEM --> D1
-  OBS --> R2
+  IM["聊天软件<br/>默认飞书私聊"] <--> CA["Channel Adapter<br/>验签 · 身份 · 能力适配"]
+  CA --> IN["持久 Inbox"]
+  IN --> C["Coordinator<br/>Task · Assignment · Policy"]
+  C <--> R["Router Session<br/>理解 · 路由 · 组织回复"]
+  C --> S["Task Scheduler<br/>配额 · 优先级 · 租约"]
+  S --> W1["Worker Session A"]
+  S --> W2["Worker Session B"]
+  W1 -->|结构化报告| C
+  W2 -->|结构化报告| C
+  W1 --> A["Action 模块<br/>提议 · 审批 · 执行 · 核对"]
+  W2 --> A
+  A --> TOOL["HTTP / MCP Tools"]
+  A --> CONN["增强项：本地 Connector"]
+  C --> OUT["持久 Outbox"]
+  A --> C
+  OUT --> CA
+  C --> DB["DO SQLite<br/>pa_* 业务表"]
+  R --> PI["Pi Durable<br/>pi_* 会话与运行状态"]
+  W1 --> PI
+  W2 --> PI
 ```
 
-### 关键决策
+部署主选：一个主人一个 Durable Object，Lifecycle 统一管理 PiHarness 与应用待办的唤醒。Router 与每个 Task 使用独立 Pi session；它们是独立派工，不假定默认 subagent 的父子生命周期能满足跨轮长期任务。
 
-| 决策 | 选择 | 理由 | 退出条件 |
-|---|---|---|---|
-| Agent runtime | Pi Durable + Cloudflare `PiHarness` | 任务级 checkpoint、sleep/wake、subagent、DO 托管 | 2 周内无法稳定恢复 → 切 Cloudflare Agent + AI SDK |
-| 隔离粒度 | **一个 DO / 用户**，root session 主线程 | 个人 Agent 需要跨渠道连续记忆；单用户并发低 | 多会话并发明显争用 → 按 channel 拆 DO，D1/Vectorize 共享 |
-| 审批 | **两阶段：propose → approve → execute** | Pi 没有内建审批；模型不能持有执行权 | 若切 Cloudflare Agent，可用其 `needsApproval`，但保留本状态机 |
-| 本地接入 | MVP：Workers VPC（beta）优先；Tunnel + Access 备选；V1：outbound WSS | VPC 无公网 hostname；Tunnel 代码少；WSS 更适合事件/低延迟/双向 | VPC beta 不可用/需要设备事件 → Tunnel 或 WSS |
-| 记忆 | DO SQLite + Vectorize + R2 | 结构化事实可审计；向量检索补充语义 | 记忆规模/多人协作 → 独立 memory service |
-| 模型 | Pi AI + AI Gateway，多 provider | 避免绑定；Kimi 中文/长上下文，Claude/GPT 备选 | 成本/延迟不达标 → 路由/小模型 |
+**待验证**：单 DO 多 session 的实际启动方式、并发模型请求、停止传播与恢复行为。DO 的 JavaScript 单线程不等于异步操作不会交错；关键状态变更仍需事务和条件更新。若单 DO 多 session 不能满足验收，按构建计划门槛先评估按任务拆 DO 或替换运行时，不能仅因能创建会话就宣布并发成立。
 
----
+MVP 不需要 D1 / Vectorize；大输出先限制长度，完整材料只在需求成立时放 R2 或其他附件存储。
 
-## 3. 运行时：PiHarness 怎么用
+本轮技术门槛统一在前三个工作日形成结论，具体实验和替代规则见 [04](04-build-plan.md)。
 
-### 3.1 对象模型
+## 3. 模块与 Interface
 
-```
-Worker (route)
-  └── DurableObject "PersonalAgent:<userId>"
-        ├── Lifecycle
-        ├── PiHarness
-        │     └── Pi Harness (root session "1")
-        │           ├── Conversation / Entries
-        │           ├── Tasks (generation / tool / custom)
-        │           └── Registry (extensions/tools/sections)
-        ├── App tables (pa_*)
-        ├── ActionExecutor
-        └── Scheduler
-```
+| Module | 负责 | 对外结果 |
+| --- | --- | --- |
+| Channel Adapter | 平台验签/解密、身份与会话定位、回调归一化、发送、平台回执 | Trigger / DeliveryReceipt |
+| Coordinator | 唯一业务状态写入口；接收、路由、派工、修改、取消、汇总 | Task 状态、持久 Effect |
+| AgentRuntime Adapter | 独立会话、幂等输入、快照、订阅、中断 | 模型输出和 Worker 报告 |
+| Action 模块 | 权限、参数绑定、审批、原子领取、执行和核对 | Action 状态与审计 |
+| Tool Adapter | 具体 HTTP / MCP / 本地命令；声明超时与重放性质 | 有界、带来源的工具结果 |
+| Outbox | 按原对话交付确认、问题、结果和提醒 | 平台接受、失败或待核对 |
 
-- `PiHarness` 负责 Pi 的 storage/wake；应用自己的表也放同一个 DO SQLite，用 `pa_` 前缀，避免和 `pi_` 冲突。
-- `root session` 是主对话；Web、IM、定时任务可以是同一 session 的输入，也可以 fork 出独立 session（例如“周报”任务）。
-- 每个 session 可以配置不同模型/工具（Pi 的 `configure()`），但 MVP 保持一套策略，减少不可解释性。
-- **与官方建议的差异**：PiHarness 文档建议“一个会话一个 DO”；本项目是单用户，先用“一个用户一个 DO + root session”换取跨渠道连续记忆。若多 channel 并发明显争用（DO 单线程），再按 channel 拆 DO，记忆/审计放 D1/Vectorize 共享。
+这些是同一应用内的职责划分，不要求拆成独立服务或多个 npm 包。内部调度器、提醒和显式记忆由 Coordinator 组合，初期不增加通用插件框架。
 
-### 3.2 运行循环
+### 3.1 运行时接口草案
 
-```
-用户输入 / 定时触发 / connector 事件
-  → 去重（requestId / eventId）
-  → 组装上下文（profile + memory + 最近 transcript + 工具 schema）
-  → 模型规划
-  → 只读工具：直接执行（有超时/输出上限）
-  → 副作用：propose_action（写 pending，返回“待审批”）
-  → 用户审批
-  → host executor 执行（幂等键）
-  → 结果写回 transcript（app.approval / app.tool_result）
-  → 模型总结 / 验证
-  → 记忆抽取（后台）
-  → 审计 + trace
-```
-
-### 3.3 长任务
-
-- 单次 alarm 最多 15 分钟；PiHarness 每 10 分钟交接；单次模型请求流式超过 15 分钟可能被切断。
-- 把任务拆成 **步骤 ≤ 10 分钟**：计划 → 每步工具 → 检查点 → 下一步。
-- `maxTurns` 限制一轮工具循环；外层用 `Task`/`Schedule` 控制总步数。
-- 任何外部副作用都带 `action_id` 作为幂等键；工具声明 `replay: "safe"` 仅用于只读/可重复写。
-- 大输出截断到 8–16KB，完整内容写 R2，transcript 只留摘要 + 引用。
-
-**语义差异（面试要能讲）**：Pi Durable 是 **checkpoint 语义**——每个 phase 结束存 checkpoint，重启从 checkpoint 继续，phase 内不能 sleep，phase 重跑时副作用要按 `replay` 策略处理。Temporal 是 **Event History + 确定性重放**——workflow 代码必须 deterministic，靠重放历史重建状态。两者不是等价物；Pi 对“模型调用 + 不可预测工具”更宽松，但把确定性要求下推到了 Code Mode 脚本。
-
----
-
-## 4. 工具网关与 MCP 适配
-
-### 4.1 工具分层
-
-| 层 | 例子 | 谁可调用 | 审批 |
-|---|---|---|---|
-| 只读工具 | 天气、搜索、日历查询、设备状态、记忆检索 | 模型 | 自动（有速率/预算） |
-| 可逆写 | 开灯、调亮度、创建提醒、加日历 | 模型只能 propose | 一键确认（可配置自动） |
-| 高风险写 | 删日历、发消息、转账、开门锁 | 模型只能 propose | 强确认 + step-up（Passkey） |
-| 禁止 | 密码管理器、银行、删除设备、批量导出 | 不暴露 | 永远拒绝 |
-
-### 4.2 MCP 适配层
-
-Cloudflare `MCPClientManager` 负责连接、OAuth、重连；但 Pi 的 registry 需要 `ToolRegistration`，所以中间加一个 **MCP → Pi Tool** 适配器。注意：**Pi Durable 没有内置 MCP client**；Pi 1.x CLI 的 MCP（stdio / streamable HTTP，不支持 legacy SSE）是另一套扩展模型。在 PiHarness 上必须自己写桥，不能直接复用 CLI 的 `mcp.json`。
+以下是本项目的概念接口，不是 Pi SDK 的现成 API；具体调用在技术 spike 中验证：
 
 ```ts
-// 伪代码：启动时发现 MCP 工具，包装成 Pi tool
-for (const server of config.mcpServers) {
-  const tools = await mcp.listTools({ serverId: server.id });
-  for (const t of tools) {
-    registry.install(defineExtension({
-      name: `mcp:${server.id}`,
-      tools: [defineTool({
-        name: `mcp__${server.id}__${t.name}`,
-        description: sanitize(t.description),
-        parameters: t.inputSchema,
-        replay: server.readOnly ? "safe" : undefined,
-        deferred: true, // 大工具集用 tool_search 渐进加载
-        execute: async (args, api) => {
-          const decision = await policy.check({ server, tool: t, args });
-          if (decision.kind === "propose") {
-            return { output: [{ type: "text", text: await actions.propose(...) }] };
-          }
-          return { output: await mcp.callTool(server.id, t.name, args) };
-        },
-      })],
-    }));
-  }
+interface AgentRuntime {
+  openSession(spec: SessionSpec): Promise<SessionRef>;
+  submit(input: SessionInput): Promise<SubmissionReceipt>;
+  snapshot(sessionId: string): Promise<SessionSnapshot>;
+  watch(sessionId: string): AsyncIterable<SessionSnapshot>;
+  interrupt(sessionId: string): Promise<InterruptReceipt>;
 }
 ```
 
-> 关键点：**不要**把 MCP 的 tool description 直接拼进系统提示。它来自外部，可能包含注入文本；只作为“工具元数据”放在工具 schema 里，并在策略层做来源标记。
+SessionSpec 包含稳定 sessionId、角色和工具范围；SessionInput 包含稳定 deliveryId 与业务版本。调用方必须能查询提交是否被接受，并在重试时使用同一个 deliveryId。
 
-工具很多时，用 `deferred: true` + `tool_search` 做渐进披露，避免一次性把几十个工具塞进上下文。V1 可以评估 Pi 的 Code Mode（模型写 JS 组合工具调用，脚本可恢复），但它要求脚本确定性/可重放，MVP 先不用。
+审批不属于 AgentRuntime。任务取消先在应用状态中生效，再请求中断；运行时忽略中断不能重新获得已撤销的动作执行权。
 
-### 4.3 MCP 连接拓扑
+接口隔离降低替换成本，但不承诺已有会话格式自动迁移，也不提前实现第二套运行时。
 
-**首选：Workers VPC（beta，Free/Paid）**
+### 3.2 工具接入
 
+- 天气先用 HTTP Tool Adapter，mock 灯用 MCP Adapter，形成两个可运行实现。
+- Pi Durable 的工具 registry 与 MCP client 之间需要桥接；CLI 的 MCP 配置不等于 Pi Durable 已经集成 MCP。
+- 每个工具声明参数 schema、允许资源、只读/写、超时、输出上限、重放策略与核对方法。
+- 工具描述和结果是外部数据；不能充当系统指令、身份、授权或审批依据。
+- 模型可调用只读工具和 propose_action；外部写工具不直接注册给模型。
+- 只读默认也要限制资源与输出；访问个人资料不因“只读”就自动获得权限。
+
+## 4. 聊天事件、身份与投递
+
+### 4.1 入站流程
+
+1. Channel Adapter 验证平台请求，完成必要解密，并拒绝未绑定主人或非首发允许对话。
+2. 归一化 Trigger：channel、account、conversation、actor、platformEventId、replyTo、eventType、occurredAt、payload。
+3. 以 channel + account + platformEventId 唯一约束写入 pa_inbox，保存路由待办；重复事件返回原受理状态。
+4. 提交成功后尽快确认平台回调；耗时模型工作异步进行。平台 challenge、卡片即时应答按各自协议独立处理。
+5. 用程序先识别确定的卡片操作、任务状态查询和取消，再把需要语义理解的输入交 Router。
+6. Router 的路由命令仍由 Coordinator 验证任务归属、版本和 Mandate。
+
+不以昵称、消息正文或模型推断识别主人。未来跨平台身份绑定需要带外验证；群聊单独保存上下文，个人记忆不自动注入群聊。
+
+### 4.2 后续消息归属
+
+优先使用卡片中的 taskId / actionId、原消息引用与已保存的任务回执映射。自然语言可由 Router 提议路由，但目标不明确或会扩大权限时必须澄清。
+
+- 补充事实：写入任务 Input，按顺序交给当前有效 Assignment。
+- 修改目标/限制：增加 Task revision，使尚未发送的旧动作与旧审批失效，结束旧 Assignment 后重新派工。
+- “先处理另一件事”：调整待派工顺序；不能默默取消已经发生的外部操作。
+- 普通致谢/闲聊：无需创建新 Task。
+
+### 4.3 Outbox
+
+每条消息记录 owner、conversation、taskId、purpose、businessKey、payload、attempts、nextAttemptAt、platformMessageId。目的限制为接单、澄清/审批、结果、失败或已授权提醒。
+
+- 在记录状态的同一事务中创建 Outbox / Effect；网络调用在提交后执行。
+- 同一任务到同一对话保持接单、问题、结果的顺序；不同任务不因一个会话失败而全部停止。
+- 发送前重查 Task revision、接收人、提醒取消状态及有效期。
+- 平台返回接受结果才标为 accepted；有送达/已读回执时另记 delivered/read。
+- 超时但可能已经发送时进入 delivery_unknown：有平台幂等键则复用，能查询则核对，否则记录重复风险并按消息类型决定是否重发。不能声称 Outbox 本身保证 exactly-once。
+- 平台不支持卡片时，降级为展示明确参数并绑定唯一动作编号的文本确认，不接受无对象的“同意”。
+
+MVP 默认一次接单，之后只在完成、失败、需决定或约定提醒时发信；普通进度可通过任务查询查看。平台流式编辑是增强项，不强求逐 token 消息。
+
+## 5. Task、Assignment 与调度
+
+### 5.1 Task 状态
+
+```mermaid
+stateDiagram-v2
+  [*] --> queued
+  queued --> running: 获得执行名额
+  running --> waiting_user: 需要主人决定
+  running --> waiting_external: 等待持久外部结果
+  waiting_user --> queued: 收到有效答复
+  waiting_user --> waiting_external: 动作已批准，等待执行核对
+  waiting_external --> queued: 结果到达
+  waiting_external --> waiting_user: 核对需要主人决定
+  running --> succeeded: 满足完成条件
+  running --> failed: 无法继续
+  queued --> cancelled: 主人取消
+  running --> cancelling: 主人取消
+  waiting_user --> cancelling: 主人取消
+  waiting_external --> cancelling: 主人取消
+  cancelling --> cancelled: 停止后续派工并交代在途动作
 ```
-Cloudflare Worker (MCP aggregator / custom transport)
-  → vpc_services binding (http://home-mcp.internal:8787)
-  → Cloudflare Tunnel (cloudflared outbound)
-  → 127.0.0.1:8787 (local MCP server)
-```
 
-- `cloudflared` 只做出站，私有主机不暴露公网 hostname；
-- Worker 通过 `vpc_services` / `vpc_networks` binding 访问私有 host:port；
-- `MCPClientManager` 会拒绝 private/internal URL，所以需要一个 Worker 侧 MCP aggregator 或自定义 transport；不要直接把 `http://home-mcp.internal` 传给 `registerServer()`；
-- Workers VPC 目前是 beta，行为可能变；用它就要接受“beta 依赖”。
+等待时必须能保存恢复所需信息，不持有内存 Promise 等主人。后台命令或模型调用仍在运行时不能仅改个 waiting 状态就释放执行名额。
 
-**备选：Tunnel + Access service token**
+Task 字段至少包括：owner、conversation、goal、completionCriteria、Mandate、revision、status、priority、deadline、budget、resultRef。Mandate 说明允许的资料、工具与目标；工具结果和 Worker 报告不能扩张它。
 
-```
-Cloudflare Worker (MCP client)
-  → https://mcp-home.example.com/mcp
-  → Cloudflare Access (Service Auth)
-  → cloudflared tunnel
-  → 127.0.0.1:8787 (local MCP server)
-```
+### 5.2 Assignment 与报告
 
-- Access service token 用 `CF-Access-Client-Id` / `CF-Access-Client-Secret` 头；
-- **Access 不是 MCP 的 OAuth Authorization Server**，只适合机器认证；支持 OAuth 发现的 MCP 客户端不要指望它；
-- 只暴露 `/mcp`，不暴露管理端口；本地 MCP server 只绑定 loopback。
+一次 Assignment 绑定 taskId、taskRevision、sessionId、attempt、leaseUntil 和 fencingToken。领取用事务/条件更新，防重复派工。恢复或改派增加 fencingToken；旧 Worker 的报告与动作提议在写入口被拒绝。
 
-**V1：outbound WSS connector**
+Worker 使用结构化 Report：working / waiting_user / waiting_external / ready / failed，附摘要、证据、待决定问题和费用。Coordinator 核对完成条件后决定 Task 状态；仅“模型说完成”不算验收。
 
-```
-Connector → wss://agent.example.com/connector (mTLS / short-lived token)
-Cloud → command envelope → connector → local tool
-Connector → event → Cloud (device state changed)
-```
+Worker 不相互广播上下文，也不直接向聊天平台发信。跨任务信息先成为主 Agent 可核对的摘要，再按授权范围提供给另一任务。未实现嵌套 Worker 和通用任务 DAG。
 
-优点：无公网入口、双向事件、低延迟；缺点：要自己做协议、重连、背压、审计。MVP 不先做。
+### 5.3 名额与人工输入
 
-> 三选一的原则：**能不用公网 hostname 就不用**。Workers VPC 最优，Tunnel + Access 次之，WSS 最灵活但代码最多。
+- 最多两个活跃 Worker，Router 不占 Worker 名额；总模型请求并发初值为三，工具并发另设硬上限。
+- 给 Router 留一个模型请求预算；人工状态查询和明确取消优先走程序路径，不等 Worker 结束。
+- 用户补充、取消和状态请求优先于新后台任务；不通过无限增开 Worker 来实现优先级。
+- 短只读查询可在 Router 完成；其工具也受总预算与超时限制。
+- 只有 Worker 真正空闲且没有在途后台工作才释放名额；等待审批后由程序调度执行 Action，完成后排队唤醒 Worker。
+- 确定性巡检发现租约过期、超时或预算超限后记录事件并处理；首版不增加模型 Watchdog。
 
-### 4.4 云端能力边界
+### 5.4 修改与取消
 
-| 需求 | Cloudflare 能力 | 限制 | 本项目的用法 |
-|---|---|---|---|
-| 文件系统 | Computer Workspace | 存在 DO SQLite；适合工作文件，不适合大 repo | 存导出/临时文件；大文件放 R2 |
-| Shell/编译 | Sandbox（Container） | Debian Linux；默认断网；读不到 agent bindings | 可选：跑 Python eval/脚本；不做桌面 |
-| 浏览器 | Browser Run/CDP | session 空闲约 10 分钟丢标签页/cookie/登录态；默认 60s 超时，可 keep-alive 到 20 分钟 | Web 任务优先；登录态任务必须本地或重新授权 |
-| 桌面控制 | **无 macOS 运行时** | 只有 Linux 容器 | 只能本地 connector + Mac mini |
-| 长流程 | Workflows | 每 step 无墙钟上限；按 step/存储计费 | 重型后台任务可外移；MVP 不用 |
+取消先原子更新任务授权状态、revision，作废未发送的派工/动作和尚未交付的旧结果，再请求运行时中断。恢复后仍能看到撤销记录，旧回调不能复活任务。
 
-> 结论：**云端做“大脑 + Web 工具”，本地做“桌面 + LAN + 家庭设备”**。不要把“云端 agent”误解成“云端什么都能操作”。
+不能撤回已经发出的外部请求；用户取消时如果有在途动作，显示“停止后续执行，正在核对在途结果”，继续对该动作核对和审计。任务取消不等于物理效果被撤销；补偿也是一个新的受控动作。
 
----
+## 6. 审批、执行与结果核对
 
-## 5. 审批与执行器分离（核心）
+### 6.1 明确区分三种权限
 
-### 5.1 状态机
+| 类型 | 授权方式 |
+| --- | --- |
+| 范围内只读与资料整理 | Task Mandate + 工具资源校验 |
+| 记忆保存、一次性提醒 | 主人的明确请求 + 展示确认后的内容/时间/接收人；程序记录授权依据 |
+| 灯控制等外部写动作 | 固定参数的 Action + 主人明确审批；再执行 |
+
+给当前主人回信及发送其已确认的提醒走受限 Outbox，不为每条结果消息再次弹审批。任意第三方外发、支付、门锁等能力不注册。
+
+### 6.2 Action 状态
 
 ```mermaid
 stateDiagram-v2
   [*] --> proposed
-  proposed --> approved: 用户批准（低/中风险）
-  proposed --> denied: 用户拒绝
-  proposed --> expired: 超时
-  approved --> executing: executor 取走
-  executing --> succeeded: 外部调用成功
-  executing --> failed: 外部调用失败
-  failed --> proposed: 可重试（需重新审批）
-  succeeded --> [*]
-  denied --> [*]
-  expired --> [*]
+  proposed --> approved: 主人批准
+  proposed --> denied: 主人拒绝
+  proposed --> expired: 超过有效期
+  proposed --> superseded: 参数或任务版本改变
+  approved --> executing: 原子领取
+  approved --> superseded: 执行前撤销或修改
+  approved --> expired: 执行前过期
+  executing --> succeeded: 证据确认成功
+  executing --> failed: 确认未成功
+  executing --> unknown: 超时或记录中断
+  unknown --> reconciling: 查询外部状态
+  reconciling --> succeeded: 确认完成
+  reconciling --> failed: 确认未执行且不会迟到生效
+  reconciling --> needs_manual: 无法判定
 ```
 
-约束：
+Action 使用不可变的工具名、规范化参数、argsHash、owner、conversation、taskRevision、fencingToken、expiresAt 和 nonce。改参数必须新建 Action，不能复用旧审批。
 
-- `proposed` 只能由 `propose_action` 创建；模型不能直接写 `approved`。
-- `approved` 必须绑定：`action_id`、`args_hash`、`user_id`、`expires_at`、`nonce`。
-- `executing` 只能由 host `ActionExecutor` 进入；模型没有这个工具的调用权。
-- `succeeded/failed` 后写审计与 transcript；失败可重试，但必须重新走审批（除非策略允许幂等重试）。
-- `failed → proposed` 仅当工具幂等或已完成补偿；不可逆操作失败后进入终态，转人工处理，不自动重试。
+审批卡片仅携带不透明引用，服务端校验平台来源、点击者身份、绑定对话、动作参数与版本。approved → executing、一次性审批消费和执行待办创建在同一事务内完成。执行器发送前再校验当前授权；模型拿不到审批凭据。
 
-### 5.2 审批 token
+纯服务端审批先依赖平台验签、主人身份和持久状态，不把自建 OAuth / Passkey 作为首版任务。本地命令需要签名和重放保护，见 §8。
 
-```ts
-token = HMAC-SHA256(serverSecret, JSON.stringify({
-  actionId, argsHash, userId, expiresAt, nonce
-}))
+### 6.3 外部成功与本地落库之间的窗口
+
+典型故障：设备已接受命令，程序尚未记录成功就崩溃。恢复后不能将其当作普通失败并盲目重试。
+
+1. 过期执行租约进入 unknown，保留原 actionId 与尝试记录。
+2. 优先按外部幂等键或操作回执查询。
+3. 对绝对值设定可读取设备状态；如果只能证明“目标状态已满足”，如实记录，不能据此证明是哪次调用改变了状态。
+4. 只有工具能证明重复执行安全、授权仍有效时，才允许同 actionId 重试；旧请求仍可能迟到时不得认定“未执行”。
+5. 无法核对时进入 needs_manual，报告已知事实与后续选择。
+
+check-before-write、幂等键和本地命令缓存各自不能消除所有崩溃窗口。MVP 使用可核对的 mock 灯覆盖这些路径，真实设备测试单独报告。
+
+## 7. 持久工作、恢复与调度
+
+应用状态转移、待执行 Effect 和审计在同一事务写入；执行端不在数据库事务中等待模型或网络。Effect 使用稳定 businessKey，记录租约、次数、下次运行时间和结果，提交后领取执行。
+
+| 工作 | 重复/中断后的规则 |
+| --- | --- |
+| 入站消息 | 唯一事件键，已接受事件返回原受理状态 |
+| 向会话交付 Input | 稳定 deliveryId，查询已接受状态，再决定补投 |
+| 派工与报告 | taskRevision + fencingToken，过时结果不推进任务 |
+| 模型生成 | 按运行时策略恢复，记录可能重复的 token 与费用 |
+| 只读工具 | 有界重试；明确工具确实可重放后才声明 safe |
+| 写动作 | 已知安全才重试；可能生效的中断进入 unknown |
+| 聊天发送 | 平台幂等/查询优先；结果不明时单独核对与记录风险 |
+| 定时任务 | scheduleId + scheduledAt 唯一 runKey，防重复创建业务任务 |
+
+Pi 自己的会话 checkpoint 与应用 pa_* 表不是天然的同一个事务。通过持久 Input / Effect 与运行时幂等交付对接，不假设“两边一起提交”。新 Runtime Adapter 必须通过同一组交付和恢复契约测试。
+
+Lifecycle 统一拥有底层 alarm；Pi 唤醒、应用 Effect、提醒与租约检查都使用同一生命周期调度。DO 只有一个 alarm，不能另写一个业务 alarm 覆盖 Pi 的唤醒。
+
+恢复顺序：加载撤销/当前版本 → 恢复到期 Effect 与未知动作 → 核对旧派工 → 补投有效输入 → 重新订阅运行时视图。最终交付前再次检查版本。外部 I/O 的错误要区分“未发送”“明确拒绝”“结果未知”。
+
+## 8. 本地 Connector（增强项）
+
+主选最少代码的 Tunnel + Access 服务认证路径；仅暴露受保护的工具入口，绑定本机 loopback。Workers VPC 或自建 outbound WSS 在有实际需求后评估，不同时开发三种传输。
+
+若使用 MCPClientManager，注意其 private/internal URL 限制；VPC 需验证自定义 transport/binding。Access service token 是机器认证，不当成 MCP OAuth 授权服务器。
+
+命令信封包含 commandId、actionId、taskRevision、工具/参数、deadline、签名和 nonce。Connector 校验能力白名单、签名、有效期，持久记录命令和结果；重启后重复 actionId 查询原记录。签名密钥和设备凭据只由程序持有，不能依靠模型生成授权。
+
+撤销在命令发送前阻止旧动作；已到设备的请求仍有不可撤回窗口，Connector 也要支持 unknown / reconcile，不声称本地去重表等于 exactly-once。离线命令不得无限排队，恢复后重查 TTL 与授权。
+
+米家社区 MCP 可能仍调用小米云 API；“Connector 在本地”不代表“局域网直连”。先 mock、后真机。首版不接 macOS GUI、门锁、摄像头或任意 Shell。
+
+## 9. 提醒、记忆与隐私
+
+### 9.1 提醒
+
+Schedule 保存主人、时区、具体时间、任务模板、接收对话、有效期和授权。MVP 先支持一次性提醒；周期提醒后置，不能把确认一次的频率擅自扩大。
+
+默认 Asia/Shanghai，但以主人设置为准。创建时返回实际执行时间供确认。错过提醒按 TTL 处理：有效期内补发一次，过期记录 skipped 并可查询；不在重启后补发全部积压消息。静默时段与例外在创建时说明。
+
+### 9.2 显式记忆
+
+SQLite 保存主人明确提供的偏好/事实、sourceEventId、更新时间与当前有效版本。提供“查看记忆 / 修改 / 忘记这条”的聊天操作。
+
+Worker 只读取当前任务需要的记忆；第三方资料和模型推测不自动写入。先做结构化匹配，语义检索与自动抽取等有失败证据再增加。
+
+### 9.3 数据与密钥
+
+Provider、平台和 Connector 凭据由运行环境 secret 管理；模型上下文与日志不包含凭据。日志记录必要 ID、状态、耗时、费用和错误类别，内容按需脱敏。
+
+MVP 只承诺删除应用记忆。Pi conversation 的删除能力有限，完整历史清除/保留策略需单独验证和实现，不能用“忘记偏好”冒充“清除所有数据”。导出、备份和恢复结果需有单独记录。
+
+## 10. 应用数据模型
+
+所有表用 pa_ 前缀，不直接改写 Pi 的 pi_* 表。下表是字段与约束草案，不是已执行 migration。
+
+| 记录 | 核心字段与约束 |
+| --- | --- |
+| pa_identities / pa_conversations | 主人、平台账号/用户 ID、对话地址、绑定证据；禁止昵称匹配 |
+| pa_inbox | 唯一 channel/account/eventId、actor、replyTo、状态、原始载荷引用 |
+| pa_tasks | 主人、对话、goal、completionCriteria、Mandate、revision、状态、预算 |
+| pa_assignments | taskId、taskRevision、sessionId、attempt、租约、fencingToken、Report；同任务至多一个有效派工 |
+| pa_actions / pa_approvals | 不可变参数、hash、任务版本、批准人、nonce、有效期、一次性消费、执行证据 |
+| pa_effects | kind、唯一 businessKey、payload、状态、租约、重试次数、nextAttemptAt |
+| pa_outbox | 任务/提醒版本、目的、接收地址、业务键、平台消息 ID、投递状态 |
+| pa_schedules | 具体时间、时区、模板、接收地址、TTL、状态；每次运行使用唯一 runKey |
+| pa_memories | 主人、key/value、来源、版本、有效/删除状态 |
+| pa_audit | 主体、事件、任务/动作、before/after 摘要、traceId、时间 |
+
+提醒执行的唯一 runKey 同时约束任务/Effect 创建；重复 alarm 不创建第二份任务。报告与审计保留过时记录，但它们不能改变当前任务状态。
+
+## 11. 代码组织与技术选择
+
+建议最初只保留一个 Agent 应用和少量模块；有真实复用时再拆包：
+
+```text
+apps/agent/src/
+  channels/           # 飞书 + 测试用 fake
+  coordinator/        # Task / Assignment / Policy / Scheduler
+  runtime/            # Pi Adapter
+  actions/            # propose / approve / execute / reconcile
+  tools/              # weather HTTP / mock lamp MCP
+  delivery/           # Inbox / Outbox / Effects
+  personal/           # 显式记忆 / 一次性提醒
+  storage/            # pa_* migration 与查询
+evals/                # TS 确定性契约、fake、任务定义和报告
+spikes/               # 已有验证与下一轮技术门槛
+infra/                # Wrangler、平台设置说明、部署检查
+docs/
 ```
 
-- 服务端只存 token hash；
-- 一次性使用；过期 5–10 分钟；
-- 执行器校验：状态、token、args hash、用户、过期、nonce 未用过；
-- 高风险动作额外要求 WebAuthn/Passkey 或设备端确认；
-- **token 永不进入模型上下文**。
-
-### 5.3 为什么不让模型直接调用副作用工具
-
-- prompt injection 可以把“读网页”变成“发邮件/删数据”；
-- 模型的 tool call 参数可能被篡改/幻觉；
-- 审批需要展示“将要发生什么”，而不是“模型说它要做什么”；
-- 审计需要“谁批准了什么”，模型不是责任主体。
-
-### 5.4 可借鉴的原生 HITL 模式（但不要直接依赖）
-
-Cloudflare 其他 harness 已经有一些审批原语，可作为设计参考：
-
-- **Think**：`needsApproval` → 客户端回 `CF_AGENT_TOOL_APPROVAL`；
-- **Code Mode**：`runtime.pendingExecutions()` / `approveExecution()` 做 durable pause/resume；
-- **Computer Workspace**：`ctx.interrupt(payload)` 让可重放 run 持久暂停，`workspace.runtime.pending()` / `respond()` 作答（实验性）；
-- **Workflows**：`waitForApproval()` 适合天/月级审批。
-
-Pi Durable 没有这些内建能力，所以本项目仍采用 **DB 状态机 + host executor**。好处是：不依赖某个 harness 的 beta API，切换到 Cloudflare Agent 时审批层可以复用。
-
-### 5.5 工具执行结果如何回到对话
-
-执行器完成后，通过宿主写一条 `app.action_result` entry（或 `session.submit` 一条带 `entry.kind` 的消息），让模型看到结构化结果：
-
-```json
-{
-  "action_id": "act_123",
-  "status": "succeeded",
-  "tool": "mcp__home__set_light",
-  "result": { "device": "客厅灯", "brightness": 40 },
-  "approved_by": "user",
-  "executed_at": "2026-11-04T10:00:00Z"
-}
-```
-
-模型据此总结；如果失败，给出可执行的下一步，而不是重复调用。
-
----
-
-## 6. 记忆系统
-
-### 6.1 记忆分层
-
-| 类型 | 内容 | 存储 | 例子 |
-|---|---|---|---|
-| Profile | 稳定偏好/身份/约束 | DO SQLite | “怕冷，空调默认 26℃” |
-| Semantic | 事实/关系 | SQLite + Vectorize | “妈妈的生日是 5 月 3 日” |
-| Episodic | 事件/对话摘要 | Pi transcript + 摘要 | “上周三改了牙医预约” |
-| Procedural | 技能/流程 | Skills / prompt templates | “每周一生成周报” |
-
-### 6.2 写入管线
-
-```
-对话/工具结果
-  → 候选抽取（LLM + JSON schema）
-  → 分类（preference/fact/event/task）
-  → 敏感度分级（PII/健康/财务/家庭）
-  → 去重（entity + predicate + normalized value）
-  → 冲突检测（新值 vs 旧值；保留 valid_from/valid_to）
-  → 置信度（用户明说 > 推断 > 第三方内容）
-  → 写入 SQLite + 异步 embedding → Vectorize
-```
-
-规则：
-
-- 只从**用户直接输入**或**已验证来源**抽取高置信记忆；网页/邮件内容标记 `untrusted`，不自动写成长期偏好；
-- 不存密码/token/完整卡号；需要时存 secret reference；
-- 每条记忆有 `source_entry_id`、`confidence`、`sensitivity`、`valid_from/valid_to`；
-- 用户可查看/编辑/删除/导出；“忘记我”触发软删除 + 向量删除；
-- 冲突不覆盖历史，旧值 `valid_to` 关闭，保留审计。
-
-### 6.3 检索
-
-```
-query rewrite
-  → 结构化过滤（user, type, sensitivity, valid)
-  → hybrid: Vectorize top-k + SQLite FTS5 top-k
-  → rerank（交叉编码器或 LLM）
-  → 去重/多样性
-  → token budget（默认 2–4k）
-  → 注入 <memory source="...">，带 provenance
-```
-
-评测：记忆命中率、错误记忆率、任务成功率增益、token 成本。参考 Mem0 的“抽取-整合-检索”思路，但不要直接照搬其 benchmark 数字（厂商自测，需在自己的任务集上验证）。
-
----
-
-## 7. 调度与主动性
-
-### 7.1 Schedule 模型
-
-```ts
-type Schedule = {
-  id: string;
-  userId: string;
-  kind: "once" | "cron";
-  expression: string;       // ISO time or cron
-  timezone: string;         // IANA
-  prompt: string;           // 触发时注入的任务
-  constraints: {
-    quietHours?: [string, string];
-    maxRunsPerDay?: number;
-    requiresConfirmation?: boolean;
-  };
-  nextRunAt: number;
-  status: "active" | "paused" | "done";
-  lastRunAt?: number;
-};
-```
-
-### 7.2 执行语义
-
-- 每个 schedule 触发时生成 `run_key = schedule_id + scheduled_at`，幂等；
-- 到点由 DO alarm/Lifecycle job 唤醒；多个 schedule 取最早时间，避免覆盖 alarm；
-- 错过执行：按策略 `run_once` / `skip` / `catch_up`，默认 `run_once`（避免醒来刷屏）；
-- 长任务 spawn 子任务，不阻塞 scheduler；
-- 主动消息先进“待发送”队列，尊重 quiet hours；用户可 snooze/cancel；
-- 所有主动消息带“为什么现在发”和“如何关闭”。
-
----
-
-## 8. 本地 Connector
-
-### 8.1 职责
-
-- 向云端注册能力（manifest）；
-- 接收签名命令，调用本地 MCP/CLI/Shortcuts；
-- 回传结果/事件；
-- 心跳、重连、背压、审计；
-- 本地 kill switch（一键停止所有远程命令）。
-
-### 8.2 命令信封
-
-```json
-{
-  "command_id": "cmd_01",
-  "action_id": "act_123",
-  "tool": "miot.set_brightness",
-  "args": { "room": "客厅", "device": "吸顶灯", "value": 40 },
-  "deadline_ms": 10000,
-  "approval_token": "…",
-  "traceparent": "00-…",
-  "nonce": "…"
-}
-```
-
-- 传输：mTLS 或短期 HMAC token；
-- 重放保护：nonce + command_id + deadline；
-- 本地只执行 allowlist 内的 tool；参数用 schema 校验，禁止 shell 拼接；
-- 高风险工具（门锁/摄像头/支付）默认不注册；
-- 记录本地审计，云端记录命令摘要与结果。
-
-### 8.3 设备接入
-
-- **米家**：本地跑 `miot-mcp`（token 不离开本机），但注意它**仍走小米云 API**，不是局域网直连；社区实现没有可用的 LAN 路径。云端只看到“家庭/房间/设备/能力”抽象。LAN 只能走官方 **Xiaomi Miloco**（中枢网关 + mTLS，非商业许可），或自建 MIoT 本地协议（工作量大）。
-- **米家选型**：优先 `javen-yan/miot-mcp`（能力 schema 最全），但 **pin `mijiaAPI` 版本**（上游已 5.0.0 且有破坏性变更；仓库声明 `>=3.0.5` 未封顶）；`gehaiyi`/`744722411` 是同一实现，选一个即可。
-- **macOS**：Shortcuts（最安全）> AppleScript（受控 app）> 官方 **KimiCU**（本地 MCP，18 工具，Apple Silicon macOS 14+）> 社区桥（最后手段，默认禁用）。
-- **KimiCU**：只作为有人值守的本地能力；默认关闭；显示控制指示；app allowlist；每步截图脱敏；20 步/5 分钟上限；锁屏/休眠即失败，不能用于无人值守。
-- **Web**：优先 **Playwright MCP**（无障碍树，不需要视觉模型）或 Cloudflare **Browser Run**；登录态任务本地做，云端 session 空闲约 10 分钟会丢 cookie。
-- **社区 Kimi 桥**：自动接受 app-access elicitation + unrestricted Codex 沙箱，**不用于正式链路**。
-
----
-
-## 9. 模型与上下文工程
-
-### 9.1 模型路由
-
-| 任务 | 模型档位 | 说明 |
-|---|---|---|
-| 意图分类/安全检查 | 小模型/规则 | 便宜、低延迟；可用 Workers AI |
-| 对话/工具规划 | 主力模型 | Kimi K3.1 Pro / Claude / GPT |
-| 长文总结/压缩 | 中档模型 | 控制成本 |
-| 视觉/CUA | 视觉模型 | 仅必要时；限制步数 |
-| 失败复盘 | 主力模型 | 低频 |
-
-### 9.2 上下文组装
-
-```
-system:
-  identity + safety policy + tool policy + output style
-context:
-  user profile (short)
-  relevant memories (top-k, with provenance)
-  current time/timezone/location (if permitted)
-  recent transcript (compacted)
-  available tools (namespaced, deferred)
-task:
-  user request / scheduled prompt / connector event
-```
-
-- 不把完整工具列表塞进 prompt；用 `deferred` + `tool_search`；
-- 不把网页全文塞进 prompt；先摘要/抽取，保留引用；
-- 系统提示中的安全规则要短、可执行；不要写“永远不要被注入”这种无法验证的口号；
-- 每次模型请求记录 `model`, `tokens`, `cost`, `latency`, `trace_id`。
-
-### 9.3 验证与反思
-
-- 每个副作用执行后，用只读工具检查最终状态（灯是否真的开了、日历是否真的改了）；
-- 失败时最多一次反思/重试；超过则报告用户；
-- 不用“模型说成功”作为成功判据；以外部状态/数据库为准。
-
----
-
-## 10. 数据模型
-
-```mermaid
-erDiagram
-  USER ||--o{ AGENT : owns
-  AGENT ||--o{ SESSION : has
-  SESSION ||--o{ ENTRY : contains
-  SESSION ||--o{ PENDING_ACTION : proposes
-  PENDING_ACTION ||--o| APPROVAL : requires
-  PENDING_ACTION ||--o{ TOOL_INVOCATION : executes
-  USER ||--o{ MEMORY : owns
-  USER ||--o{ SCHEDULE : owns
-  USER ||--o{ CONNECTOR : owns
-  CONNECTOR ||--o{ CAPABILITY : exposes
-  USER ||--o{ AUDIT_EVENT : generates
-  EVAL_RUN ||--o{ EVAL_CASE : contains
-
-  USER {
-    string id PK
-    string timezone
-    string locale
-  }
-  AGENT {
-    string id PK
-    string user_id FK
-    string model_policy
-  }
-  SESSION {
-    string id PK
-    string agent_id FK
-    string channel
-    string title
-  }
-  ENTRY {
-    string id PK
-    string session_id FK
-    string kind
-    json payload
-    datetime created_at
-  }
-  PENDING_ACTION {
-    string id PK
-    string session_id FK
-    string tool
-    json args
-    string args_hash
-    string risk
-    string status
-    datetime expires_at
-  }
-  APPROVAL {
-    string id PK
-    string action_id FK
-    string decision
-    string approver
-    string method
-    datetime created_at
-  }
-  TOOL_INVOCATION {
-    string id PK
-    string action_id FK
-    string status
-    int attempt
-    json result
-    datetime started_at
-  }
-  MEMORY {
-    string id PK
-    string user_id FK
-    string type
-    string entity
-    string predicate
-    json value
-    float confidence
-    string sensitivity
-    string source_entry_id
-    datetime valid_from
-    datetime valid_to
-  }
-  SCHEDULE {
-    string id PK
-    string user_id FK
-    string expression
-    string timezone
-    string prompt
-    datetime next_run_at
-    string status
-  }
-  CONNECTOR {
-    string id PK
-    string user_id FK
-    string kind
-    string status
-    datetime last_seen_at
-  }
-  CAPABILITY {
-    string id PK
-    string connector_id FK
-    string name
-    string risk
-    json schema
-  }
-  AUDIT_EVENT {
-    string id PK
-    string user_id FK
-    string actor
-    string action
-    string target
-    json before
-    json after
-    string trace_id
-    datetime created_at
-  }
-  EVAL_RUN {
-    string id PK
-    string suite
-    string model
-    string commit
-    json metrics
-    datetime created_at
-  }
-  EVAL_CASE {
-    string id PK
-    string run_id FK
-    string task_id
-    string status
-    json scores
-  }
-```
-
-> Pi 自己的 `pi_*` 表（transcript/task/inbox/usage）不重复建模；应用表用 `pa_*` 前缀，和 Pi 表在同一个 DO SQLite 中共存。
-
----
-
-## 11. 关键流程
-
-### 11.1 聊天 → 工具 → 审批 → 执行
-
-```mermaid
-sequenceDiagram
-  participant U as User
-  participant W as Worker/Web
-  participant DO as DO + Pi
-  participant M as Model
-  participant A as ActionExecutor
-  participant T as MCP/Local Tool
-
-  U->>W: “客厅灯太亮，调到 40%”
-  W->>DO: submit (requestId)
-  DO->>M: context + tools
-  M->>DO: propose_action(home.set_brightness, 40%)
-  DO->>DO: 写 pending_action + 风险分级
-  DO-->>W: watch: pending approval
-  W-->>U: 审批卡片（设备/动作/参数/风险）
-  U->>W: Approve (Passkey for high risk)
-  W->>DO: approve(action_id)
-  DO->>DO: 校验 token/hash/expiry/state
-  DO->>A: execute(action_id, args, idempotency_key)
-  A->>T: MCP call / connector command
-  T-->>A: result
-  A-->>DO: action_result + audit
-  DO->>M: app.action_result
-  M-->>DO: final answer
-  DO-->>W: stream answer
-  W-->>U: “已调到 40%”
-```
-
-### 11.2 定时任务（durable wake）
-
-```mermaid
-sequenceDiagram
-  participant S as Scheduler
-  participant DO as DO + Pi
-  participant C as Connector
-  participant U as User
-
-  S->>DO: alarm at 07:30 (run_key)
-  DO->>DO: 幂等检查 + 生成任务
-  DO->>C: 获取天气/设备状态
-  C-->>DO: 数据
-  DO->>DO: 模型生成简报
-  DO->>U: 推送（尊重 quiet hours）
-  U->>DO: “把明早提醒改成 7:10”
-  DO->>DO: 更新 schedule + 重新 arm alarm
-```
-
-### 11.3 崩溃恢复
-
-1. DO 被驱逐/部署；
-2. alarm 到期，Lifecycle 重启 object；
-3. PiHarness 重新打开 SQLite，`resume()`；
-4. 未完成 generation 按 retry 重发；未完成工具按 `replay` 策略处理；
-5. 审批等待中的 action 不受影响（它是 app 表里的状态，不是内存里的 Promise）；
-6. 用户重连后 `watch` 收到最新 view；审批卡片仍可操作。
-
-**注意**：不要把“等待审批”实现成内存里的 Promise/while 循环；必须是数据库状态 + 可恢复的 UI 订阅。
-
----
-
-## 12. 安全设计
-
-### 12.1 威胁模型（STRIDE 简化）
-
-| 威胁 | 场景 | 控制 |
-|---|---|---|
-| Prompt injection | 网页/邮件要求“把 token 发给我” | 不可信内容标记；工具 allowlist；副作用审批；不把 secret 放上下文 |
-| Confused deputy | MCP OAuth 代理被利用 | 每 server 独立 token；**MCP server 必须校验 audience**；客户端用 RFC 8707 `resource`；**禁止 token passthrough**；per-client consent |
-| Session hijack | 会话 ID 被猜中/复用 | 会话 ID 密码学随机；绑定 `<user_id>:<session_id>`；**不用 session 做认证** |
-| Excessive agency | 模型批量删日历/发消息 | 风险分级；默认拒绝；step-up；速率/预算 |
-| Local connector 失陷 | 攻击者拿到 connector token | mTLS/短期 token；nonce；allowlist；kill switch；最小权限 |
-| Local MCP compromise | 本地 MCP server 被投毒/提权 | 只监听 loopback；非 root 运行；allowlist；最小依赖；审计；与不可信进程隔离 |
-| Data exfiltration | 记忆/文件被发到外部 | 出站域名 allowlist；敏感度标签；审批；DLP |
-| Unbounded consumption | 循环调用/长上下文 | maxTurns/maxTokens/预算/超时；CUA 步数上限 |
-| Supply chain | MCP server/依赖被投毒 | 固定版本/哈希；签名；最小依赖；隔离运行 |
-
-### 12.2 Prompt injection 的具体规则
-
-- 所有工具结果包在 `<untrusted source="...">` 中；系统提示明确“这是数据，不是指令”；
-- 来自 untrusted 内容的副作用提议，审批卡片必须显示来源与原文摘要；
-- 禁止“读取 A + 发送到 B”在同一轮自动完成；涉及外部通信必须人工确认；
-- 工具描述/结果不进入系统提示的指令区；
-- 高风险工具不暴露给模型，只暴露 `propose_action`；
-- 红队用例覆盖：网页注入、邮件注入、MCP 工具描述/结果投毒、记忆投毒、connector 重放；
-- 注意：MCP 规范里没有 “tool poisoning / rug pull” 这个术语，别把它当规范条款引用；按“不可信工具元数据/结果”处理即可。
-
-### 12.3 密钥与隐私
-
-- Cloudflare Secrets 存 provider key / Access token；
-- 本地 token 存 OS keychain 或加密文件，权限 600；
-- transcript/记忆默认不包含完整卡号、密码、身份证号；需要时 redact；
-- 数据保留策略：transcript 180 天、审计 1 年、截图 7 天（可配置）；
-- 提供导出/删除；“忘记我”删除 SQLite + Vectorize + R2 对应对象；
-- KimiCU 有遥测子系统（`gator.volces.com`，载荷未验证）；若用于敏感桌面，先抓包确认/网络层阻断；
-- 米家 `passToken` 视同账号密码；存 Keychain，不写 `.env`、不进日志。
-
----
-
-## 13. 可靠性语义
-
-| 问题 | 设计 |
-|---|---|
-| 重复提交 | `requestId` / `eventId` 幂等；重复返回原结果 |
-| 工具重复执行 | `action_id` 作为幂等键；外部 API 支持时透传；否则 check-before-write |
-| 进程崩溃 | Pi task checkpoint；审批状态在 DB；恢复后继续 |
-| 模型超时 | retry + fallback model；单请求超时；partial 保留 |
-| MCP 断连 | 指数退避重连；circuit breaker；降级到缓存/只读 |
-| 本地离线 | 命令进 outbox；TTL；用户可见“设备离线”；不无限重试 |
-| 长任务 | 分步 + checkpoint；max wall time；可取消 |
-| 预算 | 每任务 token/成本上限；超限停止并报告 |
-| 审计 | 每个副作用记录 before/after、approver、trace_id |
-
-**一致性**：外部副作用无法做到 exactly-once；目标是 **at-least-once + 幂等 + 可审计**。对不可逆操作（转账、开门）默认不做自动重试。
-
----
-
-## 14. API 面（MVP）
-
-| Method | Path | 用途 |
-|---|---|---|
-| `POST` | `/api/sessions/:id/messages` | 发消息；返回 SSE/WS 流 |
-| `GET` | `/api/sessions/:id/stream` | WebSocket/SSE 订阅 |
-| `GET` | `/api/actions?status=pending` | 审批收件箱 |
-| `POST` | `/api/actions/:id/approve` | 批准（高风险要求 step-up） |
-| `POST` | `/api/actions/:id/deny` | 拒绝 |
-| `GET` | `/api/memories` | 记忆列表/搜索 |
-| `PATCH` | `/api/memories/:id` | 编辑 |
-| `DELETE` | `/api/memories/:id` | 删除/忘记 |
-| `GET/POST` | `/api/schedules` | 定时任务 |
-| `PATCH/DELETE` | `/api/schedules/:id` | 暂停/修改/删除 |
-| `GET` | `/api/connectors` | 本地 connector 状态 |
-| `POST` | `/api/connectors/:id/heartbeat` | 心跳（或 WSS） |
-| `GET` | `/api/audit` | 审计日志 |
-| `POST` | `/api/evals/run` | 内部触发评测（需管理员） |
-
-认证：Cloudflare Access（用户）+ service token（connector）；API 不接受裸公网访问。
-
----
-
-## 15. 仓库结构（建议）
-
-```
-personal-agent/
-├── apps/
-│   ├── web/                 # Next.js/React：聊天、审批、记忆、审计
-│   └── agent/               # Cloudflare Worker + DO + PiHarness
-├── packages/
-│   ├── shared/              # zod schema、类型、错误码
-│   ├── policy/              # 风险分级、审批、预算
-│   ├── mcp-adapter/         # MCP -> Pi tool
-│   ├── connector/           # 本地 connector（Node/Bun）
-│   └── mcp-servers/
-│       ├── home/            # 米家 MCP 包装/适配
-│       └── mac/             # Shortcuts/AppleScript
-├── evals/                   # Python：任务集、grader、故障注入、报告
-├── infra/                   # wrangler、cloudflared、Access、CI
-├── docs/
-└── spikes/
-```
-
-### 技术栈
-
-| 层 | 选型 |
-|---|---|
-| Runtime | TypeScript, Node 26/Bun, Pi Durable 1.5, Cloudflare Agents SDK 0.33 |
-| Edge | Workers, Durable Objects (SQLite), D1, R2, Vectorize, AI Gateway, Browser Run |
-| UI | React/Next.js on Workers（或 Vite SPA + Worker API） |
-| Validation | Zod / pi-schema（工具参数） |
-| Local | Node/Bun connector, Python MCP servers（米家）, `cloudflared` |
-| Evals | Python 3.12 + pytest/httpx；LLM judge；OTel trace |
-| Observability | OpenTelemetry, Langfuse/Phoenix, Cloudflare Workers Logs |
-| CI/CD | GitHub Actions, `wrangler deploy`, `pytest`, `vitest` |
-
----
-
-## 16. 权衡与 fallback
-
-### 为什么不是“一个巨大的系统提示 + 一堆工具”
-
-- 上下文成本高、工具选择准确率下降；
-- 安全边界不清晰；
-- 失败无法归因。
-本方案用 **工具分层 + 渐进披露 + 审批状态机** 把复杂度放在工程层，而不是 prompt 层。
-
-### 为什么不是“多 Agent 自治”
-
-- 个人 Agent 的价值是可靠完成小事，不是模拟组织；
-- 多 Agent 会增加不可观测的对话与成本；
-- MVP 单 Agent + 少量 subagent（研究/浏览/家庭）即可；subagent 只返回摘要，不直接执行副作用。
-
-### 如果 PiHarness 阻塞
-
-保留窄接口：
-
-```ts
-interface AgentRuntime {
-  submit(input: AgentInput): Promise<Receipt>;
-  watch(sessionId: string): AsyncIterable<ViewEvent>;
-  approve(actionId: string, token: string): Promise<void>;
-  cancel(sessionId: string): Promise<void>;
-}
-```
-
-2 天内切到 Cloudflare Agent + AI SDK：保留 policy/approval/memory/connector，只替换 runtime adapter。不要把业务逻辑写进 Pi extension hook。
-
----
-
-## 17. 关键来源
-
-- Pi Durable 概念/限制：https://github.com/earendil-works/pi/blob/main/packages/durable/README.md
-- Cloudflare PiHarness（含 Limitations）：https://developers.cloudflare.com/agents/harnesses/pi/
-- Cloudflare Lifecycle：https://developers.cloudflare.com/agents/runtime/lifecycle/
-- Cloudflare MCPClientManager（private address 限制）：https://developers.cloudflare.com/agents/runtime/capabilities/mcp-client-manager/
-- Cloudflare Workers VPC（beta）：https://developers.cloudflare.com/workers-vpc/
-- Cloudflare Tunnel：https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/
-- Cloudflare Access service tokens：https://developers.cloudflare.com/cloudflare-one/access-controls/service-credentials/service-tokens/
-- Cloudflare remote MCP + OAuth：https://developers.cloudflare.com/agents/model-context-protocol/guides/remote-mcp-server/
-- Durable Objects limits：https://developers.cloudflare.com/durable-objects/platform/limits/
-- Durable Objects lifecycle/pricing：https://developers.cloudflare.com/durable-objects/platform/pricing/
-- MCP security best practices：https://modelcontextprotocol.io/specification/2025-11-25/basic/security_best_practices
-- OWASP LLM Top 10 2025：https://genai.owasp.org/llm-top-10/
-- Kimi 官方能力说明（Kimi Computer Use）：https://www.kimi.com/zh-cn/help/others/capability
-- Kimi Computer Use 社区桥：https://github.com/songkeys/kimi-computer-use
-- Playwright MCP：https://github.com/microsoft/playwright-mcp
-- 米家 MCP：https://github.com/javen-yan/miot-mcp
-- 米家 API（GPL-3.0）：https://github.com/Do1e/mijia-api
-- Xiaomi Miloco：https://github.com/XiaoMi/xiaomi-miloco
+- 运行时：TypeScript、Pi Durable / Pi AI；当前 spike 固定 1.5.0，Cloudflare 集成候选 agents 0.33.0。技术门槛中确认兼容后锁定实际版本和 lockfile。
+- 模型：一个真实 provider，Router / Worker 先共用，不预先做动态路由。
+- 存储与托管：DO SQLite + Lifecycle 为主；替代路线只在门槛触发后实施。
+- 验证：先用 TypeScript 统一确定性检查；Python、LLM judge、完整 OTel 后端按需要后置。
+- 管理界面：先聊天命令，后最小 Web 管理页；不需要先搭完整 Next.js 聊天站。
+
+## 12. 技术依据与待验证清单
+
+原理依据：
+
+- [Cloudflare PiHarness：独立会话、恢复、版本与限制](https://developers.cloudflare.com/agents/harnesses/pi/)
+- [DO alarm：单个 alarm 与至少一次执行](https://developers.cloudflare.com/durable-objects/api/alarms/)
+- [Lifecycle](https://developers.cloudflare.com/agents/runtime/lifecycle/)
+- [MCPClientManager](https://developers.cloudflare.com/agents/runtime/capabilities/mcp-client-manager/)
+- [dsh-superagent 领域模型](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/main/docs/001-domain.md)
+- [dsh-superagent 执行与恢复](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/main/docs/003-execution.md)
+- [dsh-superagent Effects / Outbox](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/main/docs/007-architecture.md)
+
+必须用代码验证：平台真实回调和主动发送；Pi 提交幂等与多会话；Worker 忙碌时响应新输入；进程中断后的恢复；审批重复/过期/撤销；外部已生效但未落库；消息已发送但回执未落库。版本隔离、接口名称和平台能力不能仅凭本文认定已实现。

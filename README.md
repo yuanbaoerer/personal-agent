@@ -1,72 +1,67 @@
 # Personal Agent
 
-> 云端大脑 + 本地手脚 + 可审计执行：一个可长期运行、能主动做事、但不会绕过人的个人 Agent。
+> 聊天软件里的个人助手：一个主 Agent 协调多个任务 Worker，云端持续运行，本地按授权执行，结果回到原对话。
 
-本仓库当前处于 **调研 / 架构 / 可行性验证** 阶段，不是完成品。仓库里已包含一个可运行的 Pi Durable 本地 spike，用于验证“持久化 transcript + 工具调用 + 审批拦截 + 重启恢复”这条核心链路。
+**当前阶段：规划与可行性验证。** 现有可执行代码只有一个 Pi Durable 本地 spike；聊天渠道、多 Agent 调度、云端部署、真实审批和通知尚未实现。仓库记录了旧 spike 的结果，本轮文档整理未重跑该脚本。
 
-## 结论先行（2026-11-04）
+## 产品方向
 
-| 问题 | 结论 |
-|---|---|
-| 截图里的 `Pi Durable + Pi SDK + Cloudflare` 是否真实存在？ | **是。** Pi 1.0 与 Pi Durable 于 2026-10-01 发布；Cloudflare Agents SDK 的 `PiHarness` 于 2026-10-02 进入 beta，官方文档在 2026-11-03 仍在更新。 |
-| 这套栈能不能做 personal agent？ | **能，但 PiHarness 仍是 beta、Pi Durable 仍是 experimental。** 适合个人项目/求职作品，不适合直接当生产系统。 |
-| 截图里的“Kimi computer use MCP”是什么？ | **要分两层。** 官方确实有 **KimiCU.app**（Kimi Work 插件 + 本地 macOS 桌面操作 MCP server，18 个工具，Moonshot 签名/公证），但它是**本地能力层**，不是云端模型能力；只支持 **Apple Silicon macOS 14+**，锁屏即失效，不能部署在 Cloudflare/Linux。另有 `songkeys/kimi-computer-use` 社区桥接，借本机 OpenAI Computer Use 给 Kimi Code，依赖 ChatGPT/Codex，且会自动接受 app 访问、用 unrestricted Codex 沙箱，风险更高。 |
-| 米家 MCP 能不能接？ | **能，但属于非官方链路。** 社区实现通过米家账号二维码登录拿 token，走小米云 API；token 会过期，设备覆盖取决于 MIoT 映射，存在风控与隐私风险。社区 MCP **没有可用的局域网直连**；唯一 LAN 路径是官方 Xiaomi Miloco（中枢网关 + mTLS，非商业许可），但它不是 MCP。 |
-| 对 Agent 开发岗位的适配度？ | **Agent Harness/Runtime 最强，应用/平台方向强，算法/Infra 方向中等。** 项目能证明 MCP、工具编排、记忆、评测、可观测性、HITL、长任务与 durable execution；缺的是 K8s/Go/大规模并发、训练/RL、推理服务。 |
-| 最值得做的差异化是什么？ | 不是“再做一个 RAG 聊天机器人”，而是 **durable execution + 副作用审批 + 云端/本地分层 + 可复现评测**。这四件事在候选人项目里明显更稀缺。 |
+你在飞书、微信或 QQ 里与同一个助手交流。它能整理资料、查询天气、记住明确偏好、安排提醒；长任务后台执行时，仍可接收你的新要求、补充和取消指令。会改变外部状态的动作先确认，再由程序执行。
 
-## 推荐方案（一句话）
+**首发默认：飞书应用机器人私聊。** 第一版只接一个渠道；微信、QQ 后续通过独立 Adapter 接入。Web 降为管理与排查入口。
 
-用 **Cloudflare Durable Object 承载 Pi Durable 的持久化 Agent runtime**，用 **MCP 工具网关 + 两阶段审批** 管住副作用，用 **本地 connector（Mac mini / 家庭服务器）** 接米家与 macOS 能力，用 **Python eval harness + OTel trace** 把“感觉能用”变成可验证指标。
+参考 [dsh-superagent-prototype](https://github.com/deepseek-ai/dsh-superagent-prototype) 的任务授权、独立 Worker 会话、并发限制和持久化消息投递思路。产品对外保持一个助手身份，MVP 内部最多运行两个任务 Worker。
+
+## 目标架构
 
 ```mermaid
-flowchart LR
-  U["Web / PWA / IM"] --> W["Cloudflare Worker<br/>API + WebSocket"]
-  W --> DO["Durable Object / 用户<br/>Pi Durable Harness"]
-  DO --> GW["模型路由<br/>Kimi / Claude / GPT"]
-  DO --> MCP["MCP 工具网关<br/>策略 / 审批 / 审计"]
-  MCP --> SAAS["云端 MCP<br/>日历 / 搜索 / GitHub"]
-  MCP --> TUN["Cloudflare VPC / Tunnel + Access"]
-  TUN --> CONN["本地 Connector<br/>Mac mini / 家庭服务器"]
-  CONN --> HOME["米家 / Matter / 局域网设备"]
-  CONN --> MAC["macOS / 浏览器 / CUA"]
-  DO --> MEM["记忆<br/>D1 / Vectorize / R2"]
-  DO --> OBS["Trace / Eval<br/>OTel + Python harness"]
+flowchart TB
+  IM["聊天渠道<br/>MVP：飞书私聊"] <--> CH["渠道 Adapter<br/>验签 · 身份 · 去重"]
+  CH --> C["Coordinator<br/>任务状态 · Inbox · Outbox"]
+  C <--> R["主 Agent / Router<br/>理解 · 分派 · 组织回复"]
+  C --> S["持久化任务调度器<br/>最多两个并发 Worker"]
+  S --> W1["Worker / 任务 A"]
+  S --> W2["Worker / 任务 B"]
+  W1 -->|报告| C
+  W2 -->|报告| C
+  W1 --> A["Action 模块<br/>提议 · 审批 · 执行 · 核对"]
+  W2 --> A
+  A --> T["天气 / MCP mock 灯<br/>增强项：本地 Connector"]
+  C --> DB["SQLite<br/>任务 · 派工 · 动作 · 记忆 · 提醒"]
+  C --> CH
 ```
 
-> 上图是目标态；MVP 只做其中一条竖切：**聊天 → 工具 → 审批 → 执行 → 审计 → 记忆**，再加一个定时任务和一个米家只读/单控演示。
+主选技术栈为 TypeScript + Pi Durable + Cloudflare Durable Object / Lifecycle。一个用户的多个独立会话能否满足并发与恢复要求，是第一阶段验证项。模型先接一个；存储先用 SQLite；不把 D1、Vectorize、完整 Web UI 或多模型路由设为首版依赖。
 
-> **本机约束**：当前开发机是 **x64 macOS**；官方 KimiCU 二进制是 **arm64-only**，无法直接运行。桌面能力请先以 Playwright MCP / Browser Run 替代；要用 KimiCU 需 Apple Silicon Mac。详见 `docs/01-feasibility.md` §3.4。
+## MVP 与实施顺序
 
-## 选型清单（结论）
+| 阶段 | 交付 |
+| --- | --- |
+| 前三个工作日 | 真实聊天收发、回调、云端多会话恢复验证；明确主选或替代路线 |
+| 第 1 周 | 渠道 Adapter、持久 Inbox/Outbox、真实模型、首批关键回归 |
+| 第 2 周 | Task / Assignment、两个 Worker、人工输入优先、修改和取消 |
+| 第 3 周 | mock 灯 MCP、审批、幂等执行、结果不确定时的核对 |
+| 第 4 周 | 一个持久提醒、显式偏好记忆、开始日常使用；有余量接真实灯 |
+| 第 5–6 周 | 扩展评测、修复失败、最小管理页、演示与交付缓冲 |
 
-| 用 | 不用 / 缓用 |
-|---|---|
-| Pi Durable + Cloudflare `PiHarness`，锁定 `agents@0.33.0` / `pi-durable@1.5.0` | 不追 Pi minor 升级；不把 beta 当生产基座 |
-| Workers VPC（beta）或 Tunnel + Access 接本地 MCP | 不把本地 MCP 直接暴露公网；不把 Access 当 MCP OAuth AS |
-| Playwright MCP / Browser Run 做 Web 任务 | 不把 KimiCU 当云端核心；社区 Kimi 桥不用于正式链路 |
-| 米家只读 + 单灯控制，先 mock 后真机 | 不碰门锁/摄像头/支付；不依赖非官方 API 做无人值守 |
-| 两阶段审批 + 幂等 + 审计 + 40 条 eval | 不让模型直接持有副作用执行权；不写“生产级”而没有数字 |
+六周是工作预算，不承诺在恢复或审批未过关时继续加功能。技术门槛、统一替代规则和每周验收以 [构建计划](docs/04-build-plan.md) 为准。
 
-## 下一步（按顺序）
+首版验收：**一个真实聊天渠道中，两项任务并发且可以补充/取消；一次受控写操作可审批、核对与审计；关闭客户端和重启后，提醒仍能发送。** mock 与真实设备证据分别标注。
 
-1. **Week 1**：部署 Cloudflare 骨架 + PiHarness + 流式聊天；若 2 周内无法稳定恢复，切 Cloudflare Agent + AI SDK。
-2. **Week 2**：MCP 适配器 + 3 个工具 + `propose_action`/审批/审计；先 mock，后接真机。
-3. **Week 3–4**：记忆 + 定时 + 本地 connector；用 Workers VPC（或 Tunnel + Access）。
-4. **Week 5–6**：40 条 eval + 故障注入 + OTel + 5 分钟 Demo；用实测数字替换简历里的 `X/Y/Z`。
+## 文档导航
 
-## 文档索引
+| 文档 | 用途 |
+| --- | --- |
+| [00 · 产品规划](docs/00-product-plan.md) | 场景、首发渠道、MVP、后置能力与 DSH 借鉴 |
+| [领域术语](CONTEXT.md) | Task、Assignment、Mandate、Action、Approval 的含义 |
+| [02 · 架构](docs/02-architecture.md) | 模块职责、调度、消息投递、审批、恢复与数据模型 |
+| [04 · 构建计划](docs/04-build-plan.md) | 技术门槛、六周里程碑、评测和交付标准 |
+| [01 · 可行性资料](docs/01-feasibility.md) | 原始技术调研；产品决策以 00/02/04 为准 |
+| [03 · 岗位适配](docs/03-job-fit.md) | 项目证据与岗位要求；规划不能写成已实现 |
+| [05 · JD 附录](docs/05-jd-appendix.md) | 原始岗位样本，不作为功能清单 |
+| [本地 spike](spikes/pi-durable-smoke/README.md) | 唯一已有运行原型及其证据边界 |
 
-| 文档 | 内容 |
-|---|---|
-| [`docs/01-feasibility.md`](docs/01-feasibility.md) | 截图逐项核实、技术栈可行性、限制、成本、替代方案、Go/No-Go |
-| [`docs/02-architecture.md`](docs/02-architecture.md) | 目标架构、数据模型、关键流程、审批状态机、安全与可靠性设计 |
-| [`docs/03-job-fit.md`](docs/03-job-fit.md) | 2027 校招/社招 JD 证据、能力矩阵、简历 bullet、面试讲法 |
-| [`docs/04-build-plan.md`](docs/04-build-plan.md) | 6 周 MVP 计划、验收标准、评测集、Demo 脚本、风险登记 |
-| [`docs/05-jd-appendix.md`](docs/05-jd-appendix.md) | 17 个中国 + 7 个海外岗位样本、能力计数、链接底稿 |
-| [`spikes/pi-durable-smoke/`](spikes/pi-durable-smoke/) | 已运行的 Pi Durable 本地 spike |
-
-## 已运行的 spike
+## 已有 spike
 
 ```bash
 cd spikes/pi-durable-smoke
@@ -74,33 +69,17 @@ npm install
 npm run smoke
 ```
 
-实测结果（2026-11-04，Node 26.12.0，`@earendil-works/pi-durable@1.5.0`）：
+仓库记录的环境：Node 26.12.0，Pi Durable 1.5.0，faux provider，无需 API key。输出包括：
 
 ```json
 {
-  "answer": "I need approval before doing that.",
   "executed": false,
-  "toolResult": "<harness>\n[error] Tool call blocked: Needs human approval\n</harness>",
-  "entryCount": 5
-}
-{
+  "entryCount": 5,
   "reopenedEntryCount": 5,
   "sameRoot": true
 }
 ```
 
-它证明了四件事：
+原脚本分两次输出，上面仅合并列出关键字段。它演示了工具调用被 beforeTool 拦截，以及任务结束后关闭运行时、重新打开同一 SQLite 文件时会话记录仍在。脚本主要打印结果，尚未对这些字段逐项断言。
 
-1. Pi Durable 能把 transcript 落到 SQLite；
-2. 工具调用会经过 `beforeTool` hook；
-3. hook 可以在副作用发生前阻断调用，模型会收到结构化的 error result；
-4. 关闭并重新打开同一个 SQLite 文件后，root session 与 5 条 entry 仍在。
-
-这正好是“审批 + 持久化”原语的可行性证据；真正的审批 UI、token、执行器分离还需要在架构层补齐（见 `docs/02-architecture.md`）。
-
-## 非目标
-
-- 不做通用桌面自动化产品，不承诺“任意 GUI 任务都能跑”。
-- 不做多租户 SaaS；MVP 是单用户、单 Agent、可审计。
-- 不训练模型；模型只通过 provider 抽象接入。
-- 不把米家/银行/密码管理器等高风险能力作为第一个 demo。
+它没有验证真实模型、运行中进程崩溃恢复、完整审批后执行、多个 Worker、云端部署或聊天通知。下一步应补独立进程故障注入与状态断言，再扩展产品能力。
