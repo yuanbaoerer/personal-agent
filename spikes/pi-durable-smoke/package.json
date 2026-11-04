@@ -1,0 +1,17 @@
+{
+  "name": "pi-durable-smoke",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local spike: Pi Durable persistence, tool approval hook, restart recovery",
+  "type": "module",
+  "scripts": {
+    "smoke": "node --experimental-strip-types smoke.ts"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@earendil-works/chord": "1.5.0",
+    "@earendil-works/pi-ai": "1.5.0",
+    "@earendil-works/pi-durable": "1.5.0",
+    "@earendil-works/pi-schema": "1.5.0"
+  }
+}
