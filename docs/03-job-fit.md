@@ -205,8 +205,8 @@ Pi 本身几乎不会出现在 JD 里；面试时要主动映射到招聘方熟�
 
 | 状态 | 内容 | 可使用的表述 |
 | --- | --- | --- |
-| 已有代码及仓库记录 | faux spike；本地入口/投递；Router/Worker、Task/Assignment、原子审批/动作、提醒、显式记忆、DO `pa_*`、97 个确定性测试；workerd 本地真实模型 Router→Worker 任务 | “本地实现/工程骨架”，不声称真实渠道、真实部署或完整崩溃恢复 |
-| 设计态 | 真实飞书应用与发布、真实 Cloudflare 部署/驱逐恢复、MCP 灯/真机、40 条场景报告 | “待真实环境验证”，不能写“已完成” |
+| 已有代码及仓库记录 | faux spike；本地入口/投递；Router/Worker、Task/Assignment、原子审批/动作、提醒、显式记忆、DO `pa_*`、97 个确定性测试；workerd 本地真实模型 Router→Worker 任务；真实飞书 p2p `/status` 回调与回复（临时 Tunnel） | “本地实现 + 真实渠道联调”，不声称真实部署或完整崩溃恢复 |
+| 设计态 | 真实 Cloudflare Worker 部署/驱逐恢复、MCP 灯/真机、40 条场景报告 | “待真实环境验证”，不能写“已完成” |
 | 增强项 | 真实灯/Connector、第二渠道、完整可观测、向量检索 | 有代码与报告后再列 |
 | 未覆盖 | 多租户、大规模并发、K8s/Go、训练/RL | 由其他真实经历证明，不为简历堆进 MVP |
 
@@ -214,8 +214,8 @@ Pi 本身几乎不会出现在 JD 里；面试时要主动映射到招聘方熟�
 
 - 构建 Pi Durable 1.5.0 本地验证脚本：使用 faux provider 演示 beforeTool 在工具执行前阻断调用，断言 `executed=false`、工具错误结果和五条 entry。
 - 使用 SQLite 保存会话，在正常关闭后重开同一数据库，断言同一 root session 与 entry 数量；另用独立子进程 `SIGKILL` 验证已提交 transcript 可重开，未验证未完成任务/待审批状态恢复。
-- 实现飞书事件验签、AES 解密、URL challenge、主人白名单和 `channel + account + eventId` 去重，并用本地 HTTP/fixture 测试覆盖；尚未使用真实飞书应用。
-- 实现持久 Outbox 的业务键唯一、租约、重试、unknown 和按业务键核对，用 fake channel 覆盖崩溃窗口；尚未用真实平台回执验证。
+- 实现飞书事件验签、AES 解密、URL challenge、主人白名单和 `channel + account + eventId` 去重；已用真实飞书自建应用完成 p2p `/status` 回调，`message_id=om_x100b603e0219c0a0b1e2434fa552a87`，回调约 13ms。
+- 实现持久 Outbox 的业务键唯一、租约、重试、unknown 和按业务键核对；真实飞书已接受回复 `platform_message_id=om_x100b603e03ccbca4c1ec6d3785d2599`，端到端约 2s。
 - 本地 Pi 单 Harness 三会话实验（faux）：Worker A 阻塞在工具时，Router 与 Worker B 仍完成，三份 context 无输入串扰；尚未验证真实模型或 Cloudflare DO。
 - 本地通过 `opencode-go/deepseek-v4.1-flash` 跑通真实模型单会话与三会话并发，断言各会话答案与上下文隔离；产品 Router/Worker 已在本地 workerd 用真实模型完成一次任务，尚未在真实账号的 DO 上验证。
 - 实现 Task/Assignment 状态机、revision/fencingToken、租约/心跳、原子审批、取消/修订后 reconcile 拒绝执行、提醒与显式记忆；97 个确定性测试覆盖关键契约。

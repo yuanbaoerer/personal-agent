@@ -2,15 +2,15 @@
 
 > 聊天软件里的个人助手：一个主 Agent 协调多个任务 Worker，云端持续运行，本地按授权执行，结果回到原对话。
 
-**当前阶段：核心代码已落地，真实渠道与部署仍待凭据。** 本地 Node 服务具备飞书验签/解密、持久 Inbox/Outbox、主人白名单和确定性命令。Cloudflare DO 已把 `pa_*` 迁移到 DO SQLite，并接入飞书 webhook、Router/Worker、Task/Assignment、审批/动作执行、一次性提醒和显式记忆。`wrangler dev` 实测通过：webhook 受理与 `message_id` 去重、`/admin/*` 鉴权、真实模型 `/ask`，以及真实模型 Router → Worker 的任务完成。真实飞书控制台配置、真实发信/回调证据、真实 Cloudflare 部署与对象驱逐恢复仍未完成。
+**当前阶段：本地飞书私聊链路已跑通；真实 Cloudflare 部署仍待完成。** 本地 Node 服务具备飞书验签/解密、持久 Inbox/Outbox、主人白名单和确定性命令。2026-11-09（UTC+8）通过临时 Cloudflare Tunnel 完成真实飞书 p2p 回调与主动回复：入站 `om_x100b603e0219c0a0b1e2434fa552a87` 受理，出站 `om_x100b603e03ccbca4c1ec6d3785d2599` 被平台接受。Cloudflare DO 已把 `pa_*` 迁移到 DO SQLite，并接入 webhook、Router/Worker、Task/Assignment、审批/动作执行、一次性提醒和显式记忆；`wrangler dev` 已通过真实模型 Router → Worker 任务。真实 Worker 部署、对象驱逐恢复和固定域名仍未完成。
 
 ## 当前实现
 
 | 模块 | 已实现 | 边界 |
 | --- | --- | --- |
-| 飞书入口 | 签名校验、AES 解密、URL challenge、p2p/身份过滤 | 需真实应用凭据与回调入口 |
-| Inbox | `channel + account + message_id` 唯一，重复事件返回原受理 | 已接 Router |
-| Outbox | 业务键唯一、按 task 分组排序、租约、重试、unknown、崩溃后按业务键核对 | 真实飞书无查询接口时保持 unknown |
+| 飞书入口 | 真实 p2p 回调、签名/Token 校验、URL challenge、主人白名单 | 当前用临时 Tunnel，地址重启会变 |
+| Inbox | `channel + account + message_id` 唯一，重复事件返回原受理 | 已接 Router；真实 p2p `/status` 已受理 |
+| Outbox | 业务键唯一、按 task 分组排序、租约、重试、unknown、崩溃后按业务键核对 | 真实平台已接受 `om_`；无查询接口时保持 unknown |
 | Router | 确定性命令优先；模型 JSON 决策；补充/回答、提醒列表/取消、任务前缀解析 | 真实模型质量需重复评测 |
 | Task / Assignment | Task 状态机、Mandate、revision、租约、fencingToken、心跳、最多两个 Worker | 10 分钟 assignment lifetime；长任务跨轮恢复需真实部署验证 |
 | 审批 / 动作 | 参数绑定、nonce、一次性消费、原子审批、执行器、取消/修订后拒绝重试、unknown/reconcile、mock 灯 | mock 灯是程序化工具；MCP 桥接与真机未接 |
@@ -20,7 +20,7 @@
 | 本地真实模型 | `opencode-go/deepseek-v4.1-flash`，本地 key | 单会话与三会话并发通过 |
 | Cloudflare DO 运行 | `wrangler dev` + 真实模型 | webhook 受理/去重、鉴权、`/ask`、Router→Worker 任务通过 |
 
-未实现或待真实环境验证：真实飞书应用配置与收发证据、真实 Cloudflare 部署与对象驱逐恢复、MCP 灯桥接与真机、天气工具、budget 上限、40 条场景与真实模型重复统计。
+未实现或待真实环境验证：真实 Cloudflare 部署与对象驱逐恢复、命名 Tunnel/固定域名、MCP 灯桥接与真机、天气工具、budget 上限、40 条场景与真实模型重复统计。
 
 ```bash
 npm install
@@ -32,8 +32,9 @@ npm start
 
 默认数据库为 `./data/agent.sqlite`；`OWNER_FEISHU_OPEN_ID` 是显式操作员绑定，不从昵称或消息正文推断。
 
-**2026-11-08 本地验证：**
+**2026-11-09 验证：**
 
+- **真实飞书 p2p**：入站 `message_id=om_x100b603e0219c0a0b1e2434fa552a87` 受理；回调 `POST /webhooks/feishu` 200，约 13ms；主人 `ou_48fabf7749a25c7ef394de573e94d8cf` 绑定；出站 `platform_message_id=om_x100b603e03ccbca4c1ec6d3785d2599` 被平台接受，端到端约 2s。当前走本地 Node + 临时 `trycloudflare.com` Tunnel。
 - `npm test`：97 个确定性测试通过，覆盖 Inbox/Outbox、Task/Assignment fencing/心跳、原子审批、取消后 reconcile 拒绝执行、unknown→reconcile、提醒 runKey/TTL/聊天取消、显式记忆和 K05/K06/K09。
 - `npm run typecheck` 与 `npm run deploy:dry-run` 通过。
 - `wrangler dev`：`/webhooks/feishu` 受理 `200`，同 `message_id` 重推返回 `duplicate`；`/admin/status` 无 token `401`、有 token `200`；`/ask` 真实模型返回 `DO_OK`。

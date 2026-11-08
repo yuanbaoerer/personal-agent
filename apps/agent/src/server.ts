@@ -82,16 +82,22 @@ async function handleFeishuWebhook(
   const parsed = deps.feishu.parseRequest({ headers: request.headers, rawBody });
 
   if (parsed.kind === "challenge") {
+    deps.logger.info("feishu_challenge", {});
     sendJson(response, 200, { challenge: parsed.challenge });
     return 200;
   }
 
   if (parsed.kind === "ignored") {
+    deps.logger.info("feishu_ignored", { reason: parsed.reason });
     sendJson(response, 200, { status: "ignored" });
     return 200;
   }
 
   const result = await deps.ingress.accept(parsed.event);
+  deps.logger.info("feishu_event", {
+    outcome: result.outcome,
+    reason: result.reason,
+  });
   sendJson(response, 200, { status: result.outcome });
   return 200;
 }
