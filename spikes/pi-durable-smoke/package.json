@@ -5,7 +5,11 @@
   "description": "Local spike: Pi Durable persistence, tool approval hook, restart recovery",
   "type": "module",
   "scripts": {
-    "smoke": "node --experimental-strip-types smoke.ts"
+    "smoke": "node --experimental-strip-types smoke.ts",
+    "kill": "node --experimental-strip-types kill-recovery.ts",
+    "multi": "node --experimental-strip-types multi-session.ts",
+    "real": "node --env-file-if-exists=../../.env --experimental-strip-types real-model.ts",
+    "real:multi": "node --env-file-if-exists=../../.env --experimental-strip-types real-multi.ts"
   },
   "license": "MIT",
   "dependencies": {

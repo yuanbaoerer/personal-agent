@@ -1,0 +1,1023 @@
+import type {
+  AssignmentRecord,
+  Evidence,
+  ProposedAction,
+  TaskRecord,
+  WorkerReport,
+} from "../domain/types.ts";
+import type { ActionRepository } from "../storage/actions.ts";
+import type { EffectRepository } from "../storage/effects.ts";
+import { isTerminal, type TaskRepository } from "../storage/tasks.ts";
+import type { Store } from "../storage/store.ts";
+import type { EffectDispatcher, EffectOutcome } from "../delivery/effects.ts";
+import type { AgentRuntime, WakeScheduler } from "../runtime/types.ts";
+
+export interface ActionProposer {
+  /** Returns the number of valid actions that were persisted. */
+  proposeForReport(
+    task: TaskRecord,
+    assignment: AssignmentRecord,
+    proposed: ProposedAction[],
+  ): number;
+}
+
+export interface TaskServiceDeps {
+  store: Store;
+  tasks: TaskRepository;
+  actions: ActionRepository;
+  effects: EffectRepository;
+  runtime: AgentRuntime;
+  wake: WakeScheduler;
+  now?: () => Date;
+  maxActiveWorkers?: number;
+  assignmentLeaseMs?: number;
+  /** A live Worker heartbeat may hold a slot for at most this long. */
+  assignmentMaxLifetimeMs?: number;
+  maxTaskAttempts?: number;
+}
+
+export interface CreateTaskInput {
+  ownerId: string;
+  conversationId: string;
+  sourceKey: string;
+  goal: string;
+  completionCriteria: string;
+  mandate?: {
+    resources: string[];
+    tools: string[];
+    notes?: string;
+  };
+  priority?: number;
+  deadline?: string;
+}
+
+const DEFAULT_MANDATE = {
+  resources: ["chat"],
+  tools: [],
+};
+
+/**
+ * Owns Task and Assignment state transitions. Worker reports are accepted
+ * only when their assignment is still active and the fencing token and task
+ * revision match; a stale Worker cannot advance the task.
+ */
+export class TaskService {
+  readonly #store: Store;
+  readonly #tasks: TaskRepository;
+  readonly #actions: ActionRepository;
+  readonly #effects: EffectRepository;
+  readonly #runtime: AgentRuntime;
+  readonly #wake: WakeScheduler;
+  readonly #now: () => Date;
+  readonly #maxActiveWorkers: number;
+  readonly #leaseMs: number;
+  readonly #maxAssignmentLifetimeMs: number;
+  readonly #maxTaskAttempts: number;
+  #proposer: ActionProposer | undefined;
+
+  constructor(deps: TaskServiceDeps) {
+    this.#store = deps.store;
+    this.#tasks = deps.tasks;
+    this.#actions = deps.actions;
+    this.#effects = deps.effects;
+    this.#runtime = deps.runtime;
+    this.#wake = deps.wake;
+    this.#now = deps.now ?? (() => new Date());
+    this.#maxActiveWorkers = deps.maxActiveWorkers ?? 2;
+    this.#leaseMs = deps.assignmentLeaseMs ?? 120_000;
+    this.#maxAssignmentLifetimeMs =
+      deps.assignmentMaxLifetimeMs ?? 10 * 60_000;
+    this.#maxTaskAttempts = deps.maxTaskAttempts ?? 3;
+  }
+
+  setActionProposer(proposer: ActionProposer): void {
+    this.#proposer = proposer;
+  }
+
+  install(dispatcher: EffectDispatcher): void {
+    dispatcher.register("task.dispatch", (effect) => this.handleDispatch(effect.payload));
+    dispatcher.register("assignment.wait", (effect) => this.handleWait(effect.payload));
+    dispatcher.register("task.interrupt", (effect) => this.handleInterrupt(effect.payload));
+  }
+
+  create(input: CreateTaskInput): TaskRecord {
+    const now = this.#now().toISOString();
+    const { inserted, task } = this.#tasks.insert({
+      ownerId: input.ownerId,
+      conversationId: input.conversationId,
+      sourceKey: input.sourceKey,
+      goal: input.goal,
+      completionCriteria: input.completionCriteria,
+      mandate: input.mandate ?? DEFAULT_MANDATE,
+      priority: input.priority,
+      deadline: input.deadline,
+      createdAt: now,
+    });
+
+    if (inserted) {
+      this.#store.recordAudit({
+        event: "task.created",
+        subjectType: "task",
+        subjectId: task.id,
+        after: { goal: task.goal, revision: task.revision },
+        traceId: `task:${task.id}`,
+        occurredAt: now,
+      });
+      this.#enqueueDispatch(task, now);
+    }
+
+    return task;
+  }
+
+  revise(
+    taskId: string,
+    changes: {
+      goal?: string;
+      completionCriteria?: string;
+      mandate?: TaskRecord["mandate"];
+      priority?: number;
+    },
+  ): TaskRecord | undefined {
+    const now = this.#now().toISOString();
+    const task = this.#tasks.revise(taskId, changes, now);
+    if (task === undefined) {
+      return undefined;
+    }
+
+    this.#actions.supersedeForTask(taskId, now);
+    this.#cancelTaskEffects(taskId, now);
+    this.#store.cancelOutboxForTask(taskId, now);
+    const inFlight = this.#actions.listInFlight(taskId);
+    if (inFlight.length > 0) {
+      this.#tasks.updateTask(taskId, task.revision, {
+        status: "waiting_external",
+        updatedAt: now,
+      });
+      this.#reply(
+        task,
+        "status",
+        `任务已修改为第 ${task.revision} 版；在途动作核对后继续。`,
+        `revised:${task.revision}`,
+      );
+    } else {
+      this.#enqueueDispatch(task, now);
+      this.#reply(
+        task,
+        "status",
+        `任务已修改，正在按第 ${task.revision} 版重新派工。`,
+        `revised:${task.revision}`,
+      );
+    }
+    this.#store.recordAudit({
+      event: "task.revised",
+      subjectType: "task",
+      subjectId: taskId,
+      after: { revision: task.revision, goal: task.goal, inFlight: inFlight.length },
+      traceId: `task:${taskId}`,
+      occurredAt: now,
+    });
+    void this.#wake.wake();
+    return this.#tasks.get(taskId);
+  }
+
+  /**
+   * Accept owner text for a task waiting on the owner (or still queued) and
+   * dispatch it again. A running task only records the text; its next report
+   * or redispatch picks it up.
+   */
+  supplement(taskId: string, text: string): TaskRecord | undefined {
+    const now = this.#now().toISOString();
+    const before = this.#tasks.get(taskId);
+    if (before === undefined || isTerminal(before.status)) {
+      return undefined;
+    }
+
+    const task = this.#tasks.supplement(taskId, text, now);
+    if (task === undefined) {
+      return undefined;
+    }
+
+    this.#store.recordAudit({
+      event: "task.supplemented",
+      subjectType: "task",
+      subjectId: taskId,
+      after: { status: task.status, revision: task.revision },
+      traceId: `task:${taskId}`,
+      occurredAt: now,
+    });
+
+    if (before.status === "waiting_user" || before.status === "queued") {
+      this.#enqueueDispatch(task, now);
+      void this.#wake.wake();
+    }
+    return task;
+  }
+
+  cancel(taskId: string): TaskRecord | undefined {
+    const existing = this.#tasks.get(taskId);
+    if (existing === undefined) {
+      return undefined;
+    }
+    // A terminal task must not emit further effects, replies, or interrupts.
+    if (isTerminal(existing.status)) {
+      return existing;
+    }
+
+    const now = this.#now().toISOString();
+    const active = this.#tasks.listActiveAssignments(taskId);
+    const sessionIds = active
+      .map((item) => item.sessionId)
+      .filter((sessionId) => sessionId.length > 0);
+    const task = this.#tasks.beginCancel(taskId, now);
+    if (task === undefined) {
+      return undefined;
+    }
+
+    this.#actions.supersedeForTask(taskId, now);
+    this.#cancelTaskEffects(taskId, now);
+    this.#store.cancelOutboxForTask(taskId, now);
+    this.#store.recordAudit({
+      event: "task.cancel_requested",
+      subjectType: "task",
+      subjectId: taskId,
+      after: { status: task.status, sessions: sessionIds },
+      traceId: `task:${taskId}`,
+      occurredAt: now,
+    });
+
+    if (sessionIds.length > 0) {
+      this.#effects.enqueue({
+        kind: "task.interrupt",
+        businessKey: `task:${taskId}:interrupt:${task.revision}`,
+        payload: { taskId, sessionIds },
+        nextAttemptAt: now,
+        createdAt: now,
+      });
+    }
+
+    const inFlight = this.#actions.listInFlight(taskId);
+    if (inFlight.length === 0 && sessionIds.length === 0) {
+      this.#tasks.markCancelled(taskId, now);
+      this.#reply(task, "status", "任务已取消。", `cancelled:${task.revision}`);
+    } else {
+      this.#reply(
+        task,
+        "status",
+        "已停止后续执行，正在核对在途动作。",
+        `cancelling:${task.revision}`,
+      );
+    }
+
+    void this.#wake.wake();
+    return this.#tasks.get(taskId);
+  }
+
+  /** Programmatic sweep for leases and stale dispatch. */
+  sweep(): void {
+    const nowDate = this.#now();
+    const now = nowDate.toISOString();
+
+    for (const assignment of this.#tasks.listExpiredAssignments(now)) {
+      this.#tasks.markAssignmentExpired(assignment.id, now);
+      this.#store.recordAudit({
+        event: "assignment.lease_expired",
+        subjectType: "assignment",
+        subjectId: assignment.id,
+        after: { taskId: assignment.taskId, fencingToken: assignment.fencingToken },
+        traceId: `assignment:${assignment.id}`,
+        occurredAt: now,
+      });
+
+      const task = this.#tasks.get(assignment.taskId);
+      if (task === undefined || isTerminal(task.status)) {
+        continue;
+      }
+      // An expired lease that already reached the attempt limit must stop the
+      // task; requeueing it again would redispatch forever.
+      if (task.attempts >= this.#maxTaskAttempts) {
+        const failed = this.#tasks.updateTask(task.id, task.revision, {
+          status: "failed",
+          lastError: `assignment lease expired after ${task.attempts} attempt(s)`,
+          updatedAt: now,
+        });
+        if (failed !== undefined) {
+          this.#reply(
+            task,
+            "failure",
+            `任务失败：Worker 连续 ${task.attempts} 次未在租约内完成。`,
+            `failed:${assignment.id}`,
+          );
+        }
+        continue;
+      }
+
+      this.#tasks.requeueExpiredTask(task.id, now);
+      const requeued = this.#tasks.get(task.id);
+      if (requeued !== undefined) {
+        this.#enqueueDispatch(requeued, now);
+      }
+    }
+  }
+
+  onActionSettled(taskId: string): void {
+    const now = this.#now().toISOString();
+    const task = this.#tasks.get(taskId);
+    if (task === undefined) {
+      return;
+    }
+
+    if (task.status === "cancelling") {
+      this.#finalizeCancellation(taskId, now);
+      return;
+    }
+
+    if (task.status === "waiting_external" && this.#actions.listInFlight(taskId).length === 0) {
+      this.#tasks.updateTask(taskId, task.revision, {
+        status: "queued",
+        updatedAt: now,
+      });
+      const queued = this.#tasks.get(taskId);
+      if (queued !== undefined) {
+        this.#enqueueDispatch(queued, now);
+        void this.#wake.wake();
+      }
+    }
+  }
+
+  async handleDispatch(payload: Record<string, unknown>): Promise<EffectOutcome> {
+    const taskId = typeof payload.taskId === "string" ? payload.taskId : undefined;
+    const now = this.#now();
+    if (taskId !== undefined) {
+      const task = this.#tasks.get(taskId);
+      if (task === undefined) {
+        return { status: "done" };
+      }
+      if (task.status === "running") {
+        // A dispatch effect that arrives after the Worker session opened must
+        // still attach the wait effect; otherwise a real session is stranded.
+        return this.#acceptLateDispatch(task, now);
+      }
+      if (task.status !== "queued") {
+        return { status: "done" };
+      }
+      if (this.#isPastDeadline(task, now)) {
+        return this.#failForDeadline(task, now);
+      }
+    }
+
+    const claimed = this.#tasks.claimNext(
+      now.toISOString(),
+      this.#leaseMs,
+      this.#maxActiveWorkers,
+      taskId,
+    );
+    if (claimed === undefined) {
+      return {
+        status: "retry",
+        at: new Date(now.getTime() + 1_000).toISOString(),
+        reason: "no worker capacity or no queued task",
+        maxAttempts: 1_000,
+      };
+    }
+
+    if (claimed.task.attempts > this.#maxTaskAttempts) {
+      const at = this.#now().toISOString();
+      this.#tasks.markAssignmentExpired(claimed.assignment.id, at);
+      const failed = this.#tasks.updateTask(claimed.task.id, claimed.task.revision, {
+        status: "failed",
+        lastError: `task exceeded the ${this.#maxTaskAttempts}-attempt limit`,
+        updatedAt: at,
+      });
+      if (failed !== undefined) {
+        this.#reply(
+          claimed.task,
+          "failure",
+          "任务多次未完成，已停止。",
+          `failed:${claimed.assignment.id}`,
+        );
+      }
+      return { status: "done" };
+    }
+    if (this.#isPastDeadline(claimed.task, now)) {
+      this.#tasks.markAssignmentExpired(
+        claimed.assignment.id,
+        this.#now().toISOString(),
+      );
+      return this.#failForDeadline(claimed.task, now);
+    }
+
+    try {
+      const opened = await this.#runtime.open({
+        role: "worker",
+        brief: workerBrief(claimed.task),
+      });
+      // Cancellation may land between the claim and the session opening.
+      // Do not submit work for a task that is no longer allowed to run.
+      const current = this.#tasks.get(claimed.task.id);
+      if (
+        current === undefined ||
+        current.status === "cancelling" ||
+        current.status === "cancelled"
+      ) {
+        await this.#runtime.interrupt(opened.id);
+        return { status: "done" };
+      }
+      this.#tasks.setAssignmentSession(claimed.assignment.id, opened.id, now.toISOString());
+      const operationId = `assignment:${claimed.assignment.id}`;
+      await this.#runtime.submit(
+        opened.id,
+        workerPrompt(claimed.task, this.#actions.listByTask(claimed.task.id)),
+        operationId,
+        "app.task",
+      );
+      this.#effects.enqueue({
+        kind: "assignment.wait",
+        businessKey: `assignment:${claimed.assignment.id}:wait`,
+        payload: {
+          assignmentId: claimed.assignment.id,
+          sessionId: opened.id,
+          operationId,
+        },
+        nextAttemptAt: now.toISOString(),
+        createdAt: now.toISOString(),
+      });
+      void this.#wake.wake();
+      return { status: "done" };
+    } catch (error) {
+      const at = this.#now().toISOString();
+      this.#tasks.markAssignmentExpired(claimed.assignment.id, at);
+      this.#tasks.requeueExpiredTask(claimed.task.id, at);
+      return {
+        status: "retry",
+        at: new Date(this.#now().getTime() + 2_000).toISOString(),
+        reason: `runtime dispatch failed: ${error instanceof Error ? error.message : String(error)}`,
+        maxAttempts: 1_000,
+      };
+    }
+  }
+
+  async handleWait(payload: Record<string, unknown>): Promise<EffectOutcome> {
+    const assignmentId =
+      typeof payload.assignmentId === "string" ? payload.assignmentId : undefined;
+    const sessionId = typeof payload.sessionId === "string" ? payload.sessionId : undefined;
+    const operationId =
+      typeof payload.operationId === "string" ? payload.operationId : undefined;
+    if (assignmentId === undefined || sessionId === undefined || operationId === undefined) {
+      return { status: "failed", reason: "assignment.wait payload is incomplete" };
+    }
+
+    const assignment = this.#tasks.getAssignment(assignmentId);
+    if (assignment === undefined || assignment.status !== "active") {
+      return { status: "done" };
+    }
+
+    let answer;
+    try {
+      answer = await this.#runtime.wait(sessionId, operationId, 20_000);
+    } catch (error) {
+      return {
+        status: "retry",
+        at: new Date(this.#now().getTime() + 5_000).toISOString(),
+        reason: `runtime wait failed: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+
+    if (answer.status === "pending") {
+      const nowDate = this.#now();
+      const createdAt = Date.parse(assignment.createdAt);
+      if (
+        Number.isNaN(createdAt) ||
+        nowDate.getTime() - createdAt >= this.#maxAssignmentLifetimeMs
+      ) {
+        return this.#failAssignment(
+          assignment,
+          `assignment exceeded the ${this.#maxAssignmentLifetimeMs}ms lifetime`,
+        );
+      }
+      // The Worker is demonstrably alive (its wait is still pending), so
+      // extend the lease instead of freeing the slot while it runs.
+      this.#tasks.extendAssignmentLease(
+        assignment.id,
+        new Date(nowDate.getTime() + this.#leaseMs).toISOString(),
+        nowDate.toISOString(),
+      );
+      return {
+        status: "retry",
+        at: new Date(nowDate.getTime() + 1_000).toISOString(),
+        reason: "runtime still pending",
+        maxAttempts: 1_000,
+      };
+    }
+
+    if (answer.status === "unanswered") {
+      return this.#failAssignment(assignment, `runtime ended unanswered: ${answer.reason}`);
+    }
+
+    const report = parseWorkerReport(answer.text);
+    if (report === undefined) {
+      return this.#failAssignment(assignment, "worker report was not valid JSON");
+    }
+
+    return this.report(assignment.id, assignment.fencingToken, assignment.taskRevision, report);
+  }
+
+  async handleInterrupt(payload: Record<string, unknown>): Promise<EffectOutcome> {
+    const taskId = typeof payload.taskId === "string" ? payload.taskId : undefined;
+    const sessionIds = Array.isArray(payload.sessionIds)
+      ? payload.sessionIds.filter(
+          (value): value is string => typeof value === "string" && value.length > 0,
+        )
+      : [];
+    if (taskId === undefined) {
+      return { status: "failed", reason: "task.interrupt payload is incomplete" };
+    }
+
+    for (const sessionId of sessionIds) {
+      try {
+        await this.#runtime.interrupt(sessionId);
+      } catch (error) {
+        return {
+          status: "retry",
+          at: new Date(this.#now().getTime() + 5_000).toISOString(),
+          reason: `runtime interrupt failed: ${error instanceof Error ? error.message : String(error)}`,
+          maxAttempts: 1_000,
+        };
+      }
+    }
+
+    this.#finalizeCancellation(taskId, this.#now().toISOString());
+    return { status: "done" };
+  }
+
+  report(
+    assignmentId: string,
+    fencingToken: number,
+    taskRevision: number,
+    report: WorkerReport,
+  ): EffectOutcome {
+    const now = this.#now().toISOString();
+    const reported = this.#tasks.markReported(
+      assignmentId,
+      fencingToken,
+      taskRevision,
+      report,
+      now,
+    );
+    // A retry after the report commit finds the assignment already reported.
+    // Reprocessing is safe: task updates are revision-guarded, outbox keys are
+    // stable, and proposed actions have a stable source key.
+    const assignment = reported ?? this.#tasks.getAssignment(assignmentId);
+    if (assignment === undefined || assignment.status !== "reported") {
+      // Stale report: the assignment was superseded, cancelled, or fenced out.
+      return { status: "done" };
+    }
+
+    const task = this.#tasks.get(assignment.taskId);
+    if (task === undefined || task.revision !== assignment.taskRevision) {
+      // The task was revised after this assignment reported; it has no
+      // authority over the new revision.
+      return { status: "done" };
+    }
+
+    this.#store.recordAudit({
+      event: "assignment.reported",
+      subjectType: "assignment",
+      subjectId: assignment.id,
+      after: { status: report.status, taskId: task.id, revision: task.revision },
+      traceId: `assignment:${assignment.id}`,
+      occurredAt: now,
+    });
+
+    const proposed = report.proposedActions ?? [];
+    if (proposed.length > 0) {
+      // Persist the actions and the task transition atomically so a crash
+      // cannot leave approved work without a waiting task (or vice versa).
+      const result = this.#store.db.transaction(() => {
+        const persisted = this.#proposer?.proposeForReport(task, assignment, proposed) ?? 0;
+        const updated = this.#tasks.updateTask(task.id, task.revision, {
+          status: persisted > 0 ? "waiting_external" : "failed",
+          resultRef: persisted > 0 ? report.summary : undefined,
+          lastError: persisted > 0 ? undefined : "worker proposed no valid action",
+          updatedAt: now,
+        });
+        return { persisted, updated };
+      });
+      if (result.updated === undefined) {
+        return { status: "done" };
+      }
+      if (result.persisted > 0) {
+        this.#reply(
+          task,
+          "clarify",
+          `任务需要主人批准 ${result.persisted} 个动作后继续。`,
+          `approval-needed:${assignment.id}`,
+        );
+        void this.#wake.wake();
+      } else {
+        this.#reply(task, "failure", "任务失败：Worker 提出的动作无效。", `failed:${assignment.id}`);
+      }
+      return { status: "done" };
+    }
+
+    switch (report.status) {
+      case "ready": {
+        const completion = evaluateCompletion(task, report);
+        if (!completion.ok) {
+          const updated = this.#tasks.updateTask(task.id, task.revision, {
+            status: "failed",
+            lastError: completion.reason,
+            updatedAt: now,
+          });
+          if (updated === undefined) {
+            return { status: "done" };
+          }
+          this.#reply(task, "failure", `任务未通过完成条件：${completion.reason}`, `failed:${assignment.id}`);
+          return { status: "done" };
+        }
+        const updated = this.#tasks.updateTask(task.id, task.revision, {
+          status: "succeeded",
+          resultRef: report.summary,
+          lastError: undefined,
+          updatedAt: now,
+        });
+        if (updated === undefined) {
+          return { status: "done" };
+        }
+        this.#reply(task, "result", `任务完成：${report.summary}`, `result:${assignment.id}`);
+        return { status: "done" };
+      }
+      case "waiting_user": {
+        const updated = this.#tasks.updateTask(task.id, task.revision, {
+          status: "waiting_user",
+          resultRef: report.summary,
+          updatedAt: now,
+        });
+        if (updated === undefined) {
+          return { status: "done" };
+        }
+        const questions = report.questions?.length
+          ? report.questions.join("\n")
+          : report.summary;
+        this.#reply(task, "clarify", `需要主人决定：\n${questions}`, `clarify:${assignment.id}`);
+        return { status: "done" };
+      }
+      case "waiting_external": {
+        // Without an in-flight action nothing can settle later, so keeping the
+        // task waiting would strand it forever.
+        if (this.#actions.listInFlight(task.id).length > 0) {
+          this.#tasks.updateTask(task.id, task.revision, {
+            status: "waiting_external",
+            resultRef: report.summary,
+            updatedAt: now,
+          });
+          return { status: "done" };
+        }
+        const updated = this.#tasks.updateTask(task.id, task.revision, {
+          status: "failed",
+          lastError: "worker reported waiting_external with no in-flight action",
+          updatedAt: now,
+        });
+        if (updated === undefined) {
+          return { status: "done" };
+        }
+        this.#reply(
+          task,
+          "failure",
+          "任务失败：Worker 报告等待外部动作，但没有在途动作。",
+          `failed:${assignment.id}`,
+        );
+        return { status: "done" };
+      }
+      case "failed": {
+        const updated = this.#tasks.updateTask(task.id, task.revision, {
+          status: "failed",
+          lastError: report.summary,
+          updatedAt: now,
+        });
+        if (updated === undefined) {
+          return { status: "done" };
+        }
+        this.#reply(task, "failure", `任务失败：${report.summary}`, `failed:${assignment.id}`);
+        return { status: "done" };
+      }
+      case "working": {
+        if (task.attempts >= this.#maxTaskAttempts) {
+          this.#tasks.updateTask(task.id, task.revision, {
+            status: "failed",
+            lastError: "worker reported working after the attempt limit",
+            updatedAt: now,
+          });
+          this.#reply(task, "failure", "任务多次未完成，已停止。", `failed:${assignment.id}`);
+          return { status: "done" };
+        }
+        this.#tasks.updateTask(task.id, task.revision, {
+          status: "queued",
+          resultRef: report.summary,
+          updatedAt: now,
+        });
+        const queued = this.#tasks.get(task.id);
+        if (queued !== undefined) {
+          this.#enqueueDispatch(queued, now);
+          void this.#wake.wake();
+        }
+        return { status: "done" };
+      }
+    }
+  }
+
+  #failAssignment(assignment: AssignmentRecord, reason: string): EffectOutcome {
+    return this.report(assignment.id, assignment.fencingToken, assignment.taskRevision, {
+      status: "failed",
+      summary: reason,
+      evidence: [],
+    });
+  }
+
+  #isPastDeadline(task: TaskRecord, now: Date): boolean {
+    if (task.deadline === undefined) {
+      return false;
+    }
+    const deadline = new Date(task.deadline).getTime();
+    return Number.isFinite(deadline) && now.getTime() > deadline;
+  }
+
+  #failForDeadline(task: TaskRecord, now: Date): EffectOutcome {
+    const updated = this.#tasks.updateTask(task.id, task.revision, {
+      status: "failed",
+      lastError: `task deadline ${task.deadline ?? ""} passed`,
+      updatedAt: now.toISOString(),
+    });
+    if (updated === undefined) {
+      return { status: "done" };
+    }
+    this.#reply(task, "failure", "任务已超过截止时间，未继续执行。", `deadline:${task.id}`);
+    return { status: "done" };
+  }
+
+  /**
+   * A dispatch effect can arrive after the Worker session already opened (for
+   * example when the effect was delayed). Adopt the running assignment and make
+   * sure exactly one wait effect will collect its report.
+   */
+  #acceptLateDispatch(task: TaskRecord, now: Date): EffectOutcome {
+    const assignment = this.#tasks
+      .listActiveAssignments(task.id)
+      .find((item) => item.sessionId.length > 0);
+    if (assignment === undefined) {
+      return { status: "done" };
+    }
+
+    const operationId = `assignment:${assignment.id}`;
+    const businessKey = `assignment:${assignment.id}:wait`;
+    const existing = this.#effects.getByBusinessKey(businessKey);
+    const hasPendingWait =
+      (existing !== undefined &&
+        (existing.status === "pending" || existing.status === "running")) ||
+      this.#effects
+        .listPending()
+        .some(
+          (effect) =>
+            effect.kind === "assignment.wait" &&
+            effect.payload.assignmentId === assignment.id,
+        );
+    if (hasPendingWait) {
+      return { status: "done" };
+    }
+
+    this.#effects.enqueue({
+      kind: "assignment.wait",
+      businessKey,
+      payload: {
+        assignmentId: assignment.id,
+        sessionId: assignment.sessionId,
+        operationId,
+      },
+      nextAttemptAt: now.toISOString(),
+      createdAt: now.toISOString(),
+    });
+    void this.#wake.wake();
+    return { status: "done" };
+  }
+
+  #finalizeCancellation(taskId: string, now: string): void {
+    const task = this.#tasks.get(taskId);
+    if (task === undefined || task.status !== "cancelling") {
+      return;
+    }
+    if (this.#actions.listInFlight(taskId).length > 0) {
+      return;
+    }
+    this.#tasks.markCancelled(taskId, now);
+    this.#reply(task, "status", "任务已取消，在途动作已核对。", `cancelled:${task.revision}`);
+  }
+
+  #enqueueDispatch(task: TaskRecord, now: string): void {
+    this.#effects.enqueue({
+      kind: "task.dispatch",
+      businessKey: `task:${task.id}:dispatch:r${task.revision}:a${task.attempts + 1}`,
+      payload: { taskId: task.id },
+      nextAttemptAt: now,
+      createdAt: now,
+    });
+  }
+
+  #cancelTaskEffects(taskId: string, now: string): void {
+    for (const effect of this.#effects.listPending()) {
+      if (effect.payload.taskId === taskId) {
+        this.#effects.cancel(effect.id, now);
+      }
+    }
+  }
+
+  #reply(task: TaskRecord, purpose: "status" | "clarify" | "result" | "failure", text: string, suffix: string): void {
+    const conversation = this.#store.getConversation(task.conversationId);
+    if (conversation === undefined) {
+      return;
+    }
+    const now = this.#now().toISOString();
+    this.#store.enqueueOutbox({
+      businessKey: `task:${task.id}:${suffix}`,
+      ownerId: task.ownerId,
+      channel: conversation.channel,
+      accountId: conversation.accountId,
+      conversationId: conversation.platformConversationId,
+      taskId: task.id,
+      purpose,
+      text,
+      createdAt: now,
+    });
+  }
+}
+
+function workerBrief(task: TaskRecord): string {
+  return `Worker for task ${task.id}: ${task.goal}`;
+}
+
+function workerPrompt(
+  task: TaskRecord,
+  priorActions: { tool: string; status: string; args: Record<string, unknown>; evidence?: Record<string, unknown> }[],
+): string {
+  const lines = [
+    "You are a task Worker with a separate context. Work only inside the Mandate.",
+    "Do not claim that an external write happened. Propose writes as actions.",
+    "Return one JSON object only, with this shape:",
+    '{"status":"ready|working|waiting_user|waiting_external|failed",',
+    ' "summary":"...", "evidence":[{"kind":"...","value":"..."}],',
+    ' "questions":["..."],',
+    ' "proposedActions":[{"tool":"lamp.set_brightness","args":{"brightness":80}}]}',
+    `Task id: ${task.id}`,
+    `Goal: ${task.goal}`,
+    `Completion criteria: ${task.completionCriteria}`,
+    `Mandate: ${JSON.stringify(task.mandate)}`,
+  ];
+  if (task.ownerInput !== undefined && task.ownerInput.length > 0) {
+    lines.push("Owner input (authoritative; use it to continue):");
+    lines.push(task.ownerInput);
+  }
+  if (task.resultRef !== undefined && task.resultRef.length > 0) {
+    lines.push(`Previous worker summary: ${task.resultRef}`);
+  }
+  if (priorActions.length > 0) {
+    lines.push("Previous action results (use these instead of proposing the same action again):");
+    for (const action of priorActions) {
+      lines.push(
+        `- ${action.tool} ${action.status} args=${JSON.stringify(action.args)} evidence=${JSON.stringify(action.evidence ?? {})}`,
+      );
+    }
+  }
+  return lines.join("\n");
+}
+
+export function parseWorkerReport(text: string): WorkerReport | undefined {
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start < 0 || end <= start) {
+    return undefined;
+  }
+
+  let value: unknown;
+  try {
+    value = JSON.parse(text.slice(start, end + 1));
+  } catch {
+    return undefined;
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const status = record.status;
+  if (
+    status !== "working" &&
+    status !== "waiting_user" &&
+    status !== "waiting_external" &&
+    status !== "ready" &&
+    status !== "failed"
+  ) {
+    return undefined;
+  }
+  if (typeof record.summary !== "string") {
+    return undefined;
+  }
+  if (!Array.isArray(record.evidence)) {
+    return undefined;
+  }
+
+  const evidence: Evidence[] = [];
+  for (const item of record.evidence) {
+    if (typeof item !== "object" || item === null) {
+      continue;
+    }
+    const kind = (item as Record<string, unknown>).kind;
+    const itemValue = (item as Record<string, unknown>).value;
+    if (typeof kind === "string" && typeof itemValue === "string") {
+      evidence.push({ kind, value: itemValue });
+    }
+  }
+
+  const questions = Array.isArray(record.questions)
+    ? record.questions.filter((item): item is string => typeof item === "string")
+    : undefined;
+
+  const proposedActions: ProposedAction[] = [];
+  if (Array.isArray(record.proposedActions)) {
+    for (const item of record.proposedActions) {
+      if (typeof item !== "object" || item === null) {
+        continue;
+      }
+      const tool = (item as Record<string, unknown>).tool;
+      const args = (item as Record<string, unknown>).args;
+      if (typeof tool === "string" && typeof args === "object" && args !== null) {
+        proposedActions.push({
+          tool,
+          args: args as Record<string, unknown>,
+        });
+      }
+    }
+  }
+
+  return {
+    status,
+    summary: record.summary,
+    evidence,
+    questions,
+    proposedActions: proposedActions.length > 0 ? proposedActions : undefined,
+    cost:
+      typeof record.cost === "object" && record.cost !== null
+        ? (record.cost as Record<string, unknown>)
+        : undefined,
+  };
+}
+
+export function evaluateCompletion(
+  task: Pick<TaskRecord, "completionCriteria">,
+  report: WorkerReport,
+): {
+  ok: boolean;
+  reason: string;
+} {
+  if (report.summary.trim().length === 0) {
+    return { ok: false, reason: "summary is empty" };
+  }
+  if (report.evidence.length === 0) {
+    return { ok: false, reason: "no evidence was provided" };
+  }
+  if (
+    report.evidence.some(
+      (item) => item.kind.trim().length === 0 || item.value.trim().length === 0,
+    )
+  ) {
+    return { ok: false, reason: "evidence contains an empty kind or value" };
+  }
+
+  // Completion criteria may be plain text or a machine-readable JSON object.
+  // The Coordinator enforces the structured part instead of trusting the
+  // Worker's claim of success.
+  const required = requiredEvidenceKinds(task.completionCriteria);
+  for (const kind of required) {
+    if (!report.evidence.some((item) => item.kind === kind)) {
+      return { ok: false, reason: `missing required evidence kind: ${kind}` };
+    }
+  }
+
+  return { ok: true, reason: "" };
+}
+
+function requiredEvidenceKinds(criteria: string): string[] {
+  const trimmed = criteria.trim();
+  if (!trimmed.startsWith("{")) {
+    return [];
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(trimmed);
+  } catch {
+    return [];
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return [];
+  }
+  const kinds = (value as Record<string, unknown>).requiredEvidenceKinds;
+  return Array.isArray(kinds)
+    ? kinds.filter((item): item is string => typeof item === "string" && item.length > 0)
+    : [];
+}

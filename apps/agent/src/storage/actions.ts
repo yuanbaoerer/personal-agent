@@ -1,0 +1,531 @@
+import { randomUUID } from "node:crypto";
+
+import type {
+  ActionRecord,
+  ActionStatus,
+  ApprovalRecord,
+} from "../domain/types.ts";
+import type { Db } from "./db.ts";
+
+interface ActionRow {
+  id: string;
+  owner_id: string;
+  conversation_id: string;
+  task_id: string;
+  task_revision: number;
+  fencing_token: number;
+  tool: string;
+  args_json: string;
+  args_hash: string;
+  status: ActionStatus;
+  expires_at: string;
+  nonce: string;
+  approved_at: string | null;
+  approved_by: string | null;
+  execution_attempts: number;
+  lease_until: string | null;
+  external_ref: string | null;
+  evidence_json: string | null;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface ApprovalRow {
+  id: string;
+  action_id: string;
+  decision: "approved" | "denied";
+  approver_id: string;
+  conversation_id: string;
+  args_hash: string;
+  task_revision: number;
+  nonce: string;
+  consumed_at: string | null;
+  created_at: string;
+}
+
+function mapAction(row: ActionRow): ActionRecord {
+  return {
+    id: row.id,
+    ownerId: row.owner_id,
+    conversationId: row.conversation_id,
+    taskId: row.task_id,
+    taskRevision: Number(row.task_revision),
+    fencingToken: Number(row.fencing_token),
+    tool: row.tool,
+    args: JSON.parse(row.args_json) as Record<string, unknown>,
+    argsHash: row.args_hash,
+    status: row.status,
+    expiresAt: row.expires_at,
+    nonce: row.nonce,
+    approvedAt: row.approved_at ?? undefined,
+    approvedBy: row.approved_by ?? undefined,
+    executionAttempts: Number(row.execution_attempts),
+    leaseUntil: row.lease_until ?? undefined,
+    externalRef: row.external_ref ?? undefined,
+    evidence:
+      row.evidence_json === null
+        ? undefined
+        : (JSON.parse(row.evidence_json) as Record<string, unknown>),
+    lastError: row.last_error ?? undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapApproval(row: ApprovalRow): ApprovalRecord {
+  return {
+    id: row.id,
+    actionId: row.action_id,
+    decision: row.decision,
+    approverId: row.approver_id,
+    conversationId: row.conversation_id,
+    argsHash: row.args_hash,
+    taskRevision: Number(row.task_revision),
+    nonce: row.nonce,
+    consumedAt: row.consumed_at ?? undefined,
+    createdAt: row.created_at,
+  };
+}
+
+export interface NewActionInput {
+  ownerId: string;
+  conversationId: string;
+  taskId: string;
+  taskRevision: number;
+  fencingToken: number;
+  tool: string;
+  args: Record<string, unknown>;
+  argsHash: string;
+  expiresAt: string;
+  nonce: string;
+  sourceKey?: string;
+  createdAt: string;
+}
+
+export type ApprovalResult =
+  | { ok: true; action: ActionRecord }
+  | { ok: false; reason: string };
+
+export class ActionRepository {
+  readonly #db: Db;
+
+  constructor(db: Db) {
+    this.#db = db;
+  }
+
+  insert(input: NewActionInput): ActionRecord {
+    const row = this.#db.all<ActionRow>(
+      `INSERT INTO pa_actions
+        (id, owner_id, conversation_id, task_id, task_revision, fencing_token,
+         tool, args_json, args_hash, status, expires_at, nonce, approved_at,
+         approved_by, execution_attempts, lease_until, external_ref, evidence_json,
+         last_error, source_key, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'proposed', ?, ?, NULL, NULL, 0,
+               NULL, NULL, NULL, NULL, ?, ?, ?)
+       ON CONFLICT (source_key) DO NOTHING
+       RETURNING *`,
+      randomUUID(),
+      input.ownerId,
+      input.conversationId,
+      input.taskId,
+      input.taskRevision,
+      input.fencingToken,
+      input.tool,
+      JSON.stringify(input.args),
+      input.argsHash,
+      input.expiresAt,
+      input.nonce,
+      input.sourceKey ?? null,
+      input.createdAt,
+      input.createdAt,
+    )[0];
+
+    if (row !== undefined) {
+      return mapAction(row);
+    }
+
+    const existing = this.#db.all<ActionRow>(
+      "SELECT * FROM pa_actions WHERE source_key = ?",
+      input.sourceKey ?? "",
+    )[0];
+    if (existing === undefined) {
+      throw new Error(`action source key ${input.sourceKey ?? ""} conflicted without a row`);
+    }
+    return mapAction(existing);
+  }
+
+  get(id: string): ActionRecord | undefined {
+    const row = this.#db.all<ActionRow>("SELECT * FROM pa_actions WHERE id = ?", id)[0];
+    return row === undefined ? undefined : mapAction(row);
+  }
+
+  getByNonce(nonce: string): ActionRecord | undefined {
+    const row = this.#db.all<ActionRow>(
+      "SELECT * FROM pa_actions WHERE nonce = ?",
+      nonce,
+    )[0];
+    return row === undefined ? undefined : mapAction(row);
+  }
+
+  listByTask(taskId: string): ActionRecord[] {
+    return this.#db
+      .all<ActionRow>(
+        "SELECT * FROM pa_actions WHERE task_id = ? ORDER BY created_at ASC",
+        taskId,
+      )
+      .map(mapAction);
+  }
+
+  listInFlight(taskId: string): ActionRecord[] {
+    return this.#db
+      .all<ActionRow>(
+        `SELECT * FROM pa_actions
+         WHERE task_id = ? AND status IN ('executing', 'unknown', 'reconciling')
+         ORDER BY created_at ASC`,
+        taskId,
+      )
+      .map(mapAction);
+  }
+
+  listExpiredExecuting(now: string, limit = 50): ActionRecord[] {
+    return this.#db
+      .all<ActionRow>(
+        `SELECT * FROM pa_actions
+         WHERE status = 'executing' AND lease_until IS NOT NULL AND lease_until <= ?
+         ORDER BY lease_until ASC
+         LIMIT ?`,
+        now,
+        limit,
+      )
+      .map(mapAction);
+  }
+
+  listUnknown(limit = 50): ActionRecord[] {
+    return this.#db
+      .all<ActionRow>(
+        `SELECT * FROM pa_actions
+         WHERE status IN ('unknown', 'reconciling')
+         ORDER BY updated_at ASC
+         LIMIT ?`,
+        limit,
+      )
+      .map(mapAction);
+  }
+
+  listExpiredProposed(now: string, limit = 50): ActionRecord[] {
+    return this.#db
+      .all<ActionRow>(
+        `SELECT * FROM pa_actions
+         WHERE status = 'proposed' AND expires_at <= ?
+         ORDER BY expires_at ASC
+         LIMIT ?`,
+        now,
+        limit,
+      )
+      .map(mapAction);
+  }
+
+  approve(
+    actionId: string,
+    input: {
+      approverId: string;
+      conversationId: string;
+      argsHash: string;
+      taskRevision: number;
+      nonce: string;
+      now: string;
+    },
+    afterApprove?: () => void,
+  ): ApprovalResult {
+    return this.#db.transaction(() => {
+      const action = this.get(actionId);
+      if (action === undefined) {
+        return { ok: false, reason: "action_not_found" };
+      }
+      if (action.status !== "proposed") {
+        return { ok: false, reason: `action_${action.status}` };
+      }
+      if (action.expiresAt <= input.now) {
+        this.#db.run(
+          `UPDATE pa_actions SET status = 'expired', updated_at = ?
+           WHERE id = ? AND status = 'proposed'`,
+          input.now,
+          actionId,
+        );
+        return { ok: false, reason: "action_expired" };
+      }
+      if (action.ownerId !== input.approverId) {
+        return { ok: false, reason: "approver_not_owner" };
+      }
+      if (action.conversationId !== input.conversationId) {
+        return { ok: false, reason: "conversation_mismatch" };
+      }
+      if (action.argsHash !== input.argsHash) {
+        return { ok: false, reason: "args_mismatch" };
+      }
+      if (action.taskRevision !== input.taskRevision) {
+        return { ok: false, reason: "revision_mismatch" };
+      }
+      if (action.nonce !== input.nonce) {
+        return { ok: false, reason: "nonce_mismatch" };
+      }
+
+      this.#db.run(
+        `UPDATE pa_actions
+         SET status = 'approved', approved_at = ?, approved_by = ?, updated_at = ?
+         WHERE id = ? AND status = 'proposed'`,
+        input.now,
+        input.approverId,
+        input.now,
+        actionId,
+      );
+      this.#db.run(
+        `INSERT INTO pa_approvals
+          (id, action_id, decision, approver_id, conversation_id, args_hash,
+           task_revision, nonce, consumed_at, created_at)
+         VALUES (?, ?, 'approved', ?, ?, ?, ?, ?, NULL, ?)`,
+        randomUUID(),
+        actionId,
+        input.approverId,
+        input.conversationId,
+        input.argsHash,
+        input.taskRevision,
+        input.nonce,
+        input.now,
+      );
+
+      // Runs inside the transaction: a throwing callback (e.g. a failed
+      // effect enqueue) rolls the approval rows back.
+      afterApprove?.();
+
+      return { ok: true, action: this.get(actionId) as ActionRecord };
+    });
+  }
+
+  deny(
+    actionId: string,
+    input: {
+      approverId: string;
+      conversationId: string;
+      argsHash: string;
+      taskRevision: number;
+      nonce: string;
+      now: string;
+    },
+  ): ApprovalResult {
+    return this.#db.transaction(() => {
+      const action = this.get(actionId);
+      if (action === undefined) {
+        return { ok: false, reason: "action_not_found" };
+      }
+      if (action.status !== "proposed") {
+        return { ok: false, reason: `action_${action.status}` };
+      }
+      if (action.ownerId !== input.approverId) {
+        return { ok: false, reason: "approver_not_owner" };
+      }
+      if (action.conversationId !== input.conversationId) {
+        return { ok: false, reason: "conversation_mismatch" };
+      }
+      if (action.argsHash !== input.argsHash) {
+        return { ok: false, reason: "args_mismatch" };
+      }
+      if (action.taskRevision !== input.taskRevision) {
+        return { ok: false, reason: "revision_mismatch" };
+      }
+      if (action.nonce !== input.nonce) {
+        return { ok: false, reason: "nonce_mismatch" };
+      }
+
+      this.#db.run(
+        `UPDATE pa_actions
+         SET status = 'denied', approved_at = ?, approved_by = ?, updated_at = ?
+         WHERE id = ? AND status = 'proposed'`,
+        input.now,
+        input.approverId,
+        input.now,
+        actionId,
+      );
+      this.#db.run(
+        `INSERT INTO pa_approvals
+          (id, action_id, decision, approver_id, conversation_id, args_hash,
+           task_revision, nonce, consumed_at, created_at)
+         VALUES (?, ?, 'denied', ?, ?, ?, ?, ?, ?, ?)`,
+        randomUUID(),
+        actionId,
+        input.approverId,
+        input.conversationId,
+        input.argsHash,
+        input.taskRevision,
+        input.nonce,
+        input.now,
+        input.now,
+      );
+
+      return { ok: true, action: this.get(actionId) as ActionRecord };
+    });
+  }
+
+  /**
+   * Consume the one-time approval and move approved -> executing in the same
+   * transaction that leases the action for the executor.
+   */
+  claimForExecution(actionId: string, now: string, leaseMs: number): ActionRecord | undefined {
+    return this.#db.transaction(() => {
+      const action = this.get(actionId);
+      if (
+        action === undefined ||
+        action.status !== "approved" ||
+        action.expiresAt <= now
+      ) {
+        return undefined;
+      }
+
+      const leaseUntil = new Date(new Date(now).getTime() + leaseMs).toISOString();
+      const changes = this.#db.run(
+        `UPDATE pa_actions
+         SET status = 'executing', execution_attempts = execution_attempts + 1,
+             lease_until = ?, updated_at = ?
+         WHERE id = ? AND status = 'approved' AND expires_at > ?`,
+        leaseUntil,
+        now,
+        actionId,
+        now,
+      );
+      if (changes === 0) {
+        return undefined;
+      }
+
+      this.#db.run(
+        `UPDATE pa_approvals SET consumed_at = ?
+         WHERE action_id = ? AND consumed_at IS NULL`,
+        now,
+        actionId,
+      );
+
+      return this.get(actionId);
+    });
+  }
+
+  markExecutingExpired(actionId: string, now: string, reason: string): boolean {
+    return (
+      this.#db.run(
+        `UPDATE pa_actions
+         SET status = 'unknown', lease_until = NULL, last_error = ?, updated_at = ?
+         WHERE id = ? AND status = 'executing'
+           AND lease_until IS NOT NULL AND lease_until <= ?`,
+        reason,
+        now,
+        actionId,
+        now,
+      ) > 0
+    );
+  }
+
+  markSucceeded(
+    actionId: string,
+    evidence: Record<string, unknown>,
+    externalRef: string | undefined,
+    now: string,
+  ): boolean {
+    return (
+      this.#db.run(
+        `UPDATE pa_actions
+         SET status = 'succeeded', evidence_json = ?, external_ref = COALESCE(?, external_ref),
+             lease_until = NULL, last_error = NULL, updated_at = ?
+         WHERE id = ? AND status IN ('executing', 'unknown', 'reconciling')`,
+        JSON.stringify(evidence),
+        externalRef ?? null,
+        now,
+        actionId,
+      ) > 0
+    );
+  }
+
+  markFailed(actionId: string, reason: string, now: string): boolean {
+    return (
+      this.#db.run(
+        `UPDATE pa_actions
+         SET status = 'failed', lease_until = NULL, last_error = ?, updated_at = ?
+         WHERE id = ? AND status IN ('approved', 'executing', 'unknown', 'reconciling')`,
+        reason,
+        now,
+        actionId,
+      ) > 0
+    );
+  }
+
+  markUnknown(actionId: string, reason: string, now: string): boolean {
+    return (
+      this.#db.run(
+        `UPDATE pa_actions
+         SET status = 'unknown', lease_until = NULL, last_error = ?, updated_at = ?
+         WHERE id = ? AND status IN ('executing', 'unknown', 'reconciling')`,
+        reason,
+        now,
+        actionId,
+      ) > 0
+    );
+  }
+
+  markReconciling(actionId: string, now: string): boolean {
+    return (
+      this.#db.run(
+        `UPDATE pa_actions
+         SET status = 'reconciling', lease_until = NULL, updated_at = ?
+         WHERE id = ? AND status IN ('unknown', 'reconciling')`,
+        now,
+        actionId,
+      ) > 0
+    );
+  }
+
+  markNeedsManual(actionId: string, reason: string, now: string): boolean {
+    return (
+      this.#db.run(
+        `UPDATE pa_actions
+         SET status = 'needs_manual', lease_until = NULL, last_error = ?, updated_at = ?
+         WHERE id = ? AND status IN ('unknown', 'reconciling')`,
+        reason,
+        now,
+        actionId,
+      ) > 0
+    );
+  }
+
+  markSuperseded(actionId: string, reason: string, now: string): boolean {
+    return (
+      this.#db.run(
+        `UPDATE pa_actions
+         SET status = 'superseded', lease_until = NULL, last_error = ?, updated_at = ?
+         WHERE id = ? AND status IN ('unknown', 'reconciling')`,
+        reason,
+        now,
+        actionId,
+      ) > 0
+    );
+  }
+
+  supersedeForTask(taskId: string, now: string): number {
+    return this.#db.run(
+      `UPDATE pa_actions
+       SET status = 'superseded', updated_at = ?
+       WHERE task_id = ? AND status IN ('proposed', 'approved')`,
+      now,
+      taskId,
+    );
+  }
+
+  expireProposed(actionId: string, now: string): boolean {
+    return (
+      this.#db.run(
+        `UPDATE pa_actions SET status = 'expired', updated_at = ?
+         WHERE id = ? AND status = 'proposed' AND expires_at <= ?`,
+        now,
+        actionId,
+        now,
+      ) > 0
+    );
+  }
+}

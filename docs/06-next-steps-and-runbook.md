@@ -1,0 +1,228 @@
+# 06 · 下一步待办与操作手册
+
+> 2026-11-08。Week 2–4 的独立代码已落地并通过本地确定性测试；真实飞书凭据/回调证据、真实 Cloudflare 部署与驱逐恢复仍待完成。
+
+## 1. 当前基线
+
+| 已具备 | 不在基线内 |
+| --- | --- |
+| `pa_*` schema、Inbox 去重/恢复、Outbox 重试/unknown/核对 | 真实飞书回调与主动发信证据 |
+| 飞书验签、AES 解密、URL challenge、主人白名单 | 真实 Cloudflare 部署与对象驱逐恢复 |
+| 本地 `opencode-go/deepseek-v4.1-flash` 单/多会话 | MCP 灯桥接与真机 |
+| 本地 workerd DO + PiHarness + Lifecycle + `pa_*` 迁移 | 40 条场景与真实模型重复统计 |
+| Router/Worker、Task/Assignment/fencing、审批/执行、提醒、记忆 | 费用上限与演示材料 |
+| 97 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 真实平台侧验收 |
+
+## 2. 下一步待办
+
+| ID | 优先级 | 待办 | 依赖 | 完成判据 | 2026-11-08 状态 |
+| --- | --- | --- | --- | --- | --- |
+| N01 | P0 | 飞书自建应用、机器人、事件订阅、回调 URL、发布 | 飞书账号 | 真实 p2p 事件 200；记录 event/message ID、验签日志、回调时延 | 阻塞：需控制台与凭据 |
+| N02 | P0 | 真实主动发信与失败分类 | N01、app secret | `pa_outbox.platform_message_id` 有真实 `om_` ID；客户端收到消息 | 代码完成；待真实凭据验证 |
+| N03 | P0 | 运行中断/补投演练 | N01/N02 | 入站已持久化但未回复、发信已接受但未落库两种窗口可核对；不重复发 | 本地确定性测试通过；真实窗口待 N01 |
+| N04 | P0 | 把 `pa_*` 存储适配到 DO SQLite | N01 | Worker 内 `ctx.storage.sql` migration；Inbox/Outbox 测试通过 | 完成：`DoDb` + migration，workerd 启动通过 |
+| N05 | P0 | 把飞书 webhook 接入 Worker | N01、N04 | 真实飞书回调进入 DO；主人绑定；重复事件不重复建任务 | 代码完成；workerd 本地受理/去重通过 |
+| N06 | P0 | 真实模型 Router 替换 `CommandResponder` | N01/N05 | 普通消息进入 Router session；状态查询/取消仍走程序路径 | 完成：`PiRouterModel`，workerd 真实模型建任务通过 |
+| N07 | P1 | Task / Mandate / Assignment / 两个 Worker | N06 | 两任务并发、Worker 忙时受理新消息、上下文隔离 | 完成：状态机、租约/心跳、fencing、上限 2，测试通过 |
+| N08 | P1 | 补充、修改、取消、fencing | N07 | 旧派工迟到报告无权推进；取消先落库再中断 | 部分：补充/回答、取消、前缀解析已接聊天；目标修改路径未接 |
+| N09 | P1 | 审批、ActionExecutor、mock 灯、unknown/reconcile | N07 | 重复/过期/越权/撤销审批全部被拒；外部成功未落库可核对 | 代码完成：原子审批、取消/修订后拒绝 reconcile；mock 灯为程序化工具，MCP/真机待接 |
+| N10 | P1 | 一次性提醒（时区、TTL、取消、runKey） | N07 | 客户端关闭/重启后仍投递；重复 alarm 只生成一次任务 | 完成：Lifecycle job + runKey/TTL + 聊天取消/列表，测试通过 |
+| N11 | P1 | 显式记忆查改删 | N07 | 保存、查看、修改、忘记都有程序判据；不自动写入推测 | 完成：查改删与命令路径，测试通过 |
+| N12 | P1 | 40 条场景与真实模型重复运行报告 | N07–N11 | 确定性关键集全通过；真实模型单独统计成功率/成本/波动 | 部分：97 个确定性测试通过；40 条报告与重复统计待补 |
+| N13 | P1 | 真实部署、鉴权、费用上限、演示 | N05 | 陌生人按手册复现；`/ask` 不再裸奔；有部署/停止/故障步骤 | 部分：`/ask`、`/admin/*` 鉴权完成；真实部署与费用上限待做 |
+
+执行顺序固定为：**N01–N03 → N04–N05 → N06 → N07–N08 → N09 → N10–N11 → N12–N13**。不要同时接第二渠道、真机或管理页。N01–N03 仍被真实飞书账号/凭据阻塞；不依赖凭据的 N04–N11 独立代码与本地测试已完成，N08 的目标修改、N09 的 MCP/真机仍待补。
+
+## 3. 环境与密钥
+
+```bash
+node -v                 # 需要 26.x
+npm install
+cp .env.example .env    # 本地 Node 服务/模型实验
+cp infra/.dev.vars.example infra/.dev.vars  # 本地 workerd
+```
+
+| 变量 | 用途 |
+| --- | --- |
+| `FEISHU_APP_ID` / `FEISHU_APP_SECRET` | 飞书应用身份与 tenant token |
+| `FEISHU_VERIFICATION_TOKEN` | 事件/挑战 token |
+| `FEISHU_ENCRYPT_KEY` | 事件解密与签名；生产建议配置 |
+| `OWNER_FEISHU_OPEN_ID` | 显式主人绑定；禁止昵称推断 |
+| `OPENCODE_API_KEY` | 本地模型；DO 部署时用 Worker secret |
+| `DATABASE_PATH` | 本地 Node SQLite，默认 `./data/agent.sqlite` |
+| `OUTBOX_*` | 租约、重试次数、退避 |
+
+`.env`、`infra/.dev.vars` 已在 `.gitignore`；不要提交、不要贴日志。密钥轮换时同时更新 `.env`、`infra/.dev.vars` 和 `wrangler secret put`。
+
+## 4. 飞书接入手册
+
+### 4.1 控制台
+
+1. 在飞书开放平台创建**自建应用**，启用**机器人**能力。
+2. 权限至少开通：
+   - 接收用户发给机器人的单聊消息：`im:message.p2p_msg:readonly`
+   - 以应用身份发消息：`im:message:send_as_bot`
+   - 群聊权限不需要；MVP 会拒绝群消息。
+3. 事件订阅选择**发送到开发者服务器**，订阅 `im.message.receive_v1`。
+4. 请求地址填 `https://<公网域名>/webhooks/feishu`；保存时飞书会发 `url_verification` challenge。
+5. 在加密策略里设置 Verification Token 和 Encrypt Key，与服务端环境变量一致。
+6. 创建版本并发布；把主人加入应用可用范围，否则发信会报 `230013`。
+
+本地回调可用 Cloudflare Tunnel、ngrok 或已部署 Worker 的 HTTPS 地址：
+
+```bash
+cloudflared tunnel --url http://localhost:8787
+# 将输出的 https://... 地址填到飞书请求地址
+```
+
+临时隧道 URL 会变化，正式联调使用固定域名/命名隧道。
+
+### 4.2 绑定主人
+
+先启动服务，再用主人账号给机器人发一条私聊。第一次会被拒绝，但 `pa_inbox` 会记录 actor：
+
+```bash
+npm start
+sqlite3 data/agent.sqlite \
+  "select actor_id, status, reject_reason, received_at
+   from pa_inbox order by received_at desc limit 5;"
+```
+
+把 `actor_id`（`ou_...`）写入 `OWNER_FEISHU_OPEN_ID`，重启服务。之后同一账号的 p2p 消息才会被受理。
+
+### 4.3 Worker 入口与鉴权
+
+Worker 已接入同一套 webhook 与 `pa_*` 存储。本地 `wrangler dev` 需要 `infra/.dev.vars` 中的飞书凭据、`OWNER_FEISHU_OPEN_ID` 和 `ADMIN_TOKEN`：
+
+```bash
+npm run dev:cloudflare
+curl -s http://127.0.0.1:8787/healthz
+curl -s -H "authorization: Bearer $ADMIN_TOKEN" http://127.0.0.1:8787/admin/status
+curl -s -H "authorization: Bearer $ADMIN_TOKEN" http://127.0.0.1:8787/admin/recent
+```
+
+`/ask`、`/admin/status`、`/admin/recent` 没有有效 `ADMIN_TOKEN` 时返回 401；未配置 token 时返回 503。`/webhooks/feishu` 在缺少飞书凭据时返回 503。不要把这些入口直接暴露到公网。
+
+### 4.4 验证
+
+```bash
+curl -s http://localhost:8787/healthz
+```
+
+给机器人发 `/status` 或 `状态`，应收到程序生成的运行状态；普通消息应收到 `已收到。`。检查：
+
+```sql
+select platform_event_id, status, actor_id, received_at, processed_at
+from pa_inbox order by received_at desc limit 10;
+
+select business_key, purpose, status, attempts,
+       platform_message_id, last_error
+from pa_outbox order by created_at desc limit 10;
+```
+
+飞书消息事件的 `platform_event_id` 使用 `message_id`（`om_...`），因为飞书可能用不同 `event_id` 重复推送同一条消息。
+
+### 4.5 常见错误
+
+| 现象 | 检查 |
+| --- | --- |
+| 401 / invalid signature | Encrypt Key、时间戳、原始 body 是否被代理改写 |
+| 200 但无回复 | `OWNER_FEISHU_OPEN_ID`、chat_type 是否 p2p、Outbox 状态 |
+| 发信失败 `230006` | 机器人能力未发布 |
+| 发信失败 `230013` | 主人在应用可用范围外 |
+| 发信失败 `230027` | 缺少发消息权限或外部群限制 |
+| 发信失败 `230020` | 触发频率限制 |
+| Outbox `unknown` | 飞书不支持按业务键查询；不要盲目重发，人工核对 |
+
+## 5. 本地模型手册
+
+```bash
+# 根 .env 设置 OPENCODE_API_KEY
+npm run real          # 单会话
+npm run real:multi    # Router + 两个 Worker 并发
+```
+
+预期：
+
+- `real`：`status=done`，文本 `PA_REAL_MODEL_OK`。
+- `real:multi`：三个会话都 `done`，答案分别为 `ROUTER_REAL_OK`、`WORKER_A_REAL_OK`、`WORKER_B_REAL_OK`。
+
+出现 401/403 先检查 key 是否过期/轮换；不要把 key 打印到终端或报告。
+
+## 6. 本地 DO 与部署手册
+
+### 6.1 本地 workerd
+
+```bash
+# infra/.dev.vars 设置 OPENCODE_API_KEY
+npm run dev:cloudflare
+curl -s http://127.0.0.1:8787/healthz
+curl -s 'http://127.0.0.1:8787/ask?prompt=Reply%20with%20DO_OK'
+```
+
+预期 `/healthz` 返回 `{"ok":true,"runtime":"cloudflare-do"}`，`/ask` 返回 `DO_OK`。本地 DO SQLite 在 `.wrangler/state`；删除它等于重置本地对象数据。
+
+### 6.2 部署
+
+```bash
+npx wrangler login
+npx wrangler whoami
+npm run deploy:dry-run
+npx wrangler secret put OPENCODE_API_KEY --config infra/wrangler.jsonc
+npm run deploy
+npx wrangler tail --config infra/wrangler.jsonc
+```
+
+首次部署通过 `exports.Assistant` 创建 SQLite namespace。不要同时添加旧式 `migrations`；两者只能选一个。
+
+部署后验证 `/healthz` 和 `/ask`。`/ask` 目前没有鉴权，只是测试入口；正式公开前必须删除或加认证。
+
+### 6.3 DO 约束
+
+- 一个主人一个对象：`ASSISTANT.getByName("owner")`；以后从已验证主人 ID 派生。
+- Lifecycle 拥有唯一 alarm；不要再调用 `ctx.storage.setAlarm()`。
+- `pa_*` 已通过 `DoDb` 迁移到 DO SQLite，与 PiHarness 的 `pi_*` 表共用同一数据库；Worker 不得导入 `node:sqlite`。
+- 对象驱逐恢复、alarm 重放、真实账号部署尚未验证。
+- Pi 1.5 写入的会话不要降回 1.4；坏部署向前修。
+
+## 7. 测试与验收命令
+
+```bash
+npm run typecheck
+npm test                    # 97 tests
+npm run deploy:dry-run
+cd spikes/pi-durable-smoke
+npm run smoke               # faux 持久化/工具阻断
+npm run kill                # SIGKILL 后重开
+npm run multi               # faux 三会话并发
+npm run real                # 真实模型单会话
+npm run real:multi          # 真实模型三会话
+```
+
+真实模型脚本不是 CI 用例；运行前确认费用/配额。CI 只跑确定性测试。
+
+## 8. 故障与恢复
+
+| 场景 | 操作 |
+| --- | --- |
+| 本地进程中断 | 重启 `npm start`；`recoverPending` 会补处理已受理 Inbox；Outbox 按租约/业务键核对 |
+| 发信超时 | 查 `pa_outbox.status=unknown`；飞书无查询接口时不要重发，先人工核对 |
+| DO 本地状态异常 | 停止 dev，备份后清理 `.wrangler/state`；生产不要用此操作 |
+| 部署失败 | 先看 `wrangler tail`；认证问题设置 `CLOUDFLARE_API_TOKEN`；不要回滚 Pi minor |
+| 密钥泄露 | 轮换 OpenCode/Feishu key；更新 `.env`、`.dev.vars`、Worker secret；检查日志 |
+| 数据库损坏 | 本地保留 `*.sqlite` 备份；DO 使用 SQLite PITR/备份策略（未接入前不要声称有备份） |
+
+## 9. 每次实验记录
+
+新增或修复关键路径时，在 `docs/` 记录以下字段，避免把局部通过写成平台保证：
+
+| 字段 | 内容 |
+| --- | --- |
+| 日期/代码版本 | commit 或工作树状态 |
+| 环境 | 本地 Node / workerd / 真实 Cloudflare |
+| 模型 | faux / opencode-go，模型 ID |
+| 渠道 | fake / 真实飞书，是否 mock |
+| 场景 | K01–K12 或新场景 |
+| 结果 | 成功次数/总次数、失败原因 |
+| 证据 | 日志、消息 ID、DB 查询、traceId |
+| 未决项 | 不能判定或未覆盖的部分 |

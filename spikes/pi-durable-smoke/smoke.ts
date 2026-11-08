@@ -1,6 +1,7 @@
 // Minimal local spike for the proposed Personal Agent runtime.
 // Verifies: durable SQLite transcript, tool execution, pre-tool approval hook,
 // and transcript survival across process restart.
+import assert from "node:assert/strict";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -122,6 +123,12 @@ console.log(
   ),
 );
 
+assert.equal(executed, false, "the guarded tool must not execute");
+assert.equal(answerText, "I need approval before doing that.");
+assert.match(toolResults.at(-1) ?? "", /blocked/i);
+assert.equal(toolResults.length, 1);
+assert.equal(before.items.length, 5);
+
 await harness.close(context);
 
 // Reopen the same SQLite file to prove the transcript is durable.
@@ -139,4 +146,8 @@ console.log(
     2,
   ),
 );
+
+assert.equal(after.items.length, before.items.length);
+assert.equal(again.id, root.id);
+
 await reopened.close(context);

@@ -2,7 +2,43 @@
 
 > 聊天软件里的个人助手：一个主 Agent 协调多个任务 Worker，云端持续运行，本地按授权执行，结果回到原对话。
 
-**当前阶段：规划与可行性验证。** 现有可执行代码只有一个 Pi Durable 本地 spike；聊天渠道、多 Agent 调度、云端部署、真实审批和通知尚未实现。仓库记录了旧 spike 的结果，本轮文档整理未重跑该脚本。
+**当前阶段：核心代码已落地，真实渠道与部署仍待凭据。** 本地 Node 服务具备飞书验签/解密、持久 Inbox/Outbox、主人白名单和确定性命令。Cloudflare DO 已把 `pa_*` 迁移到 DO SQLite，并接入飞书 webhook、Router/Worker、Task/Assignment、审批/动作执行、一次性提醒和显式记忆。`wrangler dev` 实测通过：webhook 受理与 `message_id` 去重、`/admin/*` 鉴权、真实模型 `/ask`，以及真实模型 Router → Worker 的任务完成。真实飞书控制台配置、真实发信/回调证据、真实 Cloudflare 部署与对象驱逐恢复仍未完成。
+
+## 当前实现
+
+| 模块 | 已实现 | 边界 |
+| --- | --- | --- |
+| 飞书入口 | 签名校验、AES 解密、URL challenge、p2p/身份过滤 | 需真实应用凭据与回调入口 |
+| Inbox | `channel + account + message_id` 唯一，重复事件返回原受理 | 已接 Router |
+| Outbox | 业务键唯一、按 task 分组排序、租约、重试、unknown、崩溃后按业务键核对 | 真实飞书无查询接口时保持 unknown |
+| Router | 确定性命令优先；模型 JSON 决策；补充/回答、提醒列表/取消、任务前缀解析 | 真实模型质量需重复评测 |
+| Task / Assignment | Task 状态机、Mandate、revision、租约、fencingToken、心跳、最多两个 Worker | 10 分钟 assignment lifetime；长任务跨轮恢复需真实部署验证 |
+| 审批 / 动作 | 参数绑定、nonce、一次性消费、原子审批、执行器、取消/修订后拒绝重试、unknown/reconcile、mock 灯 | mock 灯是程序化工具；MCP 桥接与真机未接 |
+| 提醒 / 记忆 | 一次性提醒、runKey、TTL、聊天取消/列表；显式记忆查改删 | 周期提醒与语义检索未做 |
+| 本地服务 | `POST /webhooks/feishu`、`GET /healthz`、Node SQLite | 本地进程无模型运行时，模型任务明确失败 |
+| Cloudflare DO | `Assistant` + PiHarness + Lifecycle、DO SQLite 中的 `pa_*`、webhook、jobs | 未真实部署；驱逐恢复未验证 |
+| 本地真实模型 | `opencode-go/deepseek-v4.1-flash`，本地 key | 单会话与三会话并发通过 |
+| Cloudflare DO 运行 | `wrangler dev` + 真实模型 | webhook 受理/去重、鉴权、`/ask`、Router→Worker 任务通过 |
+
+未实现或待真实环境验证：真实飞书应用配置与收发证据、真实 Cloudflare 部署与对象驱逐恢复、MCP 灯桥接与真机、天气工具、budget 上限、40 条场景与真实模型重复统计。
+
+```bash
+npm install
+npm test
+npm run typecheck
+cp .env.example .env   # 填入飞书应用凭据与主人 open_id
+npm start
+```
+
+默认数据库为 `./data/agent.sqlite`；`OWNER_FEISHU_OPEN_ID` 是显式操作员绑定，不从昵称或消息正文推断。
+
+**2026-11-08 本地验证：**
+
+- `npm test`：97 个确定性测试通过，覆盖 Inbox/Outbox、Task/Assignment fencing/心跳、原子审批、取消后 reconcile 拒绝执行、unknown→reconcile、提醒 runKey/TTL/聊天取消、显式记忆和 K05/K06/K09。
+- `npm run typecheck` 与 `npm run deploy:dry-run` 通过。
+- `wrangler dev`：`/webhooks/feishu` 受理 `200`，同 `message_id` 重推返回 `duplicate`；`/admin/status` 无 token `401`、有 token `200`；`/ask` 真实模型返回 `DO_OK`。
+- `wrangler dev`：`/remind` 创建提醒、`/reminders` 列表、`/cancel-reminder` 取消均通过；超过 1 MiB 的 webhook body 返回 `413`。
+- `wrangler dev` 真实模型任务：Router 创建任务，Worker 返回结构化报告，Task 状态变为 `succeeded`；结果 Outbox 因本地测试指向不可达飞书地址而按重试策略失败。
 
 ## 产品方向
 
@@ -56,10 +92,12 @@ flowchart TB
 | [领域术语](CONTEXT.md) | Task、Assignment、Mandate、Action、Approval 的含义 |
 | [02 · 架构](docs/02-architecture.md) | 模块职责、调度、消息投递、审批、恢复与数据模型 |
 | [04 · 构建计划](docs/04-build-plan.md) | 技术门槛、六周里程碑、评测和交付标准 |
+| [06 · 下一步与操作手册](docs/06-next-steps-and-runbook.md) | 待办、飞书/DO/模型操作与故障处理 |
+| [Cloudflare DO](infra/README.md) | Durable Object、Lifecycle、PiHarness 与部署限制 |
 | [01 · 可行性资料](docs/01-feasibility.md) | 原始技术调研；产品决策以 00/02/04 为准 |
 | [03 · 岗位适配](docs/03-job-fit.md) | 项目证据与岗位要求；规划不能写成已实现 |
 | [05 · JD 附录](docs/05-jd-appendix.md) | 原始岗位样本，不作为功能清单 |
-| [本地 spike](spikes/pi-durable-smoke/README.md) | 唯一已有运行原型及其证据边界 |
+| [本地 spike](spikes/pi-durable-smoke/README.md) | Pi 本地验证与证据边界 |
 
 ## 已有 spike
 
@@ -67,9 +105,17 @@ flowchart TB
 cd spikes/pi-durable-smoke
 npm install
 npm run smoke
+npm run kill
+npm run multi
+npm run real
+npm run real:multi
 ```
 
-仓库记录的环境：Node 26.12.0，Pi Durable 1.5.0，faux provider，无需 API key。输出包括：
+`multi` 在同一个 Harness 中创建 Router 与两个 Worker：Worker A 阻塞在工具时，Router 仍能回复、Worker B 仍能完成，三份 context 不含其他会话输入。它使用 faux provider 和单进程，只证明本地 Pi 会话语义，不证明 Cloudflare DO 或真实模型行为。
+
+`real` 和 `real:multi` 读取仓库根目录 `.env` 的 `OPENCODE_API_KEY`，调用真实的 `opencode-go/deepseek-v4.1-flash`。已实测单会话返回 `PA_REAL_MODEL_OK`，三会话并发返回 `ROUTER_REAL_OK` / `WORKER_A_REAL_OK` / `WORKER_B_REAL_OK`，且上下文互不串扰。`.env` 不入库。
+
+仓库记录的环境：Node 26.12.0，Pi Durable 1.5.0，faux provider，无需 API key。`smoke` 输出关键字段：
 
 ```json
 {
@@ -80,6 +126,16 @@ npm run smoke
 }
 ```
 
-原脚本分两次输出，上面仅合并列出关键字段。它演示了工具调用被 beforeTool 拦截，以及任务结束后关闭运行时、重新打开同一 SQLite 文件时会话记录仍在。脚本主要打印结果，尚未对这些字段逐项断言。
+`kill` 让子进程提交一轮会话后等待，父进程用 `SIGKILL` 终止并重新打开同一 SQLite 文件：
 
-它没有验证真实模型、运行中进程崩溃恢复、完整审批后执行、多个 Worker、云端部署或聊天通知。下一步应补独立进程故障注入与状态断言，再扩展产品能力。
+```json
+{
+  "killedWith": "SIGKILL",
+  "entryCount": 2,
+  "reopenedSameRoot": true
+}
+```
+
+两个脚本现已对上述字段逐项断言。它们演示了工具调用被 beforeTool 拦截，以及已提交会话在正常关闭和独立进程被杀后仍可重新打开。
+
+它们没有验证真实模型、未完成任务/待审批状态的运行中恢复、完整审批后执行、多个 Worker、云端部署或聊天通知。`kill` 用例只证明已提交 transcript 的持久性，不能替代“任务执行中中断后恢复”的门槛实验。

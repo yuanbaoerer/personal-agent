@@ -1,0 +1,26 @@
+{
+  "name": "personal-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=26.0.0"
+  },
+  "scripts": {
+    "typecheck": "tsc -p apps/agent/tsconfig.json && tsc -p infra/tsconfig.json",
+    "test": "node --test apps/agent/test/*.test.ts",
+    "start": "node --env-file-if-exists=.env apps/agent/src/main.ts",
+    "dev:cloudflare": "wrangler dev --config infra/wrangler.jsonc",
+    "deploy:dry-run": "wrangler deploy --config infra/wrangler.jsonc --dry-run --outdir .wrangler/dry-run",
+    "deploy": "wrangler deploy --config infra/wrangler.jsonc"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20261104.1",
+    "@types/node": "26.6.6",
+    "typescript": "7.0.2",
+    "wrangler": "4.157.0"
+  }
+}

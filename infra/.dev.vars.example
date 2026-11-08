@@ -1,0 +1,15 @@
+# Copy to infra/.dev.vars for `wrangler dev`. Never commit the real file.
+OPENCODE_API_KEY=
+
+# Required for the Feishu webhook. Without all three, /webhooks/feishu returns 503.
+FEISHU_APP_ID=
+FEISHU_APP_SECRET=
+FEISHU_VERIFICATION_TOKEN=
+# Optional. When set, event signatures are required and encrypted events are decrypted.
+FEISHU_ENCRYPT_KEY=
+
+# Explicit operator binding. Never inferred from a nickname or model output.
+OWNER_FEISHU_OPEN_ID=
+
+# Protects /ask and /admin/*. Without it those routes return 503.
+ADMIN_TOKEN=

@@ -1,6 +1,6 @@
 # 02 · 架构与可靠性设计
 
-> 2026-11-04 修订。本文是目标设计，尚未实现。产品范围以 [00](00-product-plan.md) 为准，交付门槛以 [04](04-build-plan.md) 为准，术语以 [CONTEXT.md](../CONTEXT.md) 为准。
+> 2026-11-08 修订。本文是目标设计；Week 1 的本地入口/投递骨架与 Week 2–4 的独立代码（Router/Worker、Task/Assignment、审批/执行、提醒、显式记忆、DO `pa_*`）已实现并通过本地确定性测试（见 [README](../README.md)）。真实飞书回调/发信、真实 Cloudflare 部署与对象驱逐恢复仍未验证。产品范围以 [00](00-product-plan.md) 为准，交付门槛以 [04](04-build-plan.md) 为准，术语以 [CONTEXT.md](../CONTEXT.md) 为准。
 
 ## 1. 架构约束
 
@@ -94,7 +94,7 @@ SessionSpec 包含稳定 sessionId、角色和工具范围；SessionInput 包含
 
 1. Channel Adapter 验证平台请求，完成必要解密，并拒绝未绑定主人或非首发允许对话。
 2. 归一化 Trigger：channel、account、conversation、actor、platformEventId、replyTo、eventType、occurredAt、payload。
-3. 以 channel + account + platformEventId 唯一约束写入 pa_inbox，保存路由待办；重复事件返回原受理状态。
+3. 以 channel + account + platformEventId 唯一约束写入 pa_inbox，保存路由待办；重复事件返回原受理状态。飞书消息事件的 platformEventId 使用 `message_id`，因为同一条消息可能以不同 `event_id` 重复推送。
 4. 提交成功后尽快确认平台回调；耗时模型工作异步进行。平台 challenge、卡片即时应答按各自协议独立处理。
 5. 用程序先识别确定的卡片操作、任务状态查询和取消，再把需要语义理解的输入交 Router。
 6. Router 的路由命令仍由 Coordinator 验证任务归属、版本和 Mandate。

@@ -1,0 +1,25 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "personal-agent",
+  "main": "./src/worker.ts",
+  "compatibility_date": "2026-11-04",
+  "compatibility_flags": ["nodejs_compat"],
+  "upload_source_maps": true,
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "ASSISTANT",
+        "class_name": "Assistant"
+      }
+    ]
+  },
+  "exports": {
+    "Assistant": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    }
+  },
+  "observability": {
+    "enabled": true
+  }
+}

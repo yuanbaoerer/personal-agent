@@ -1,0 +1,256 @@
+import { mkdirSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+
+import { ActionService } from "./actions/service.ts";
+import { createDefaultToolRegistry } from "./actions/tools.ts";
+import { FeishuAdapter } from "./channels/feishu/adapter.ts";
+import { loadConfig } from "./config.ts";
+import { Router, StaticRouterModel } from "./coordinator/router.ts";
+import { IngressService } from "./coordinator/ingress.ts";
+import { TaskService } from "./coordinator/tasks.ts";
+import { EffectDispatcher } from "./delivery/effects.ts";
+import { OutboxDispatcher } from "./delivery/outbox.ts";
+import { ConfigError } from "./domain/errors.ts";
+import { MemoryService } from "./personal/memory.ts";
+import { ReminderService } from "./personal/reminders.ts";
+import type {
+  AgentRuntime,
+  OpenedSession,
+  RuntimeAnswer,
+  RuntimeSessionSpec,
+  RuntimeSubmission,
+} from "./runtime/types.ts";
+import { noopWake } from "./runtime/types.ts";
+import { createHttpServer, type AppLogger } from "./server.ts";
+import { ActionRepository } from "./storage/actions.ts";
+import { EffectRepository } from "./storage/effects.ts";
+import { MemoryRepository, ScheduleRepository } from "./storage/personal.ts";
+import { TaskRepository } from "./storage/tasks.ts";
+import { openStore } from "./storage/node.ts";
+
+const MAINTENANCE_INTERVAL_MS = 1_000;
+
+const logger: AppLogger = {
+  info(message, fields) {
+    console.info(JSON.stringify({ level: "info", message, ...fields }));
+  },
+  error(message, fields) {
+    console.error(JSON.stringify({ level: "error", message, ...fields }));
+  },
+};
+
+/**
+ * The local Node process intentionally has no model runtime. Deterministic
+ * commands, Feishu transport, Inbox/Outbox and the Coordinator still run;
+ * model tasks fail with an explicit report instead of pretending to work.
+ */
+class LocalRuntime implements AgentRuntime {
+  async open(_spec: RuntimeSessionSpec): Promise<OpenedSession> {
+    return { id: "local-unavailable" };
+  }
+
+  async submit(
+    _sessionId: string,
+    _text: string,
+    operationId: string,
+  ): Promise<RuntimeSubmission> {
+    return { operationId };
+  }
+
+  async wait(): Promise<RuntimeAnswer> {
+    return {
+      status: "answered",
+      text: JSON.stringify({
+        status: "failed",
+        summary: "本地进程没有模型运行时；请在 Worker 中执行模型任务。",
+        evidence: [],
+      }),
+    };
+  }
+
+  async interrupt(): Promise<void> {
+    // Nothing to interrupt locally.
+  }
+}
+
+async function main(): Promise<void> {
+  const config = loadConfig();
+  const databasePath =
+    config.databasePath === ":memory:" ? ":memory:" : resolve(config.databasePath);
+  if (databasePath !== ":memory:") {
+    mkdirSync(dirname(databasePath), { recursive: true });
+  }
+
+  const store = openStore(databasePath);
+  const db = store.db;
+  if (config.feishu.encryptKey === undefined) {
+    logger.info("feishu_encrypt_key_missing", {
+      message: "event authenticity relies on the verification token; configure FEISHU_ENCRYPT_KEY",
+    });
+  }
+  if (config.ownerOpenId !== undefined) {
+    store.bindOwner({
+      channel: "feishu",
+      accountId: config.feishu.accountId ?? config.feishu.appId,
+      actorId: config.ownerOpenId,
+      verifiedAt: new Date().toISOString(),
+    });
+  } else {
+    logger.error("owner_not_bound", {
+      message: "OWNER_FEISHU_OPEN_ID is unset; every inbound message will be rejected",
+    });
+  }
+
+  const tasks = new TaskRepository(db);
+  const actions = new ActionRepository(db);
+  const effects = new EffectRepository(db);
+  const schedules = new ScheduleRepository(db);
+  const memories = new MemoryRepository(db);
+  const { registry } = createDefaultToolRegistry(store);
+  const runtime = new LocalRuntime();
+
+  const taskService = new TaskService({
+    store,
+    tasks,
+    actions,
+    effects,
+    runtime,
+    wake: noopWake,
+  });
+  const actionService = new ActionService({
+    store,
+    actions,
+    effects,
+    tools: registry,
+    wake: noopWake,
+    tasks,
+    onSettled: (taskId) => taskService.onActionSettled(taskId),
+  });
+  taskService.setActionProposer(actionService);
+
+  const reminders = new ReminderService({
+    store,
+    schedules,
+    wake: noopWake,
+  });
+  const memory = new MemoryService({ store, memories });
+  const router = new Router({
+    store,
+    tasks,
+    actions,
+    effects,
+    taskService,
+    actionService,
+    reminders,
+    memory,
+    model: new StaticRouterModel(),
+    wake: noopWake,
+  });
+
+  const effectDispatcher = new EffectDispatcher({ effects });
+  taskService.install(effectDispatcher);
+  actionService.install(effectDispatcher);
+  router.install(effectDispatcher);
+
+  const feishu = new FeishuAdapter(config.feishu);
+  const ingress = new IngressService({ store, handler: router });
+  const dispatcher = new OutboxDispatcher({
+    store,
+    channel: feishu,
+    leaseMs: config.outbox.leaseMs,
+    maxAttempts: config.outbox.maxAttempts,
+    retryBaseMs: config.outbox.retryBaseMs,
+  });
+
+  const server = createHttpServer({ feishu, ingress, logger });
+
+  let running = false;
+  let stopping = false;
+  const timer = setInterval(() => {
+    if (running || stopping) {
+      return;
+    }
+    running = true;
+    void (async () => {
+      try {
+        const recovered = await ingress.recoverPending(20);
+        taskService.sweep();
+        actionService.sweep();
+        const fired = await reminders.fireDue();
+        const effectResult = await effectDispatcher.drain(20);
+        const result = await dispatcher.drain(10);
+        const changed =
+          recovered +
+          fired +
+          effectResult.done +
+          effectResult.retried +
+          effectResult.failed +
+          result.accepted +
+          result.retried +
+          result.failed +
+          result.unknown +
+          result.manual;
+        if (changed > 0) {
+          logger.info("maintenance", {
+            recovered,
+            fired,
+            effects: effectResult,
+            ...result,
+          });
+        }
+      } catch (error) {
+        logger.error("maintenance_failed", {
+          message: error instanceof Error ? error.message : String(error),
+        });
+      } finally {
+        running = false;
+      }
+    })();
+  }, MAINTENANCE_INTERVAL_MS);
+  timer.unref();
+
+  const listen = Promise.withResolvers<void>();
+  server.once("error", listen.reject);
+  server.listen(config.port, config.host, () => {
+    server.off("error", listen.reject);
+    listen.resolve();
+  });
+  await listen.promise;
+
+  logger.info("listening", {
+    host: config.host,
+    port: config.port,
+    databasePath,
+  });
+
+  let shuttingDown = false;
+  const shutdown = (signal: string): void => {
+    if (shuttingDown) {
+      return;
+    }
+    shuttingDown = true;
+    stopping = true;
+    clearInterval(timer);
+    logger.info("shutting_down", { signal });
+    server.closeAllConnections();
+    server.close(() => {
+      store.close();
+      process.exit(0);
+    });
+    setTimeout(() => process.exit(1), 5_000).unref();
+  };
+
+  process.on("SIGINT", () => shutdown("SIGINT"));
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+}
+
+main().catch((error: unknown) => {
+  if (error instanceof ConfigError) {
+    logger.error("config_invalid", { message: error.message });
+  } else {
+    logger.error("startup_failed", {
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+  process.exitCode = 1;
+});
