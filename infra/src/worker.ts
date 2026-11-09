@@ -12,6 +12,7 @@ import { ActionService } from "../../apps/agent/src/actions/service.ts";
 import { createDefaultToolRegistry } from "../../apps/agent/src/actions/tools.ts";
 import { FeishuAdapter } from "../../apps/agent/src/channels/feishu/adapter.ts";
 import type { FeishuConfig } from "../../apps/agent/src/channels/feishu/types.ts";
+import { decryptFeishuPayload } from "../../apps/agent/src/channels/feishu/crypto.ts";
 import { IngressService } from "../../apps/agent/src/coordinator/ingress.ts";
 import { PiRouterModel } from "../../apps/agent/src/coordinator/pi-router.ts";
 import { Router } from "../../apps/agent/src/coordinator/router.ts";
@@ -437,11 +438,116 @@ export default {
     if (url.pathname === "/healthz") {
       return Response.json({ ok: true, runtime: "worker" });
     }
+
+    // Feishu's URL verification has a 3-second deadline. Answer the plaintext
+    // challenge in the outer Worker so a cold Durable Object startup cannot
+    // make the callback fail. Normal events still go through the DO.
+    if (request.method === "POST" && url.pathname === "/webhooks/feishu") {
+      const challenge = await maybeFeishuChallenge(request, env);
+      if (challenge !== undefined) {
+        return challenge;
+      }
+    }
+
     // The stable owner key is deliberately server-derived, not user input.
     const agent = env.ASSISTANT.getByName("owner");
     return agent.fetch(request);
   },
 };
+
+async function maybeFeishuChallenge(
+  request: Request,
+  env: Env,
+): Promise<Response | undefined> {
+  const expected = env.FEISHU_VERIFICATION_TOKEN?.trim();
+  if (expected === undefined || expected.length === 0) {
+    return undefined;
+  }
+
+  const declared = request.headers.get("content-length");
+  if (declared !== null) {
+    const size = Number(declared);
+    if (Number.isFinite(size) && size > MAX_BODY_BYTES) {
+      return undefined;
+    }
+  }
+
+  let raw: string;
+  try {
+    raw = await request.clone().text();
+  } catch {
+    return undefined;
+  }
+  if (raw.length > MAX_BODY_BYTES) {
+    return undefined;
+  }
+
+  let payload: unknown;
+  try {
+    payload = JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+  let record = asRecord(payload);
+  if (record === undefined) {
+    return undefined;
+  }
+
+  // With an Encrypt Key configured, Feishu encrypts the URL challenge too.
+  // Decrypt it here so verification never depends on a cold Durable Object.
+  if (typeof record.encrypt === "string") {
+    const encryptKey = env.FEISHU_ENCRYPT_KEY?.trim();
+    if (encryptKey === undefined || encryptKey.length === 0) {
+      return undefined;
+    }
+    let decrypted: string;
+    try {
+      decrypted = decryptFeishuPayload(record.encrypt, encryptKey);
+    } catch {
+      return undefined;
+    }
+    try {
+      payload = JSON.parse(decrypted);
+    } catch {
+      return undefined;
+    }
+    record = asRecord(payload);
+    if (record === undefined) {
+      return undefined;
+    }
+  }
+
+  if (record.type !== "url_verification") {
+    return undefined;
+  }
+
+  if (
+    typeof record.token !== "string" ||
+    !secureEqual(record.token, expected)
+  ) {
+    return Response.json({ error: "invalid_signature" }, { status: 401 });
+  }
+  if (typeof record.challenge !== "string") {
+    return Response.json({ error: "invalid_request" }, { status: 400 });
+  }
+  return Response.json({ challenge: record.challenge });
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  return value as Record<string, unknown>;
+}
+
+function secureEqual(actual: string, expected: string): boolean {
+  const actualBuffer = Buffer.from(actual, "utf8");
+  const expectedBuffer = Buffer.from(expected, "utf8");
+  return (
+    actualBuffer.length === expectedBuffer.length &&
+    timingSafeEqual(actualBuffer, expectedBuffer)
+  );
+}
 
 function readFeishuConfig(env: Env): FeishuConfig | undefined {
   const appId = env.FEISHU_APP_ID?.trim();

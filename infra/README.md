@@ -1,6 +1,6 @@
 # Cloudflare Durable Object 配置
 
-这份配置是一个 `Assistant` Durable Object、SQLite 存储、PiHarness + Lifecycle、真实 `opencode-go` 模型，以及应用层 `pa_*` 业务表。它已通过 `wrangler deploy --dry-run`；本地 `wrangler dev` 已跑通 `/healthz`、`/ask`、飞书 webhook 受理/去重、`/admin/*` 鉴权和真实模型 Router → Worker 任务。还没有部署到真实 Cloudflare 账号，也没有真实飞书回调与对象驱逐恢复证据。
+这份配置是一个 `Assistant` Durable Object、SQLite 存储、PiHarness + Lifecycle、真实 `opencode-go` 模型，以及应用层 `pa_*` 业务表。它已通过 `wrangler deploy --dry-run`；本地 `wrangler dev` 已跑通 `/healthz`、`/ask`、飞书 webhook 受理/去重、`/admin/*` 鉴权和真实模型 Router → Worker 任务。2026-11-10 已真实部署到 Cloudflare（`personal-agent.3103148441.workers.dev`）；Worker 内 challenge 与 DO 请求为毫秒级，但飞书后台保存请求地址仍超时，尾流未见飞书请求。本地 Node 的长连接已连上 Feishu（`FEISHU_EVENT_MODE=long_connection`），但它不经过本 Worker；Worker 的真实飞书回调与对象驱逐恢复尚无证据。
 
 ## 前置条件
 
@@ -69,7 +69,7 @@ npx wrangler secret put ADMIN_TOKEN --config infra/wrangler.jsonc
 - **SQLite**：PiHarness 把 `pi_*` 表写入该对象的 SQLite；应用通过 `DoDb` 把 `pa_*` 表写入同一个数据库。Worker 代码不得导入 `node:sqlite`；本地 Node 入口在 `apps/agent/src/storage/node.ts`。
 - **模型认证**：`createModels({ authContext })` 从 `this.env.OPENCODE_API_KEY` 取 key，再注册 `opencodeGoProvider()`；不要依赖 Worker 里的 `process.env`。
 - **单 alarm**：Lifecycle 拥有对象唯一的 alarm。应用维护、提醒触发和 Pi 唤醒都通过 Lifecycle jobs 调度；不要另外调用 `ctx.storage.setAlarm()`。
-- **Webhook 与鉴权**：`/webhooks/feishu` 在 DO 内验签/解密并写 Inbox；`/ask`、`/admin/status`、`/admin/recent` 需要 `ADMIN_TOKEN`。未配置飞书凭据时 webhook 返回 503。
+- **Webhook 与鉴权**：`/webhooks/feishu` 在 DO 内验签/解密并写 Inbox；URL challenge 由外层 Worker 先处理（含 Encrypt Key 加密的 challenge），避免冷启动 DO 拖过飞书 1 秒 deadline。`/ask`、`/admin/status`、`/admin/recent` 需要 `ADMIN_TOKEN`。未配置飞书凭据时 webhook 返回 503。
 - **RPC 启动**：RPC 方法不会经过 `fetch()`，所以 `ask()` 先 `await this.lifecycle.start()`，再使用 PiHarness。
 - **恢复**：对象被驱逐后，Lifecycle 从 SQLite 的 job 队列恢复；PiHarness 用 `wake()` 继续未完成工作。当前只验证了本地 workerd 的启动、webhook、真实模型任务和鉴权，未验证真实部署后的驱逐/恢复。
 
@@ -97,6 +97,6 @@ npx wrangler secret put ADMIN_TOKEN --config infra/wrangler.jsonc
 
 ## 尚未完成
 
-- 真实账号部署、对象驱逐/恢复实验。
-- 真实飞书回调与主动发信证据；MCP 灯桥接与真机。
+- 对象驱逐/恢复实验。
+- Worker 的飞书回调稳定入口：`workers.dev` 在飞书后台保存请求地址时超时；需自定义域或 WS 桥接。长连接目前只在本地 Node 可用，不经过 Worker。之后补真实飞书回调与主动发信证据；MCP 灯桥接与真机仍待接。
 - 40 条场景与真实模型重复运行报告；模型费用上限与密钥轮换流程。

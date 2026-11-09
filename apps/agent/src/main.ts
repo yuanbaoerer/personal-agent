@@ -4,6 +4,7 @@ import { dirname, resolve } from "node:path";
 import { ActionService } from "./actions/service.ts";
 import { createDefaultToolRegistry } from "./actions/tools.ts";
 import { FeishuAdapter } from "./channels/feishu/adapter.ts";
+import { FeishuLongConnection } from "./channels/feishu/long-connection.ts";
 import { loadConfig } from "./config.ts";
 import { Router, StaticRouterModel } from "./coordinator/router.ts";
 import { IngressService } from "./coordinator/ingress.ts";
@@ -154,6 +155,14 @@ async function main(): Promise<void> {
 
   const feishu = new FeishuAdapter(config.feishu);
   const ingress = new IngressService({ store, handler: router });
+  const longConnection =
+    config.eventMode === "long_connection"
+      ? new FeishuLongConnection({
+          config: config.feishu,
+          ingress,
+          logger,
+        })
+      : undefined;
   const dispatcher = new OutboxDispatcher({
     store,
     channel: feishu,
@@ -221,7 +230,16 @@ async function main(): Promise<void> {
     host: config.host,
     port: config.port,
     databasePath,
+    eventMode: config.eventMode,
   });
+
+  if (longConnection !== undefined) {
+    void longConnection.start().catch((error: unknown) => {
+      logger.error("feishu_ws_start_failed", {
+        message: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }
 
   let shuttingDown = false;
   const shutdown = (signal: string): void => {
@@ -232,6 +250,7 @@ async function main(): Promise<void> {
     stopping = true;
     clearInterval(timer);
     logger.info("shutting_down", { signal });
+    longConnection?.stop();
     server.closeAllConnections();
     server.close(() => {
       store.close();

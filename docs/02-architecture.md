@@ -1,6 +1,6 @@
 # 02 · 架构与可靠性设计
 
-> 2026-11-09 修订。本文是目标设计；Week 1 的本地入口/投递骨架与 Week 2–4 的独立代码（Router/Worker、Task/Assignment、审批/执行、提醒、显式记忆、DO `pa_*`）已实现并通过本地确定性测试（见 [README](../README.md)）。真实飞书 p2p 回调与主动回复已通过本地 Node + 临时 Tunnel 验证；真实 Cloudflare Worker 部署与对象驱逐恢复仍未验证。产品范围以 [00](00-product-plan.md) 为准，交付门槛以 [04](04-build-plan.md) 为准，术语以 [CONTEXT.md](../CONTEXT.md) 为准。
+> 2026-11-09 修订。本文是目标设计；Week 1 的本地入口/投递骨架与 Week 2–4 的独立代码（Router/Worker、Task/Assignment、审批/执行、提醒、显式记忆、DO `pa_*`）已实现并通过本地确定性测试（见 [README](../README.md)）。真实飞书 p2p 回调与主动回复已通过本地 Node（webhook + 长连接）验证；Cloudflare Worker 已真实部署；飞书侧稳定入口与对象驱逐恢复仍未验证。产品范围以 [00](00-product-plan.md) 为准，交付门槛以 [04](04-build-plan.md) 为准，术语以 [CONTEXT.md](../CONTEXT.md) 为准。
 
 ## 1. 架构约束
 

@@ -1,11 +1,14 @@
 import type { FeishuConfig } from "./channels/feishu/types.ts";
 import { ConfigError } from "./domain/errors.ts";
 
+export type FeishuEventMode = "webhook" | "long_connection";
+
 export interface AppConfig {
   host: string;
   port: number;
   databasePath: string;
   ownerOpenId?: string;
+  eventMode: FeishuEventMode;
   feishu: FeishuConfig;
   outbox: {
     leaseMs: number;
@@ -34,11 +37,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const appSecret = read("FEISHU_APP_SECRET") as string;
   const verificationToken = read("FEISHU_VERIFICATION_TOKEN") as string;
 
+  const eventModeRaw = read("FEISHU_EVENT_MODE") ?? "webhook";
+  if (eventModeRaw !== "webhook" && eventModeRaw !== "long_connection") {
+    throw new ConfigError("FEISHU_EVENT_MODE must be webhook or long_connection");
+  }
+
   return {
     host: read("HOST") ?? "0.0.0.0",
     port: parseInteger(read("PORT") ?? "8787", "PORT", 1, 65_535),
     databasePath: read("DATABASE_PATH") ?? "./data/agent.sqlite",
     ownerOpenId: read("OWNER_FEISHU_OPEN_ID"),
+    eventMode: eventModeRaw,
     feishu: {
       appId,
       appSecret,
