@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
+import { inbound } from "./helpers.ts";
 import { createServices, sendText } from "./services.ts";
 
 const READY_REPORT = {
@@ -339,6 +340,85 @@ describe("task and assignment coordination", () => {
     );
     services.taskService.onActionSettled(task.id);
     assert.equal(services.tasks.get(task.id)?.status, "queued");
+  });
+
+  it("revises a running task through chat and fences the old assignment", async () => {
+    const services = createServices();
+    const task = services.taskService.create({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "source:revise-chat",
+      goal: "v1 goal",
+      completionCriteria: "v1 criteria",
+    });
+    const claimed = services.tasks.claimNext(
+      services.now().toISOString(),
+      60_000,
+      2,
+    );
+    assert.ok(claimed);
+    services.tasks.setAssignmentSession(
+      claimed.assignment.id,
+      "session-old",
+      services.now().toISOString(),
+    );
+
+    await services.ingress.accept(
+      inbound({
+        platformEventId: "evt_revise_chat",
+        text: `/修改 ${task.id.slice(0, 8)} 目标=v2 goal 完成条件=v2 criteria`,
+      }),
+    );
+
+    const revised = services.tasks.get(task.id);
+    assert.equal(revised?.revision, 2);
+    assert.equal(revised?.goal, "v2 goal");
+    assert.equal(revised?.completionCriteria, "v2 criteria");
+    assert.equal(revised?.status, "queued");
+    assert.equal(
+      services.tasks.getAssignment(claimed.assignment.id)?.status,
+      "superseded",
+    );
+
+    const stale = services.taskService.report(
+      claimed.assignment.id,
+      claimed.assignment.fencingToken,
+      claimed.assignment.taskRevision,
+      READY_REPORT,
+    );
+    assert.equal(stale.status, "done");
+    assert.equal(services.tasks.get(task.id)?.status, "queued");
+
+    await services.effectDispatcher.drain(50);
+    assert.deepEqual(services.runtime.interrupted, ["session-old"]);
+    assert.equal(services.tasks.get(task.id)?.revision, 2);
+    assert.equal(services.tasks.get(task.id)?.status, "succeeded");
+  });
+
+  it("revises through a model decision and rejects a terminal task", async () => {
+    const services = createServices();
+    const task = services.taskService.create({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "source:revise-model",
+      goal: "v1 goal",
+      completionCriteria: "v1 criteria",
+    });
+    services.model.push({
+      action: "revise_task",
+      text: "",
+      taskId: task.id,
+      changes: { goal: "v2 goal" },
+    });
+    await sendText(services, "把任务目标改成 v2 goal", "evt_revise_model");
+
+    assert.equal(services.tasks.get(task.id)?.revision, 2);
+    assert.equal(services.tasks.get(task.id)?.goal, "v2 goal");
+
+    await sendText(services, `/修改 ${task.id.slice(0, 8)} 目标=too late`, "evt_revise_terminal");
+    const terminal = services.tasks.get(task.id);
+    assert.equal(terminal?.revision, 2);
+    assert.equal(terminal?.goal, "v2 goal");
   });
 
   it("extends a live assignment lease while the runtime is pending", async () => {

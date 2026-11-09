@@ -12,7 +12,7 @@
 | 本地 `opencode-go/deepseek-v4.1-flash` 单/多会话 | 40 条场景与真实模型重复统计 |
 | 本地 workerd DO + PiHarness + Lifecycle + `pa_*` 迁移 | 费用上限与演示材料 |
 | Router/Worker、Task/Assignment/fencing、审批/执行、提醒、记忆 | 真实 Worker 侧验收 |
-| 97 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
+| 100 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
 
 ## 2. 下一步待办
 
@@ -25,14 +25,14 @@
 | N05 | P0 | 把飞书 webhook 接入 Worker | N01、N04 | 真实飞书回调进入 DO；主人绑定；重复事件不重复建任务 | 代码完成；真实回调目前走本地 Node + 临时 Tunnel；Worker 真实部署待做 |
 | N06 | P0 | 真实模型 Router 替换 `CommandResponder` | N01/N05 | 普通消息进入 Router session；状态查询/取消仍走程序路径 | 完成（本地 workerd）：`PiRouterModel` 真实模型建任务通过；真实 Worker 部署待做 |
 | N07 | P1 | Task / Mandate / Assignment / 两个 Worker | N06 | 两任务并发、Worker 忙时受理新消息、上下文隔离 | 完成：状态机、租约/心跳、fencing、上限 2，测试通过 |
-| N08 | P1 | 补充、修改、取消、fencing | N07 | 旧派工迟到报告无权推进；取消先落库再中断 | 部分：补充/回答、取消、前缀解析已接聊天；目标修改路径未接 |
+| N08 | P1 | 补充、修改、取消、fencing | N07 | 旧派工迟到报告无权推进；取消先落库再中断 | 完成：补充/回答、修改、取消、前缀解析已接聊天；旧派工/旧审批失效，测试通过 |
 | N09 | P1 | 审批、ActionExecutor、mock 灯、unknown/reconcile | N07 | 重复/过期/越权/撤销审批全部被拒；外部成功未落库可核对 | 代码完成：原子审批、取消/修订后拒绝 reconcile；mock 灯为程序化工具，MCP/真机待接 |
 | N10 | P1 | 一次性提醒（时区、TTL、取消、runKey） | N07 | 客户端关闭/重启后仍投递；重复 alarm 只生成一次任务 | 完成：Lifecycle job + runKey/TTL + 聊天取消/列表，测试通过 |
 | N11 | P1 | 显式记忆查改删 | N07 | 保存、查看、修改、忘记都有程序判据；不自动写入推测 | 完成：查改删与命令路径，测试通过 |
-| N12 | P1 | 40 条场景与真实模型重复运行报告 | N07–N11 | 确定性关键集全通过；真实模型单独统计成功率/成本/波动 | 部分：97 个确定性测试通过；40 条报告与重复统计待补 |
+| N12 | P1 | 40 条场景与真实模型重复运行报告 | N07–N11 | 确定性关键集全通过；真实模型单独统计成功率/成本/波动 | 部分：100 个确定性测试通过；40 条报告与重复统计待补 |
 | N13 | P1 | 真实部署、鉴权、费用上限、演示 | N05 | 陌生人按手册复现；`/ask` 不再裸奔；有部署/停止/故障步骤 | 部分：`/ask`、`/admin/*` 鉴权完成；真实部署与费用上限待做 |
 
-执行顺序固定为：**N01–N03 → N04–N05 → N06 → N07–N08 → N09 → N10–N11 → N12–N13**。不要同时接第二渠道、真机或管理页。N01/N02 已通过本地 Node + 临时 Tunnel 验证；N03 的真实中断窗口、N05/N06 的真实 Worker 部署仍待补。N04–N11 独立代码与本地测试已完成，N08 的目标修改、N09 的 MCP/真机仍待补。
+执行顺序固定为：**N01–N03 → N04–N05 → N06 → N07–N08 → N09 → N10–N11 → N12–N13**。不要同时接第二渠道、真机或管理页。N01/N02 已通过本地 Node + 临时 Tunnel 验证；N03 的真实中断窗口、N05/N06 的真实 Worker 部署仍待补。N04–N11 独立代码与本地测试已完成，N09 的 MCP/真机仍待补。
 
 ## 3. 环境与密钥
 
@@ -190,7 +190,7 @@ npx wrangler tail --config infra/wrangler.jsonc
 
 ```bash
 npm run typecheck
-npm test                    # 97 tests
+npm test                    # 100 tests
 npm run deploy:dry-run
 cd spikes/pi-durable-smoke
 npm run smoke               # faux 持久化/工具阻断

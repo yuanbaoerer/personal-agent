@@ -4,6 +4,7 @@ import type {
   RouterDecision,
   RouterInput,
   ScheduleRecord,
+  TaskRecord,
 } from "../domain/types.ts";
 import type { ActionRepository } from "../storage/actions.ts";
 import type { EffectRepository } from "../storage/effects.ts";
@@ -250,6 +251,17 @@ export class Router implements InboundHandler {
         this.#reply(context, result.text, result.purpose);
         return { status: "done" };
       }
+      case "revise_task": {
+        if (decision.taskId === undefined || decision.changes === undefined) {
+          this.#reply(context, "请提供要修改的任务编号和新的目标或完成条件。", "failure");
+          return { status: "done" };
+        }
+        const result = this.#reviseTask(context.ownerId, decision.taskId, decision.changes);
+        if (!result.ok) {
+          this.#reply(context, result.reason, "failure");
+        }
+        return { status: "done" };
+      }
       case "cancel_task": {
         if (decision.taskId === undefined) {
           this.#reply(context, "请提供要取消的任务编号。");
@@ -315,6 +327,55 @@ export class Router implements InboundHandler {
         return { status: "done" };
       }
     }
+  }
+
+  #reviseTask(
+    ownerId: string,
+    taskIdInput: string,
+    changes: {
+      goal?: string;
+      completionCriteria?: string;
+      mandate?: TaskRecord["mandate"];
+      priority?: number;
+    },
+  ): { ok: true } | { ok: false; reason: string } {
+    const goal = changes.goal?.trim();
+    const criteria = changes.completionCriteria?.trim();
+    if (
+      (goal === undefined || goal.length === 0) &&
+      (criteria === undefined || criteria.length === 0) &&
+      changes.mandate === undefined &&
+      changes.priority === undefined
+    ) {
+      return { ok: false, reason: "请提供新的目标、完成条件、授权范围或优先级。" };
+    }
+
+    const resolution = resolveTaskId(ownerId, taskIdInput, this.#tasks);
+    if (resolution.status === "ambiguous") {
+      return {
+        ok: false,
+        reason: [
+          "任务编号前缀匹配到多个任务，请给出更长的编号：",
+          ...resolution.ids.map((id) => `- ${id}`),
+        ].join("\n"),
+      };
+    }
+    if (resolution.status === "not_found") {
+      return { ok: false, reason: "找不到属于你的该任务。" };
+    }
+
+    const task = this.#taskService.revise(resolution.id, {
+      goal: goal === undefined || goal.length === 0 ? undefined : goal,
+      completionCriteria:
+        criteria === undefined || criteria.length === 0 ? undefined : criteria,
+      mandate: changes.mandate,
+      priority: changes.priority,
+    });
+    if (task === undefined) {
+      return { ok: false, reason: "该任务已结束，无法修改。" };
+    }
+    // TaskService.revise enqueues the owner-facing status message.
+    return { ok: true };
   }
 
   #supplementTask(
@@ -424,6 +485,28 @@ export class Router implements InboundHandler {
     const supplement = /^\/(?:补充|回答)\s+(\S+)\s+(.+)$/.exec(text);
     if (supplement !== null) {
       return [this.#supplementTask(ownerId, supplement[1] as string, supplement[2] as string)];
+    }
+
+    const revise = /^\/(?:revise|修改)\s+(\S+)\s+(.+)$/.exec(text);
+    if (revise !== null) {
+      const body = (revise[2] as string).trim();
+      const goal = /目标\s*[=:：]\s*(.+?)(?=\s*(?:[;；]|完成条件\s*[=:：])|$)/.exec(body)?.[1]?.trim();
+      const criteria = /完成条件\s*[=:：]\s*(.+?)(?=\s*(?:[;；]|目标\s*[=:：])|$)/.exec(body)?.[1]?.trim();
+      const changes: {
+        goal?: string;
+        completionCriteria?: string;
+      } = {};
+      if (goal !== undefined && goal.length > 0) {
+        changes.goal = goal;
+      }
+      if (criteria !== undefined && criteria.length > 0) {
+        changes.completionCriteria = criteria;
+      }
+      if (changes.goal === undefined && changes.completionCriteria === undefined) {
+        changes.goal = body;
+      }
+      const result = this.#reviseTask(ownerId, revise[1] as string, changes);
+      return result.ok ? [] : [{ purpose: "failure", text: result.reason }];
     }
 
     const approve =
@@ -557,6 +640,7 @@ export class Router implements InboundHandler {
             "可用命令：",
             "/status 状态；/tasks 任务；/cancel <taskId 或前缀>",
             "/补充 <taskId> <内容>；/回答 <taskId> <内容>",
+            "/修改 <taskId> <新目标>；/修改 <taskId> 目标=... 完成条件=...",
             "/approve <actionId> <nonce> [argsHash revision]；/deny 同上",
             "/memory 记忆；/remember key=value；/forget key",
             "/remind <ISO时间> <内容>；/reminders 提醒列表；/cancel-reminder <id>",

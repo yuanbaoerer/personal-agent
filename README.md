@@ -11,7 +11,7 @@
 | 飞书入口 | 真实 p2p 回调、签名/Token 校验、URL challenge、主人白名单 | 当前用临时 Tunnel，地址重启会变 |
 | Inbox | `channel + account + message_id` 唯一，重复事件返回原受理 | 已接 Router；真实 p2p `/status` 已受理 |
 | Outbox | 业务键唯一、按 task 分组排序、租约、重试、unknown、崩溃后按业务键核对 | 真实平台已接受 `om_`；无查询接口时保持 unknown |
-| Router | 确定性命令优先；模型 JSON 决策；补充/回答、提醒列表/取消、任务前缀解析 | 真实模型质量需重复评测 |
+| Router | 确定性命令优先；模型 JSON 决策；补充/回答、修改、提醒列表/取消、任务前缀解析 | 真实模型质量需重复评测 |
 | Task / Assignment | Task 状态机、Mandate、revision、租约、fencingToken、心跳、最多两个 Worker | 10 分钟 assignment lifetime；长任务跨轮恢复需真实部署验证 |
 | 审批 / 动作 | 参数绑定、nonce、一次性消费、原子审批、执行器、取消/修订后拒绝重试、unknown/reconcile、mock 灯 | mock 灯是程序化工具；MCP 桥接与真机未接 |
 | 提醒 / 记忆 | 一次性提醒、runKey、TTL、聊天取消/列表；显式记忆查改删 | 周期提醒与语义检索未做 |
@@ -35,7 +35,7 @@ npm start
 **2026-11-09 验证：**
 
 - **真实飞书 p2p**：入站 `message_id=om_x100b603e0219c0a0b1e2434fa552a87` 受理；回调 `POST /webhooks/feishu` 200，约 13ms；主人 `ou_48fabf7749a25c7ef394de573e94d8cf` 绑定；出站 `platform_message_id=om_x100b603e03ccbca4c1ec6d3785d2599` 被平台接受，端到端约 2s。当前走本地 Node + 临时 `trycloudflare.com` Tunnel。
-- `npm test`：97 个确定性测试通过，覆盖 Inbox/Outbox、Task/Assignment fencing/心跳、原子审批、取消后 reconcile 拒绝执行、unknown→reconcile、提醒 runKey/TTL/聊天取消、显式记忆和 K05/K06/K09。
+- `npm test`：100 个确定性测试通过，覆盖 Inbox/Outbox、Task/Assignment fencing/心跳、原子审批、取消后 reconcile 拒绝执行、unknown→reconcile、提醒 runKey/TTL/聊天取消、显式记忆和 K05/K06/K09。
 - `npm run typecheck` 与 `npm run deploy:dry-run` 通过。
 - `wrangler dev`：`/webhooks/feishu` 受理 `200`，同 `message_id` 重推返回 `duplicate`；`/admin/status` 无 token `401`、有 token `200`；`/ask` 真实模型返回 `DO_OK`。
 - `wrangler dev`：`/remind` 创建提醒、`/reminders` 列表、`/cancel-reminder` 取消均通过；超过 1 MiB 的 webhook body 返回 `413`。

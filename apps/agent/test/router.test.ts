@@ -89,6 +89,27 @@ describe("router decision parsing", () => {
     assert.equal(decision?.text, "明天下午三点");
   });
 
+  it("parses a revise_task decision and its changes", () => {
+    const decision = parseRouterDecision(
+      JSON.stringify({
+        action: "revise_task",
+        taskId: "task-1",
+        changes: {
+          goal: "new goal",
+          completionCriteria: "new criteria",
+          priority: 2,
+        },
+      }),
+    );
+    assert.equal(decision?.action, "revise_task");
+    assert.equal(decision?.taskId, "task-1");
+    assert.deepEqual(decision?.changes, {
+      goal: "new goal",
+      completionCriteria: "new criteria",
+      priority: 2,
+    });
+  });
+
   it("rejects an unknown action and a non-JSON answer", () => {
     assert.equal(parseRouterDecision('{"action":"delete_everything"}'), undefined);
     assert.equal(parseRouterDecision("not json"), undefined);
@@ -102,6 +123,7 @@ describe("router decision parsing", () => {
       inboxId: "inbox",
     });
     assert.match(prompt, /Owner message: hello/);
+    assert.match(prompt, /revise_task/);
   });
 
   it("allows supplement_task and requires explicit memory and reminder intent", () => {

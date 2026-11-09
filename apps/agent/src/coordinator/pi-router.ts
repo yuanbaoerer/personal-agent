@@ -98,6 +98,7 @@ export function routerPrompt(input: RouterInput): string {
     '- {"action":"reply","text":"..."} for chat or clarification.',
     '- {"action":"create_task","text":"ack","task":{"goal":"...","completionCriteria":"text or JSON {\\"requiredEvidenceKinds\\":[\\"...\\"]}","mandate":{"resources":["chat"],"tools":[]},"priority":0}}',
     '- {"action":"supplement_task","taskId":"...","text":"..."} when the owner answers a waiting task question.',
+    '- {"action":"revise_task","taskId":"...","changes":{"goal":"...","completionCriteria":"..."}} when the owner explicitly changes an existing task.',
     '- {"action":"cancel_task","taskId":"..."}',
     '- {"action":"query_status"}',
     '- {"action":"save_memory","key":"...","value":"..."}',
@@ -106,6 +107,7 @@ export function routerPrompt(input: RouterInput): string {
     "- Do not approve or execute actions; the owner does that explicitly.",
     "- Include a tool in mandate.tools only when the owner explicitly asks for that capability.",
     "- Use a task when the request needs sustained work; use reply for chat.",
+    "- Use revise_task only when the owner explicitly asks to change an existing task's goal, completion criteria, mandate, or priority.",
     "- Use save_memory only when the owner explicitly asks you to remember something.",
     "- Use remind only when the owner explicitly asks for a reminder.",
     "- Never infer personal facts, preferences, or plans; only remember what the owner explicitly asks to remember.",
@@ -136,6 +138,7 @@ export function parseRouterDecision(text: string): RouterDecision | undefined {
     action !== "reply" &&
     action !== "create_task" &&
     action !== "supplement_task" &&
+    action !== "revise_task" &&
     action !== "cancel_task" &&
     action !== "query_status" &&
     action !== "save_memory" &&
@@ -151,6 +154,28 @@ export function parseRouterDecision(text: string): RouterDecision | undefined {
 
   if (typeof record.taskId === "string") {
     decision.taskId = record.taskId;
+  }
+  if (typeof record.changes === "object" && record.changes !== null) {
+    const changes = record.changes as Record<string, unknown>;
+    const parsed: NonNullable<RouterDecision["changes"]> = {};
+    if (typeof changes.goal === "string" && changes.goal.trim().length > 0) {
+      parsed.goal = changes.goal;
+    }
+    if (
+      typeof changes.completionCriteria === "string" &&
+      changes.completionCriteria.trim().length > 0
+    ) {
+      parsed.completionCriteria = changes.completionCriteria;
+    }
+    if (typeof changes.priority === "number") {
+      parsed.priority = changes.priority;
+    }
+    if (typeof changes.mandate === "object" && changes.mandate !== null) {
+      parsed.mandate = sanitizeMandate(changes.mandate);
+    }
+    if (Object.keys(parsed).length > 0) {
+      decision.changes = parsed;
+    }
   }
   if (typeof record.key === "string") {
     decision.key = record.key;

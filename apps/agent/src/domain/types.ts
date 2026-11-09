@@ -308,6 +308,7 @@ export type RouterAction =
   | "reply"
   | "create_task"
   | "supplement_task"
+  | "revise_task"
   | "cancel_task"
   | "query_status"
   | "save_memory"
@@ -323,6 +324,13 @@ export interface RouterDecision {
     priority?: number;
   };
   taskId?: string;
+  /** Changes for an existing task; a revision bump invalidates old work. */
+  changes?: {
+    goal?: string;
+    completionCriteria?: string;
+    mandate?: Mandate;
+    priority?: number;
+  };
   key?: string;
   value?: string;
   dueAt?: string;

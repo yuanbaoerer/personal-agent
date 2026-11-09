@@ -139,6 +139,10 @@ export class TaskService {
     },
   ): TaskRecord | undefined {
     const now = this.#now().toISOString();
+    const activeSessions = this.#tasks
+      .listActiveAssignments(taskId)
+      .map((assignment) => assignment.sessionId)
+      .filter((sessionId) => sessionId.length > 0);
     const task = this.#tasks.revise(taskId, changes, now);
     if (task === undefined) {
       return undefined;
@@ -147,6 +151,21 @@ export class TaskService {
     this.#actions.supersedeForTask(taskId, now);
     this.#cancelTaskEffects(taskId, now);
     this.#store.cancelOutboxForTask(taskId, now);
+    if (activeSessions.length > 0) {
+      // The old Worker session has no authority over the new revision; stop
+      // it instead of leaving it running until it reports and is fenced out.
+      this.#effects.enqueue({
+        kind: "task.interrupt",
+        businessKey: `task:${taskId}:interrupt:revise:${task.revision}`,
+        payload: {
+          taskId,
+          sessionIds: activeSessions,
+          finalize: false,
+        },
+        nextAttemptAt: now,
+        createdAt: now,
+      });
+    }
     const inFlight = this.#actions.listInFlight(taskId);
     if (inFlight.length > 0) {
       this.#tasks.updateTask(taskId, task.revision, {
@@ -545,7 +564,9 @@ export class TaskService {
       }
     }
 
-    this.#finalizeCancellation(taskId, this.#now().toISOString());
+    if (payload.finalize !== false) {
+      this.#finalizeCancellation(taskId, this.#now().toISOString());
+    }
     return { status: "done" };
   }
 
