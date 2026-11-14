@@ -1,5 +1,8 @@
 # 04 · MVP 构建与验收计划
 
+> **2026-11-14 发布规划覆盖说明**：本文原六周安排继续作为历史工作预算与 K01–K12 基线，不再作为新版本到期即发布的承诺。当前唯一工程主线为 [v0.2 Reliable Core](07-long-term-roadmap.md)，K13/K14、40 场景与发布门槛以 [08 · 评测](08-evaluation.md) 为准；具体执行项跟踪 GitHub Issues。
+
+
 > 2026-11-09 修订。产品范围见 [00](00-product-plan.md)，实现语义见 [02](02-architecture.md)。Week 1 的本地入口/投递骨架已实现；本地 Pi 多会话 faux 实验和 opencode-go 真实模型实验已通过；Cloudflare DO 已通过 `wrangler deploy --dry-run`，本地 `wrangler dev` 已通过 webhook 受理/去重、鉴权、真实模型 `/ask` 和 Router → Worker 任务。Router/Worker、Task/Assignment、审批/执行、提醒和显式记忆的代码与确定性测试已落地；真实飞书 p2p 回调与回复已通过本地 Node（webhook + 长连接）验证，Worker 已真实部署，但飞书侧稳定入口、驱逐恢复和 40 条场景报告仍未完成，下面里程碑不能整体视为已通过。六周按每周 15–20 小时、总计 90–120 小时作为预算参考；按门槛调整范围，不以日历到点冒充验收通过。
 
 ## 1. 执行原则
