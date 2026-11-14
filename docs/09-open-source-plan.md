@@ -67,3 +67,6 @@
 ## 8. 与 Issue 对应
 
 PA-12 标准部署；PA-13 适配器；PA-14 数据与升级；PA-15 开源治理与安全；PA-16 独立用户复现。先通过 PA-01～PA-11 才进入正式外部发布验收。
+## 9. macOS 与 Windows 原生分发要求（2026-11-14）
+
+开源复用不只要求 Ubuntu/Linux 服务器可以运行。CLI/Core 的正式目标包含 macOS Apple Silicon / Intel 及 Windows 11 x64 原生安装（不能仅给 Windows 用户 WSL2 方案）；Windows ARM64 待兼容性验证。Desktop 安装包必须单独在目标平台验证运行、签名/公证、权限和升级，尚未验收不得标记“支持”。标准 Client SDK 允许 Desktop、TUI、CLI 连接同一 Core，并在多设备操作时共享权威任务和审批状态。对 OS 数据目录、SecretStore、后台启动/停止、路径、终端兼容、CI 测试及第二开发者 macOS+Windows 复现的要求见 [10 · 跨平台客户端规划](10-client-platforms.md)。
