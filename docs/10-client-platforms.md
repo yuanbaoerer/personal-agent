@@ -122,3 +122,7 @@ K15–K17 是建议扩展标签；不改写原 K01–K14 的定义，也不以�
 ## 9. 后续维护
 
 主规划 [07](07-long-term-roadmap.md) 的版本发布事实与本文件一致；开源交付 [09](09-open-source-plan.md) 增加 Mac/Windows 客户端安装复现，评测 [08](08-evaluation.md) 增加 K15–K17 但保留原 40 场景基线。所有平台“已支持”声明必须有对应 os/arch 的 CI、设备或安装记录。
+
+## 10. 全球社区客户端要求（2026-11-14）
+
+CLI/TUI/Desktop 的 `locale` 及对话语言相互独立，CLI 机器可读 JSON/错误码不随语言翻译改变。macOS/Windows 的原生支持不仅包含路径与安装，还包含 OS/arch 对应语言显示、Unicode、IANA 时区、无色/窄屏终端、键盘访问和故障提示。多端安全必须覆盖 Prompt Injection 从外部文档进入工具调用、设备 token 撤销和隐私日志限制；正式发行应有可验证来源与更新策略。详见 [11 · 全球开源社区路线图](11-global-open-source-community.md) 中 PA-23、PA-25、PA-27、PA-29。

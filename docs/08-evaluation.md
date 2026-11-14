@@ -102,3 +102,9 @@ K13 与 K14 必须包含至少一个可控竞态复现测试；应用的锁、�
 ## 9. 跨平台和多客户端补充（2026-11-14）
 
 新增 K15（不同客户端并发编辑同一任务/审批的状态一致性）、K16（事件订阅重连及幂等重放）、K17（macOS/Windows 原生启动、数据目录和生命周期验证）。K15–K17 为独立扩展测试标签，**不计入当前固定 40 场景的完成率**。平台测试输出 os、arch、Terminal、Runtime 版本、安装方式和运行证据；macOS arm64 与 x64、Windows x64 分别确认。详细矩阵见 [10 · 跨平台客户端规划](10-client-platforms.md)。
+
+## 10. 全球开源专项验证（2026-11-14）
+
+新增独立验收集合：SEC01–SEC08（Prompt Injection、资源越权、Local Connector、扩展可信边界、成本上限与跨语言攻击）；I18N（英文 UI/CLI、Unicode/RTL、IANA 时区与 DST）；PRIV（数据流/日志脱敏、遥测 opt-in、数据导出/删除边界）；REL（产物 hash / provenance / SBOM/安装与回滚证据）；A11Y（键盘、无色终端、屏幕阅读器与缩放）。
+
+**这些专项不是对 K01–K17 或已有 40 场景集的替换**；分别报告 case 数、环境证据、失败与 pending，不允许混入既有 40 场景通过率。Public Alpha、Beta 及 v1.0 的详细门槛参见 [11 · 全球开源社区路线图](11-global-open-source-community.md)。
