@@ -64,6 +64,17 @@ K13 与 K14 必须包含至少一个可控竞态复现测试；应用的锁、�
 
 审批和不可重复写的正确性不得由 LLM Judge 判断。对不能证明 exactly-once 的外部平台，应正确报告 at-least-once、幂等、unknown 或手工核对边界。
 
+### 5.1 `needs_review` 的语义（PA-09 契约）
+
+结论已定：`needs_review` 是**终态**，不是中间态，实现随 PA-09 落地。
+
+- 进入条件：Worker 报告结构合法，但 TaskCompletionVerifier 无法用可核对证据确认完成（缺来源、外部状态不可读、只有自述）。这是“不确定”，不是“失败”，因此不得复用 `failed`。
+- 不是自动重试态：进入后不再自动派工；重试会掩盖“验证器缺失判据”这个真实问题。
+- 退出唯一路径：主人显式命令 `/ack <taskId> [note]`，写入 `acknowledged_by`、`acknowledged_at` 与审计事件 `task.acknowledged`，然后转 `succeeded`；`/ack` 只对 `needs_review` 生效，对其他状态返回原因而不改状态。
+- 记录字段（PA-09 的 migration）：`pa_tasks.verification_json`（判据、被检查的证据、缺失项、检查器版本）与 `pa_tasks.acknowledged_at/acknowledged_by`。
+- 判定主体：程序判据或人审。LLM Judge 只能作为 `evidence` 的一项输入，不能单独把任务标为 `succeeded`。
+- 可观测：`needs_review` 数量必须出现在 `/admin/status`，否则这类任务会静默积压，违反“失败应被主人看见”。
+
 ## 6. 目标指标（发布门槛）
 
 - v0.2：有效环境 E3 的 G2 基础闭环 + E4 关键崩溃窗口；K01–K14 已实现且适用的关键检查通过；重要缺失明示 pending。

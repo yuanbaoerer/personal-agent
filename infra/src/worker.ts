@@ -8,30 +8,17 @@ import { createRegistry, Harness } from "@earendil-works/pi-durable";
 import { PiHarness } from "agents/harness/pi";
 import { Lifecycle, type LifecycleJobContext, type LifecycleJobOutcome } from "agents/lifecycle";
 
-import { ActionService } from "../../apps/agent/src/actions/service.ts";
-import { createDefaultToolRegistry } from "../../apps/agent/src/actions/tools.ts";
+import { createApp, type AppServices } from "../../apps/agent/src/app.ts";
 import { FeishuAdapter } from "../../apps/agent/src/channels/feishu/adapter.ts";
 import type { FeishuConfig } from "../../apps/agent/src/channels/feishu/types.ts";
 import { decryptFeishuPayload } from "../../apps/agent/src/channels/feishu/crypto.ts";
-import { IngressService } from "../../apps/agent/src/coordinator/ingress.ts";
 import { PiRouterModel } from "../../apps/agent/src/coordinator/pi-router.ts";
-import { Router } from "../../apps/agent/src/coordinator/router.ts";
-import { TaskService } from "../../apps/agent/src/coordinator/tasks.ts";
-import { EffectDispatcher } from "../../apps/agent/src/delivery/effects.ts";
 import { OutboxDispatcher } from "../../apps/agent/src/delivery/outbox.ts";
 import { FeishuAuthError, FeishuRequestError } from "../../apps/agent/src/domain/errors.ts";
-import { MemoryService } from "../../apps/agent/src/personal/memory.ts";
-import {
-  ReminderService,
-  type ReminderTimer,
-} from "../../apps/agent/src/personal/reminders.ts";
+import type { ReminderTimer } from "../../apps/agent/src/personal/reminders.ts";
 import { PiRuntime } from "../../apps/agent/src/runtime/pi.ts";
 import type { WakeScheduler } from "../../apps/agent/src/runtime/types.ts";
-import { ActionRepository } from "../../apps/agent/src/storage/actions.ts";
 import { DoDb, type DurableStorageLike } from "../../apps/agent/src/storage/db.ts";
-import { EffectRepository } from "../../apps/agent/src/storage/effects.ts";
-import { MemoryRepository, ScheduleRepository } from "../../apps/agent/src/storage/personal.ts";
-import { TaskRepository } from "../../apps/agent/src/storage/tasks.ts";
 import { openStoreFromDb, type Store } from "../../apps/agent/src/storage/store.ts";
 
 interface Env {
@@ -49,20 +36,8 @@ interface Env {
 const MODEL_ID = "deepseek-v4.1-flash";
 const MAX_BODY_BYTES = 1_048_576;
 
-interface AppServices {
+interface WorkerServices extends AppServices {
   store: Store;
-  tasks: TaskRepository;
-  actions: ActionRepository;
-  effects: EffectRepository;
-  schedules: ScheduleRepository;
-  memories: MemoryRepository;
-  taskService: TaskService;
-  actionService: ActionService;
-  reminders: ReminderService;
-  memory: MemoryService;
-  router: Router;
-  ingress: IngressService;
-  effectDispatcher: EffectDispatcher;
   dispatcher?: OutboxDispatcher;
   feishu?: FeishuAdapter;
   ownerId?: string;
@@ -97,7 +72,7 @@ export class Assistant extends DurableObject<Env> {
 
   readonly lifecycle = Lifecycle.install(this).use(this.harness);
 
-  #app: AppServices | undefined;
+  #app: WorkerServices | undefined;
 
   async onStart(): Promise<void> {
     this.#app = this.#createApp();
@@ -139,7 +114,7 @@ export class Assistant extends DurableObject<Env> {
     return undefined;
   }
 
-  #createApp(): AppServices {
+  #createApp(): WorkerServices {
     const db = new DoDb(this.ctx.storage as unknown as DurableStorageLike);
     const store = openStoreFromDb(db);
 
@@ -155,12 +130,6 @@ export class Assistant extends DurableObject<Env> {
       ownerId = owner.id;
     }
 
-    const tasks = new TaskRepository(db);
-    const actions = new ActionRepository(db);
-    const effects = new EffectRepository(db);
-    const schedules = new ScheduleRepository(db);
-    const memories = new MemoryRepository(db);
-    const { registry } = createDefaultToolRegistry(store);
     const runtime = new PiRuntime(this.harness);
 
     const wake: WakeScheduler = {
@@ -174,25 +143,7 @@ export class Assistant extends DurableObject<Env> {
       },
     };
 
-    const taskService = new TaskService({
-      store,
-      tasks,
-      actions,
-      effects,
-      runtime,
-      wake,
-    });
-    const actionService = new ActionService({
-      store,
-      actions,
-      effects,
-      tools: registry,
-      wake,
-      tasks,
-      onSettled: (taskId) => taskService.onActionSettled(taskId),
-    });
-    taskService.setActionProposer(actionService);
-
+    // Lifecycle owns the single alarm, so a reminder is a job, not a timer.
     const timer: ReminderTimer = {
       schedule: async (schedule) => {
         await this.lifecycle.jobs.push({
@@ -207,32 +158,13 @@ export class Assistant extends DurableObject<Env> {
       },
     };
 
-    const reminders = new ReminderService({
+    const app = createApp({
       store,
-      schedules,
+      runtime,
       wake,
-      timer,
-    });
-    const memory = new MemoryService({ store, memories });
-    const router = new Router({
-      store,
-      tasks,
-      actions,
-      effects,
-      taskService,
-      actionService,
-      reminders,
-      memory,
+      reminderTimer: timer,
       model: new PiRouterModel(store, runtime),
-      wake,
     });
-
-    const effectDispatcher = new EffectDispatcher({ effects });
-    taskService.install(effectDispatcher);
-    actionService.install(effectDispatcher);
-    router.install(effectDispatcher);
-
-    const ingress = new IngressService({ store, handler: router });
 
     const feishuConfig = readFeishuConfig(this.env);
     const feishu = feishuConfig === undefined ? undefined : new FeishuAdapter(feishuConfig);
@@ -245,19 +177,8 @@ export class Assistant extends DurableObject<Env> {
           });
 
     return {
+      ...app,
       store,
-      tasks,
-      actions,
-      effects,
-      schedules,
-      memories,
-      taskService,
-      actionService,
-      reminders,
-      memory,
-      router,
-      ingress,
-      effectDispatcher,
       dispatcher,
       feishu,
       ownerId,
@@ -332,7 +253,7 @@ export class Assistant extends DurableObject<Env> {
     return new Response("not found", { status: 404 });
   }
 
-  async #handleFeishuWebhook(request: Request, app: AppServices): Promise<Response> {
+  async #handleFeishuWebhook(request: Request, app: WorkerServices): Promise<Response> {
     if (app.feishu === undefined) {
       return Response.json(
         { error: "feishu_not_configured" },
@@ -382,7 +303,7 @@ export class Assistant extends DurableObject<Env> {
     }
   }
 
-  #nextDueAt(app: AppServices): number | undefined {
+  #nextDueAt(app: WorkerServices): number | undefined {
     const candidates: string[] = [];
     const effects = app.effects.nextDueAt();
     if (effects !== undefined) candidates.push(effects);
@@ -424,7 +345,7 @@ export class Assistant extends DurableObject<Env> {
     return token !== undefined && token.length > 0;
   }
 
-  #requireApp(): AppServices {
+  #requireApp(): WorkerServices {
     if (this.#app === undefined) {
       throw new Error("Assistant services are not initialized");
     }

@@ -3,10 +3,19 @@ import { ConfigError } from "./domain/errors.ts";
 
 export type FeishuEventMode = "webhook" | "long_connection";
 
+export interface ModelConfig {
+  modelId: string;
+  /** Absent means the Node process cannot run model tasks. */
+  apiKey?: string;
+}
+
 export interface AppConfig {
   host: string;
   port: number;
   databasePath: string;
+  /** pi_* tables live in their own SQLite file; see docs/adr/0001. */
+  piDatabasePath: string;
+  model: ModelConfig;
   ownerOpenId?: string;
   eventMode: FeishuEventMode;
   feishu: FeishuConfig;
@@ -46,6 +55,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     host: read("HOST") ?? "0.0.0.0",
     port: parseInteger(read("PORT") ?? "8787", "PORT", 1, 65_535),
     databasePath: read("DATABASE_PATH") ?? "./data/agent.sqlite",
+    piDatabasePath: read("PI_DATABASE_PATH") ?? "./data/pi.sqlite",
+    model: {
+      modelId: read("OPENCODE_MODEL") ?? "deepseek-v4.1-flash",
+      apiKey: read("OPENCODE_API_KEY"),
+    },
     ownerOpenId: read("OWNER_FEISHU_OPEN_ID"),
     eventMode: eventModeRaw,
     feishu: {

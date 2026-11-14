@@ -57,7 +57,7 @@ Personal Agent 是一个单用户优先、自主部署、可扩展、能够长�
 5. Personal Services：记忆、提醒、授权的周期计划及其生命周期。
 6. Operations：配置、状态、trace、成本、数据导出备份、升级与恢复。
 
-**部署策略是待决议题**：Node + SQLite 更适合自托管和飞书长连接，但当前 Node 启动使用 LocalRuntime 占位；Cloudflare DO 已有真实模型运行时，却未形成稳定飞书云端入口、驱逐恢复证据。优先进行 Node/Pi 持久会话语义技术试验；按 docs/adr/0001-runtime-hosting.md 决定 v0.2 标准路径，另一条路径保留但不以两套不完整代码交付。
+**部署方向已定为 Node + SQLite（临时结论）**：`apps/agent/src/runtime/node-pi.ts` 已用 pi-durable + `node:sqlite` 实现本地模型运行时，未配置模型密钥时仍走 LocalRuntime 占位并显式失败。Cloudflare DO 保留实验模式。定稿条件与回退见 docs/adr/0001-runtime-hosting.md；在真实模型端到端与 SIGKILL 恢复证据齐备前，不宣称标准路径已验收。
 
 重用已有 TaskService、ActionService、Store、Ingress/Outbox 和 PiRuntime；将环境组装从 main.ts/worker.ts 提取为注入式组合根，而非立即拆微服务。Node 与 DO 的数据库、调度和生命周期不能假设语义自动等价，须跑相同契约集。
 
