@@ -1,5 +1,7 @@
 # Personal Agent
 
+> **多端与跨平台规划（2026-11-14）**：长期支持 macOS（Apple Silicon / Intel）和 Windows 11 x64 的 CLI / TUI / Desktop，采用一个 Agent Core + 统一 Client API，而非多套独立任务状态。详见 [10 · 跨平台客户端规划](docs/10-client-platforms.md)。这仍是待实施目标，当前服务端可用性以本文下方现状为准。
+
 > **长期规划更新（2026-11-14）**：当前唯一工程主线为 v0.2 Reliable Core。完整的长期自用与开源规划见 [07 · 长期路线图](docs/07-long-term-roadmap.md)，评测门槛见 [08 · Evaluation](docs/08-evaluation.md)，开源与部署见 [09 · Open-source](docs/09-open-source-plan.md)，宿主选型见 [ADR-0001](docs/adr/0001-runtime-hosting.md)。这份规划不代表功能已经完成，下面的“当前阶段”仍为事实基线。实施任务以 GitHub Issues 为准。
 
 
