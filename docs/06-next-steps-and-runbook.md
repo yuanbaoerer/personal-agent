@@ -16,7 +16,9 @@
 | 本地 `opencode-go/deepseek-v4.1-flash` 单/多会话 | 40 条场景与真实模型重复统计 |
 | 本地 workerd DO + PiHarness + Lifecycle + `pa_*` 迁移 | 费用上限与演示材料 |
 | Router/Worker、Task/Assignment/fencing、审批/执行、提醒、记忆 | 真实 Worker 侧验收 |
-| 106 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
+| Node 进程内 pi-durable 模型运行时（`apps/agent/src/runtime/node-pi.ts`，未配置 key 时显式失败） | 真实模型 E3 证据、SIGKILL 恢复演练 |
+| 单一组合根 `apps/agent/src/app.ts`，Node 与 DO 只注入适配层 | — |
+| 114 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
 
 ## 2. 下一步待办
 
@@ -38,6 +40,21 @@
 
 执行顺序固定为：**N01–N03 → N04–N05 → N06 → N07–N08 → N09 → N10–N11 → N12–N13**。不要同时接第二渠道、真机或管理页。N01/N02 已通过本地 Node（webhook + 长连接）验证；N03 的真实中断窗口仍待补；N05/N06 的 Worker 已部署，但飞书入口超时，真实回调验收仍待补。N04–N11 独立代码与本地测试已完成，N09 的 MCP/真机仍待补。
 
+### 2.1 2026-11-14 实施进展（PA-01 部分完成）
+
+N01–N13 是历史工作分解，后续执行以 PA Issue 为准；本节记录 PA-01 已落地的部分，避免把“代码存在”读成“门槛通过”。
+
+| 提交 | 内容 | 证据 |
+| --- | --- | --- |
+| `cc1831b` | `NodePiRuntime`：`Harness.open` + `openNodeSqliteStorage`，`operationId` 作 pi 的 `requestId`；`wait` 通过 `storage.submissionByRequest` 重连；超时映射 `pending`；`onWake` 用 Node timer 驱动 `resume()` | `apps/agent/test/node-pi.test.ts`：重复提交只入库一次、重启后重连已结算提交、pending→answered、未知 session 拒绝 |
+| `cc1831b` | 组合根 `apps/agent/src/app.ts`；`main.ts`/`infra/src/worker.ts` 改为注入 `Store`/`AgentRuntime`/`WakeScheduler`/`RouterModel`/`ReminderTimer` | 新旧接线逐项比对一致；`f77c74d` 增加 `createApp` 端到端测试 |
+| `cc1831b` | Pi 与 `pa_*` 分库：`DATABASE_PATH` + `PI_DATABASE_PATH`（默认 `./data/pi.sqlite`） | 无 key 启动只生成 `agent.sqlite`；两份文件都要备份 |
+| `cc1831b` | ADR-0001 记录临时方向 A（Node 默认、DO 实验）与定稿门槛 | 文档；定稿仍需 E3 + E4 |
+| `cc1831b` | docs/08 §5.1 固定 `needs_review` 为终态、只由 `/ack` 关闭 | 文档；实现随 PA-09 |
+| `1714c52` | 默认模型钉到 opencode-go catalog（`deepseek-v4.1-flash` 解析通过） | 单测，无需密钥 |
+
+仍未取证、不得宣称完成：真实模型 + 真实飞书 p2p 的 E3 全链路；SIGKILL/驱逐恢复；`needs_review`、TaskInput 序号（PA-02）、执行前重核（PA-03）等仍未实现。ADR-0001 的定稿条件见其文末，未满足前不把 Node 路径写进安装说明当已验收。
+
 ## 3. 环境与密钥
 
 ```bash
@@ -54,8 +71,10 @@ cp infra/.dev.vars.example infra/.dev.vars  # 本地 workerd
 | `FEISHU_ENCRYPT_KEY` | 事件解密与签名；生产建议配置 |
 | `FEISHU_EVENT_MODE` | `webhook`（默认）或 `long_connection`；长连接由本地 Node 主动连 Feishu，不需要公网地址 |
 | `OWNER_FEISHU_OPEN_ID` | 显式主人绑定；禁止昵称推断 |
-| `OPENCODE_API_KEY` | 本地模型；DO 部署时用 Worker secret |
-| `DATABASE_PATH` | 本地 Node SQLite，默认 `./data/agent.sqlite` |
+| `OPENCODE_API_KEY` | 本地模型；未设置时模型任务显式失败。DO 部署时用 Worker secret |
+| `OPENCODE_MODEL` | 本地模型 id，默认 `deepseek-v4.1-flash`；provider 固定 `opencode-go` |
+| `DATABASE_PATH` | 本地 Node SQLite（`pa_*` 应用状态），默认 `./data/agent.sqlite` |
+| `PI_DATABASE_PATH` | Pi 会话库（`pi_*`），默认 `./data/pi.sqlite`；与上一项成对备份 |
 | `OUTBOX_*` | 租约、重试次数、退避 |
 
 `.env`、`infra/.dev.vars` 已在 `.gitignore`；不要提交、不要贴日志。密钥轮换时同时更新 `.env`、`infra/.dev.vars` 和 `wrangler secret put`。
