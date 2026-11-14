@@ -174,3 +174,9 @@ ID 是工作流标识；GitHub Issue 编号以实际创建结果为准。实施�
 ## 11. 多终端与 macOS / Windows 兼容路线（2026-11-14 补充）
 
 Desktop、CLI、TUI、Web、IM 均应作为统一 Agent Core 的独立客户端，不得各自管理一套 Task/Memory/Approval 数据。长期支持 macOS Apple Silicon/Intel 与 Windows 11 x64 原生客户端及本机运行路径；Windows ARM64 先验证后承诺；Linux 继续作为服务器/CI 基线。v0.2 仍聚焦真实运行闭环；v0.3 增加 Client API/CLI，v0.4 逐步纳入 TUI 和跨平台验收；Desktop 先 Spike，正式发布可晚于 v0.4。完整支持矩阵、协议、OS adapter、K15–K17 与 PA-17～PA-22 见 [10 · 跨平台客户端规划](10-client-platforms.md)。
+
+## 12. 全球开源社区准备度（2026-11-14 补充）
+
+除长期自用、跨平台和 CLI/TUI/Desktop 外，全球开源社区还要求英文 Quickstart、多语言/时区语义、无需飞书的原生 CLI 使用路径、BYOK/Provider 能力检查、Prompt Injection 与 Local Connector 信任边界、可解释的数据流和隐私默认值、可验证的发行产物、社区治理及无障碍验收。完整细节、Public Alpha 与 Public Beta 分阶段发布阻断项、PA-23～PA-29 的边界见 [11 · 全球开源社区路线图](11-global-open-source-community.md)。
+
+**优先级约束**：v0.2 可靠性仍是唯一核心开发主线；PA-25 威胁模型与关键攻击用例提前进行。Public Alpha 是许可证/安全/隐私/英文文档及一条真实可用路径达标后的独立发布决策，**不等同 v1.0 或 Production Ready**；TUI/Desktop 尚未全部实现不能成为公开源码的机械性前置条件。代码公开只能由所有者明确决策，本文不授权自动修改 repository visibility。
