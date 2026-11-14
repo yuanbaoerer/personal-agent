@@ -12,7 +12,7 @@ import {
   type FauxProviderHandle,
 } from "@earendil-works/pi-ai/providers/faux";
 
-import { NodePiRuntime } from "../src/runtime/node-pi.ts";
+import { createOpencodeModels, NodePiRuntime } from "../src/runtime/node-pi.ts";
 
 const MODEL = { provider: "faux", modelId: "faux-1" };
 
@@ -110,6 +110,15 @@ describe("node pi runtime", () => {
       await fx.runtime.close();
       await fx.cleanup();
     }
+  });
+
+  it("resolves the default production model in the opencode-go catalog", () => {
+    // A wrong default here fails every task at request time, so pin it
+    // against the catalog the runtime is built with.
+    const models = createOpencodeModels("test-key");
+    const model = models.getModelOfType("chat", "opencode-go", "deepseek-v4.1-flash");
+    assert.equal(model?.provider, "opencode-go");
+    assert.equal(model?.id, "deepseek-v4.1-flash");
   });
 
   it("rejects an unknown session id instead of creating one", async () => {
