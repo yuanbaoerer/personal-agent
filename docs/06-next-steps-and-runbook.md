@@ -18,7 +18,8 @@
 | Router/Worker、Task/Assignment/fencing、审批/执行、提醒、记忆 | 真实 Worker 侧验收 |
 | Node 进程内 pi-durable 模型运行时（`apps/agent/src/runtime/node-pi.ts`，未配置 key 时显式失败） | 真实模型 E3 证据、SIGKILL 恢复演练 |
 | 单一组合根 `apps/agent/src/app.ts`，Node 与 DO 只注入适配层 | — |
-| 114 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
+| 不可变 TaskInput（`pa_task_inputs`，按 task 单调 seq，同一 inbox 幂等）与 Assignment 输入屏障；旧 Worker 报告不能绕过补充输入 | 真实模型 G2、SIGKILL 中断窗口 |
+| 124 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
 
 ## 2. 下一步待办
 
@@ -53,7 +54,22 @@ N01–N13 是历史工作分解，后续执行以 PA Issue 为准；本节记录
 | `cc1831b` | docs/08 §5.1 固定 `needs_review` 为终态、只由 `/ack` 关闭 | 文档；实现随 PA-09 |
 | `1714c52` | 默认模型钉到 opencode-go catalog（`deepseek-v4.1-flash` 解析通过） | 单测，无需密钥 |
 
-仍未取证、不得宣称完成：真实模型 + 真实飞书 p2p 的 E3 全链路；SIGKILL/驱逐恢复；`needs_review`、TaskInput 序号（PA-02）、执行前重核（PA-03）等仍未实现。ADR-0001 的定稿条件见其文末，未满足前不把 Node 路径写进安装说明当已验收。
+仍未取证、不得宣称完成：真实模型 + 真实飞书 p2p 的 E3 全链路；SIGKILL/驱逐恢复；`needs_review`、执行前重核（PA-03）等仍未实现。ADR-0001 的定稿条件见其文末，未满足前不把 Node 路径写进安装说明当已验收。
+
+### 2.2 2026-11-17 实施进展（PA-02 / K13）
+
+当前优先级：**PA-02（已完成本轮实现）→ PA-03 → PA-01 的 E3 证据（需真实凭据）→ PA-04/05/06**。PA-02 与 PA-03 无相互依赖，可并行评审；PA-04 依赖前两者。真实模型与飞书证据受本机凭据限制，不以 E1 结果替代。
+
+| 内容 | 实现 | 证据 |
+| --- | --- | --- |
+| 不可变 TaskInput | `pa_task_inputs`：`task_id`、单调 `seq`、`kind`、`source_inbox_id`、`actor_id`、正文、时间；`(task_id, source_inbox_id)` 唯一，effect 重试不重复写入 | `coordinator.test.ts` “does not duplicate an input for a retried platform message” |
+| Assignment 输入序号 | `pa_assignments.dispatched_input_seq` / `consumed_input_seq`；派工时快照最新 seq，Worker prompt 只注入已派发输入 | K13 测试断言 `dispatchedInputSeq=1` 且 prompt 含输入正文 |
+| 完成屏障 | 任何旧报告（含 `failed`）都先比较当前最新 seq；存在未派发输入时任务回到 `queued` 并重新派工，旧报告不能标记 `succeeded`，也不处理其 `proposedActions` | K13 测试：旧 ready 被拒、新 Assignment 完成后才 `succeeded` 且 `consumedInputSeq=1` |
+| 并发隔离 | 补充一个任务不影响另一个运行中的任务完成 | K13 测试中的第二任务独立 `succeeded` |
+| 重放与取消/修订 | 旧 attempt 的报告不得推进任务，不抢占已报告的新 Assignment，不复活 `cancelling` 任务；崩溃窗口由同一消息重试补齐派工；每个输入额外授予一轮执行（含 `working`/租约路径），不按重试上限误杀；revise 后输入保留且旧报告失权；正常 `working` 报告仍重新排队 | 七个回归测试（replay / newer attempt / cancelling / crash window / attempt budget / stale failed / revise）与 working 队列测试 |
+| 聊天语义 | 补充回复带输入序号；running 时明确“旧结果不会生效，结束后按最新输入重新执行”；waiting_user 立即重新排队；`/tasks` 显示待消费输入数 | `router.ts`；124 个测试 |
+
+边界：以上为 E1 确定性证据；真实模型 G2、真实飞书消息与 SIGKILL 恢复仍未验证。PA-02 保持 OPEN，直到 G2 与故障注入证据补齐。
 
 ## 3. 环境与密钥
 

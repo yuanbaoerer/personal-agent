@@ -192,15 +192,463 @@ describe("task and assignment coordination", () => {
     );
     assert.equal(services.tasks.get(task.id)?.status, "waiting_user");
 
-    const supplemented = services.taskService.supplement(task.id, "the living room");
-    assert.equal(supplemented?.status, "queued");
-    assert.equal(supplemented?.ownerInput, "the living room");
+    const supplemented = services.taskService.supplement(
+      task.id,
+      "the living room",
+      "evt_supplement_1",
+    );
+    assert.equal(supplemented?.task.status, "queued");
+    assert.equal(supplemented?.input.seq, 1);
+    assert.equal(supplemented?.input.text, "the living room");
 
-    const again = services.taskService.supplement(task.id, "and the kitchen");
-    assert.equal(again?.ownerInput, "the living room\nand the kitchen");
+    const again = services.taskService.supplement(
+      task.id,
+      "and the kitchen",
+      "evt_supplement_2",
+    );
+    assert.equal(again?.input.seq, 2);
+    assert.deepEqual(
+      services.tasks.listInputs(task.id).map((input) => input.text),
+      ["the living room", "and the kitchen"],
+    );
     assert.ok(
       services.effects.getByBusinessKey(`task:${task.id}:dispatch:r1:a2`),
     );
+  });
+
+  it("does not duplicate an input for a retried platform message", () => {
+    const services = createServices();
+    const task = services.taskService.create({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "source:supplement-idempotent",
+      goal: "pick a room",
+      completionCriteria: "lamp set",
+    });
+
+    const first = services.taskService.supplement(task.id, "the living room", "inbox:dup");
+    const retry = services.taskService.supplement(task.id, "the living room", "inbox:dup");
+
+    assert.equal(first?.inserted, true);
+    assert.equal(retry?.inserted, false);
+    assert.equal(retry?.input.seq, 1);
+    assert.equal(services.tasks.listInputs(task.id).length, 1);
+    assert.equal(
+      services.effects
+        .listPending()
+        .filter((effect) => effect.payload.taskId === task.id).length,
+      1,
+    );
+  });
+
+  it("rejects a stale ready report until a new assignment covers the input", async () => {
+    const services = createServices();
+    const task = services.taskService.create({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "source:k13",
+      goal: "summarize the folder",
+      completionCriteria: "summary",
+    });
+    const first = services.tasks.claimNext(services.now().toISOString(), 60_000, 2);
+    assert.ok(first);
+    const other = services.taskService.create({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "source:k13-other",
+      goal: "summarize the archive",
+      completionCriteria: "summary",
+    });
+    const otherAssignment = services.tasks.claimNext(services.now().toISOString(), 60_000, 2);
+    assert.ok(otherAssignment);
+    assert.equal(otherAssignment.task.id, other.id);
+
+    const added = services.taskService.supplement(
+      task.id,
+      "include the blue folder",
+      "inbox:k13",
+    );
+    assert.equal(added?.task.status, "running");
+    assert.equal(added?.input.seq, 1);
+
+    services.taskService.report(
+      first.assignment.id,
+      first.assignment.fencingToken,
+      first.assignment.taskRevision,
+      READY_REPORT,
+    );
+
+    assert.equal(services.tasks.get(task.id)?.status, "queued");
+    assert.equal(
+      services.tasks.getAssignment(first.assignment.id)?.consumedInputSeq,
+      0,
+    );
+
+    services.taskService.report(
+      otherAssignment.assignment.id,
+      otherAssignment.assignment.fencingToken,
+      otherAssignment.assignment.taskRevision,
+      READY_REPORT,
+    );
+    assert.equal(services.tasks.get(other.id)?.status, "succeeded");
+
+    assert.equal((await services.taskService.handleDispatch({ taskId: task.id })).status, "done");
+    const second = services.tasks.listActiveAssignments(task.id)[0];
+    assert.ok(second);
+    assert.equal(second.dispatchedInputSeq, 1);
+    assert.match(
+      services.runtime.submissions.at(-1)?.text ?? "",
+      /Owner input[^\n]*:\n#1 [^\n]*include the blue folder/,
+    );
+
+    services.taskService.report(
+      second.id,
+      second.fencingToken,
+      second.taskRevision,
+      READY_REPORT,
+    );
+    assert.equal(services.tasks.get(task.id)?.status, "succeeded");
+    assert.equal(services.tasks.getAssignment(second.id)?.consumedInputSeq, 1);
+  });
+
+  it("does not steal a task from a newer assignment when a report replays", async () => {
+    const services = createServices();
+    const task = services.taskService.create({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "source:k13-replay",
+      goal: "long task",
+      completionCriteria: "summary",
+    });
+    const first = services.tasks.claimNext(services.now().toISOString(), 60_000, 2);
+    assert.ok(first);
+    services.taskService.supplement(task.id, "late input", "inbox:k13-replay");
+    services.taskService.report(
+      first.assignment.id,
+      first.assignment.fencingToken,
+      first.assignment.taskRevision,
+      READY_REPORT,
+    );
+
+    assert.equal((await services.taskService.handleDispatch({ taskId: task.id })).status, "done");
+    const second = services.tasks.listActiveAssignments(task.id)[0];
+    assert.ok(second);
+
+    // The wait effect for `first` can replay after the barrier redispatched.
+    const replay = services.taskService.report(
+      first.assignment.id,
+      first.assignment.fencingToken,
+      first.assignment.taskRevision,
+      READY_REPORT,
+    );
+
+    assert.equal(replay.status, "done");
+    assert.equal(services.tasks.get(task.id)?.status, "running");
+    assert.equal(
+      services.effects.getByBusinessKey(`task:${task.id}:dispatch:r1:a3`),
+      undefined,
+    );
+    await services.taskService.handleDispatch({ taskId: task.id });
+    assert.equal(services.runtime.opened.length, 1);
+    assert.equal(services.tasks.listActiveAssignments(task.id).length, 1);
+    assert.equal(services.tasks.listActiveAssignments(task.id)[0]?.id, second.id);
+
+    services.taskService.report(
+      second.id,
+      second.fencingToken,
+      second.taskRevision,
+      READY_REPORT,
+    );
+    assert.equal(services.tasks.get(task.id)?.status, "succeeded");
+  });
+
+  it("re-enqueues dispatch when a duplicated supplement finds a queued task", () => {
+    const services = createServices();
+    const task = services.taskService.create({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "source:k13-crash-window",
+      goal: "long task",
+      completionCriteria: "summary",
+    });
+    const claimed = services.tasks.claimNext(services.now().toISOString(), 60_000, 2);
+    assert.ok(claimed);
+    services.taskService.report(
+      claimed.assignment.id,
+      claimed.assignment.fencingToken,
+      claimed.assignment.taskRevision,
+      { status: "waiting_user", summary: "need details", evidence: [] },
+    );
+    // Remove the task's create-time dispatch; this key was already consumed
+    // by the direct claim above. Simulate a crash after the input transaction
+    // committed but before the next dispatch effect was enqueued.
+    for (const effect of services.effects.listPending()) {
+      services.effects.cancel(effect.id, services.now().toISOString());
+    }
+    const added = services.tasks.addInput({
+      taskId: task.id,
+      text: "accepted before the crash",
+      sourceInboxId: "inbox:k13-crash-window",
+      createdAt: services.now().toISOString(),
+    });
+    assert.equal(added?.inserted, true);
+    assert.equal(services.tasks.get(task.id)?.status, "queued");
+    assert.equal(
+      services.effects.getByBusinessKey(`task:${task.id}:dispatch:r1:a2`),
+      undefined,
+    );
+
+    const retry = services.taskService.supplement(
+      task.id,
+      "accepted before the crash",
+      "inbox:k13-crash-window",
+    );
+
+    assert.equal(retry?.inserted, false);
+    assert.equal(
+      services.effects.getByBusinessKey(`task:${task.id}:dispatch:r1:a2`)?.status,
+      "pending",
+    );
+  });
+
+  it("does not requeue after a newer attempt has already reported", async () => {
+    const services = createServices();
+    const task = services.taskService.create({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "source:k13-newer-report",
+      goal: "long task",
+      completionCriteria: "summary",
+    });
+    const first = services.tasks.claimNext(services.now().toISOString(), 60_000, 2);
+    assert.ok(first);
+    services.taskService.supplement(task.id, "late input", "inbox:k13-newer");
+    services.taskService.report(
+      first.assignment.id,
+      first.assignment.fencingToken,
+      first.assignment.taskRevision,
+      READY_REPORT,
+    );
+    assert.equal((await services.taskService.handleDispatch({ taskId: task.id })).status, "done");
+    const second = services.tasks.listActiveAssignments(task.id)[0];
+    assert.ok(second);
+    services.taskService.report(
+      second.id,
+      second.fencingToken,
+      second.taskRevision,
+      { status: "waiting_user", summary: "which folder?", evidence: [] },
+    );
+    assert.equal(services.tasks.get(task.id)?.status, "waiting_user");
+
+    const replay = services.taskService.report(
+      first.assignment.id,
+      first.assignment.fencingToken,
+      first.assignment.taskRevision,
+      READY_REPORT,
+    );
+
+    assert.equal(replay.status, "done");
+    assert.equal(services.tasks.get(task.id)?.status, "waiting_user");
+    assert.equal(
+      services.effects.getByBusinessKey(`task:${task.id}:dispatch:r1:a3`),
+      undefined,
+    );
+  });
+
+  it("does not revive a cancelling task from a replayed report", () => {
+    const services = createServices();
+    const task = services.taskService.create({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "source:k13-cancelling",
+      goal: "set the lamp",
+      completionCriteria: "lamp set",
+      mandate: { resources: ["chat"], tools: ["lamp.set_brightness"] },
+    });
+    const claimed = services.tasks.claimNext(services.now().toISOString(), 60_000, 2);
+    assert.ok(claimed);
+    services.taskService.report(
+      claimed.assignment.id,
+      claimed.assignment.fencingToken,
+      claimed.assignment.taskRevision,
+      {
+        status: "ready",
+        summary: "need approval",
+        evidence: [{ kind: "test", value: "ok" }],
+        proposedActions: [{ tool: "lamp.set_brightness", args: { brightness: 80 } }],
+      },
+    );
+    const action = services.actions.listByTask(task.id)[0];
+    assert.ok(action);
+    services.actionService.approve({
+      actionId: action.id,
+      nonce: action.nonce,
+      approverId: services.owner.id,
+      conversationId: services.conversation.id,
+    });
+    assert.ok(
+      services.actions.claimForExecution(action.id, services.now().toISOString(), 30_000),
+    );
+    services.taskService.supplement(task.id, "use 50 instead", "inbox:k13-cancel");
+    services.taskService.cancel(task.id);
+    assert.equal(services.tasks.get(task.id)?.status, "cancelling");
+
+    const replay = services.taskService.report(
+      claimed.assignment.id,
+      claimed.assignment.fencingToken,
+      claimed.assignment.taskRevision,
+      {
+        status: "ready",
+        summary: "stale proposal",
+        evidence: [{ kind: "test", value: "ok" }],
+        proposedActions: [{ tool: "lamp.set_brightness", args: { brightness: 80 } }],
+      },
+    );
+
+    assert.equal(replay.status, "done");
+    assert.equal(services.tasks.get(task.id)?.status, "cancelling");
+    assert.equal(
+      services.effects.getByBusinessKey(`task:${task.id}:dispatch:r1:a2`),
+      undefined,
+    );
+  });
+
+  it("re-dispatches a failed report that never saw the supplement", async () => {
+    const services = createServices();
+    const task = services.taskService.create({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "source:k13-failed-report",
+      goal: "long task",
+      completionCriteria: "summary",
+    });
+    const first = services.tasks.claimNext(services.now().toISOString(), 60_000, 2);
+    assert.ok(first);
+    services.taskService.supplement(task.id, "more detail", "inbox:k13-failed");
+
+    services.taskService.report(
+      first.assignment.id,
+      first.assignment.fencingToken,
+      first.assignment.taskRevision,
+      { status: "failed", summary: "stale failure", evidence: [] },
+    );
+
+    assert.equal(services.tasks.get(task.id)?.status, "queued");
+    const outcome = await services.taskService.handleDispatch({ taskId: task.id });
+    assert.equal(outcome.status, "done");
+    assert.equal(services.tasks.get(task.id)?.status, "running");
+    const second = services.tasks.listActiveAssignments(task.id)[0];
+    assert.ok(second);
+    services.taskService.report(
+      second.id,
+      second.fencingToken,
+      second.taskRevision,
+      READY_REPORT,
+    );
+    assert.equal(services.tasks.get(task.id)?.status, "succeeded");
+  });
+
+  it("fences the old report and keeps the input after a revision", async () => {
+    const services = createServices();
+    const task = services.taskService.create({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "source:k13-revise",
+      goal: "v1",
+      completionCriteria: "summary",
+    });
+    const first = services.tasks.claimNext(services.now().toISOString(), 60_000, 2);
+    assert.ok(first);
+    services.taskService.supplement(task.id, "use the blue folder", "inbox:k13-revise");
+
+    const revised = services.taskService.revise(task.id, { goal: "v2" });
+    assert.equal(revised?.status, "queued");
+    assert.equal(revised?.revision, 2);
+
+    services.taskService.report(
+      first.assignment.id,
+      first.assignment.fencingToken,
+      first.assignment.taskRevision,
+      READY_REPORT,
+    );
+    assert.equal(services.tasks.get(task.id)?.status, "queued");
+
+    assert.equal((await services.taskService.handleDispatch({ taskId: task.id })).status, "done");
+    const second = services.tasks.listActiveAssignments(task.id)[0];
+    assert.ok(second);
+    assert.equal(second.taskRevision, 2);
+    assert.equal(second.dispatchedInputSeq, 1);
+    assert.match(
+      services.runtime.submissions.at(-1)?.text ?? "",
+      /use the blue folder/,
+    );
+    services.taskService.report(
+      second.id,
+      second.fencingToken,
+      second.taskRevision,
+      READY_REPORT,
+    );
+    assert.equal(services.tasks.get(task.id)?.status, "succeeded");
+  });
+
+  it("requeues a fresh working report", () => {
+    const services = createServices();
+    const task = services.taskService.create({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "source:working-report",
+      goal: "long task",
+      completionCriteria: "summary",
+    });
+    const claimed = services.tasks.claimNext(services.now().toISOString(), 60_000, 2);
+    assert.ok(claimed);
+
+    services.taskService.report(
+      claimed.assignment.id,
+      claimed.assignment.fencingToken,
+      claimed.assignment.taskRevision,
+      { status: "working", summary: "still going", evidence: [] },
+    );
+
+    assert.equal(services.tasks.get(task.id)?.status, "queued");
+    assert.equal(
+      services.effects.getByBusinessKey(`task:${task.id}:dispatch:r1:a2`)?.status,
+      "pending",
+    );
+  });
+
+  it("grants a supplemented task a work round beyond the retry cap", async () => {
+    const services = createServices({ maxTaskAttempts: 1 });
+    const task = services.taskService.create({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "source:k13-attempt-budget",
+      goal: "long task",
+      completionCriteria: "summary",
+    });
+    const first = services.tasks.claimNext(services.now().toISOString(), 60_000, 2);
+    assert.ok(first);
+    services.taskService.supplement(task.id, "more detail", "inbox:k13-attempts");
+    services.taskService.report(
+      first.assignment.id,
+      first.assignment.fencingToken,
+      first.assignment.taskRevision,
+      READY_REPORT,
+    );
+
+    const outcome = await services.taskService.handleDispatch({ taskId: task.id });
+
+    assert.equal(outcome.status, "done");
+    assert.equal(services.tasks.get(task.id)?.status, "running");
+    const second = services.tasks.listActiveAssignments(task.id)[0];
+    assert.ok(second);
+    services.taskService.report(
+      second.id,
+      second.fencingToken,
+      second.taskRevision,
+      READY_REPORT,
+    );
+    assert.equal(services.tasks.get(task.id)?.status, "succeeded");
   });
 
   it("includes owner input in the next worker prompt", async () => {
@@ -696,11 +1144,11 @@ describe("chat routing integration", () => {
     );
 
     const current = services.tasks.get(task.id);
-    assert.equal(current?.ownerInput, "Shanghai");
     assert.equal(current?.status, "succeeded");
+    assert.equal(services.tasks.listInputs(task.id)[0]?.text, "Shanghai");
     assert.match(
       services.runtime.submissions.at(-1)?.text ?? "",
-      /Owner input[^\n]*:\nShanghai/,
+      /Owner input[^\n]*:\n#1 [^\n]*Shanghai/,
     );
   });
 

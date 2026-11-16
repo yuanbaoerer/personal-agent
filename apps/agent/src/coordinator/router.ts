@@ -247,7 +247,12 @@ export class Router implements InboundHandler {
           this.#reply(context, "请提供要补充的任务编号。", "failure");
           return { status: "done" };
         }
-        const result = this.#supplementTask(context.ownerId, decision.taskId, decision.text);
+        const result = this.#supplementTask(
+          context.ownerId,
+          decision.taskId,
+          decision.text,
+          context.inboxId,
+        );
         this.#reply(context, result.text, result.purpose);
         return { status: "done" };
       }
@@ -382,6 +387,7 @@ export class Router implements InboundHandler {
     ownerId: string,
     taskIdInput: string,
     text: string,
+    sourceInboxId: string,
   ): { purpose: "status" | "failure"; text: string } {
     if (text.trim().length === 0) {
       return { purpose: "failure", text: "请补充要回答的内容。" };
@@ -399,20 +405,25 @@ export class Router implements InboundHandler {
     if (resolution.status === "not_found") {
       return { purpose: "failure", text: "找不到属于你的该任务。" };
     }
-    const task = this.#taskService.supplement(resolution.id, text);
-    if (task === undefined) {
+    const added = this.#taskService.supplement(resolution.id, text, sourceInboxId);
+    if (added === undefined) {
       return { purpose: "failure", text: "该任务已结束，无法继续补充。" };
     }
-    void this.#wake.wake();
+    if (!added.inserted) {
+      return {
+        purpose: "status",
+        text: `该补充已受理（输入 #${added.input.seq}）。`,
+      };
+    }
     const timing =
-      task.status === "running"
-        ? "当前 Worker 结束后生效。"
-        : task.status === "waiting_external"
+      added.task.status === "running"
+        ? "当前 Worker 的旧结果不会生效；结束后会按最新输入重新执行。"
+        : added.task.status === "waiting_external"
           ? "在途动作核对后生效。"
           : "已继续处理。";
     return {
       purpose: "status",
-      text: `已补充任务 ${task.id.slice(0, 8)}，${timing}`,
+      text: `已补充任务 ${added.task.id.slice(0, 8)}（输入 #${added.input.seq}），${timing}`,
     };
   }
 
@@ -455,7 +466,11 @@ export class Router implements InboundHandler {
         {
           purpose: "status",
           text: tasks
-            .map((task) => `- ${task.id.slice(0, 8)} ${task.status} ${task.goal}`)
+            .map((task) => {
+              const unconsumed = this.#tasks.countUnconsumedInputs(task.id);
+              const suffix = unconsumed > 0 ? `（待消费输入 ${unconsumed}）` : "";
+              return `- ${task.id.slice(0, 8)} ${task.status} ${task.goal}${suffix}`;
+            })
             .join("\n"),
         },
       ];
@@ -484,7 +499,14 @@ export class Router implements InboundHandler {
 
     const supplement = /^\/(?:补充|回答)\s+(\S+)\s+(.+)$/.exec(text);
     if (supplement !== null) {
-      return [this.#supplementTask(ownerId, supplement[1] as string, supplement[2] as string)];
+      return [
+        this.#supplementTask(
+          ownerId,
+          supplement[1] as string,
+          supplement[2] as string,
+          event.id,
+        ),
+      ];
     }
 
     const revise = /^\/(?:revise|修改)\s+(\S+)\s+(.+)$/.exec(text);

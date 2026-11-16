@@ -1,6 +1,7 @@
 # 02 · 架构与可靠性设计
 
 > **2026-11-14 架构续篇**：原有状态机与授权设计继续保留。运行中补充输入的 input_seq/消费序号、执行前授权、非阻塞调度、按任务类型完成验证和组件化部署，详见 [07 · 长期路线图](07-long-term-roadmap.md) 及 [08 · 评测契约 K13/K14](08-evaluation.md)。Node/Cloudflare 唯一默认宿主尚未决定，见 [ADR-0001](adr/0001-runtime-hosting.md)。
+> **2026-11-17**：运行中补充输入已按 K13 落地（不可变 `pa_task_inputs`、Assignment 输入序号与旧报告屏障；含 `failed` 报告）；K14 执行前授权仍未实现。
 
 
 > 2026-11-09 修订。本文是目标设计；Week 1 的本地入口/投递骨架与 Week 2–4 的独立代码（Router/Worker、Task/Assignment、审批/执行、提醒、显式记忆、DO `pa_*`）已实现并通过本地确定性测试（见 [README](../README.md)）。真实飞书 p2p 回调与主动回复已通过本地 Node（webhook + 长连接）验证；Cloudflare Worker 已真实部署；飞书侧稳定入口与对象驱逐恢复仍未验证。产品范围以 [00](00-product-plan.md) 为准，交付门槛以 [04](04-build-plan.md) 为准，术语以 [CONTEXT.md](../CONTEXT.md) 为准。
@@ -108,7 +109,7 @@ SessionSpec 包含稳定 sessionId、角色和工具范围；SessionInput 包含
 
 优先使用卡片中的 taskId / actionId、原消息引用与已保存的任务回执映射。自然语言可由 Router 提议路由，但目标不明确或会扩大权限时必须澄清。
 
-- 补充事实：写入任务 Input，按顺序交给当前有效 Assignment。
+- 补充事实：追加不可变 TaskInput（按 task 单调 `seq`），派工时记录 `dispatched_input_seq`；Worker 报告必须覆盖已派发输入，运行中到达的新输入使任何旧报告（含 `failed`）失去推进资格并重新派工。
 - 修改目标/限制：增加 Task revision，使尚未发送的旧动作与旧审批失效，结束旧 Assignment 后重新派工。
 - “先处理另一件事”：调整待派工顺序；不能默默取消已经发生的外部操作。
 - 普通致谢/闲聊：无需创建新 Task。
@@ -155,7 +156,9 @@ Task 字段至少包括：owner、conversation、goal、completionCriteria、Man
 
 ### 5.2 Assignment 与报告
 
-一次 Assignment 绑定 taskId、taskRevision、sessionId、attempt、leaseUntil 和 fencingToken。领取用事务/条件更新，防重复派工。恢复或改派增加 fencingToken；旧 Worker 的报告与动作提议在写入口被拒绝。
+一次 Assignment 绑定 taskId、taskRevision、sessionId、attempt、leaseUntil、fencingToken、`dispatchedInputSeq` 和 `consumedInputSeq`。领取用事务/条件更新，防重复派工。恢复或改派增加 fencingToken；旧 Worker 的报告与动作提议在写入口被拒绝。
+
+派工时把当前最新 input seq 写入 `dispatchedInputSeq`，Worker prompt 只注入 `seq <= dispatchedInputSeq` 的输入。报告进入状态推进前重新读取当前最新 seq；若高于派工快照，任何报告（含 `failed`）都不能推进任务，而是回到 `queued` 重新派工，旧报告也不得提出动作。这样即使效果重试、进程重启或旧 Worker 延迟返回，补充输入不会被静默跳过。
 
 Worker 使用结构化 Report：working / waiting_user / waiting_external / ready / failed，附摘要、证据、待决定问题和费用。Coordinator 核对完成条件后决定 Task 状态；仅“模型说完成”不算验收。
 
@@ -289,7 +292,8 @@ MVP 只承诺删除应用记忆。Pi conversation 的删除能力有限，完整
 | pa_identities / pa_conversations | 主人、平台账号/用户 ID、对话地址、绑定证据；禁止昵称匹配 |
 | pa_inbox | 唯一 channel/account/eventId、actor、replyTo、状态、原始载荷引用 |
 | pa_tasks | 主人、对话、goal、completionCriteria、Mandate、revision、状态、预算 |
-| pa_assignments | taskId、taskRevision、sessionId、attempt、租约、fencingToken、Report；同任务至多一个有效派工 |
+| pa_task_inputs | taskId、单调 seq、kind、sourceInboxId、actor、正文、时间；同一任务+来源幂等，不可修改 |
+| pa_assignments | taskId、taskRevision、sessionId、attempt、租约、fencingToken、dispatched/consumed input seq、Report；同任务至多一个有效派工 |
 | pa_actions / pa_approvals | 不可变参数、hash、任务版本、批准人、nonce、有效期、一次性消费、执行证据 |
 | pa_effects | kind、唯一 businessKey、payload、状态、租约、重试次数、nextAttemptAt |
 | pa_outbox | 任务/提醒版本、目的、接收地址、业务键、平台消息 ID、投递状态 |

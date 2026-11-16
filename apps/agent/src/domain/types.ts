@@ -155,11 +155,28 @@ export interface TaskRecord {
   deadline?: string;
   budget?: Record<string, unknown>;
   resultRef?: string;
-  /** Owner-supplied facts or answers for the next Worker run. */
-  ownerInput?: string;
   lastError?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export type TaskInputKind = "supplement";
+
+/**
+ * Immutable owner input for a task. `seq` is monotonic per task; an
+ * Assignment records the highest seq it was dispatched with so a report can
+ * never complete a task while newer input is still unread.
+ */
+export interface TaskInputRecord {
+  id: string;
+  taskId: string;
+  seq: number;
+  kind: TaskInputKind;
+  /** Inbox id, the idempotency key for one platform message. */
+  sourceInboxId?: string;
+  actorId?: string;
+  text: string;
+  createdAt: string;
 }
 
 export type AssignmentStatus =
@@ -178,6 +195,10 @@ export interface AssignmentRecord {
   status: AssignmentStatus;
   leaseUntil: string;
   fencingToken: number;
+  /** Highest TaskInput seq included in this assignment's prompt. */
+  dispatchedInputSeq: number;
+  /** Highest TaskInput seq this assignment's report actually covered. */
+  consumedInputSeq: number;
   report?: WorkerReport;
   createdAt: string;
   updatedAt: string;

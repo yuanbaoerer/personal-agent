@@ -4,6 +4,8 @@ import type {
   AssignmentRecord,
   AssignmentStatus,
   Mandate,
+  TaskInputKind,
+  TaskInputRecord,
   TaskRecord,
   TaskStatus,
   WorkerReport,
@@ -25,7 +27,6 @@ interface TaskRow {
   deadline: string | null;
   budget_json: string | null;
   result_ref: string | null;
-  owner_input: string | null;
   last_error: string | null;
   created_at: string;
   updated_at: string;
@@ -40,9 +41,22 @@ interface AssignmentRow {
   status: AssignmentStatus;
   lease_until: string;
   fencing_token: number;
+  dispatched_input_seq: number;
+  consumed_input_seq: number;
   report_json: string | null;
   created_at: string;
   updated_at: string;
+}
+
+interface TaskInputRow {
+  id: string;
+  task_id: string;
+  seq: number;
+  kind: TaskInputKind;
+  source_inbox_id: string | null;
+  actor_id: string | null;
+  text: string;
+  created_at: string;
 }
 
 function mapTask(row: TaskRow): TaskRecord {
@@ -61,7 +75,6 @@ function mapTask(row: TaskRow): TaskRecord {
     deadline: row.deadline ?? undefined,
     budget: row.budget_json === null ? undefined : (JSON.parse(row.budget_json) as Record<string, unknown>),
     resultRef: row.result_ref ?? undefined,
-    ownerInput: row.owner_input ?? undefined,
     lastError: row.last_error ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -78,9 +91,24 @@ function mapAssignment(row: AssignmentRow): AssignmentRecord {
     status: row.status,
     leaseUntil: row.lease_until,
     fencingToken: Number(row.fencing_token),
+    dispatchedInputSeq: Number(row.dispatched_input_seq),
+    consumedInputSeq: Number(row.consumed_input_seq),
     report: row.report_json === null ? undefined : (JSON.parse(row.report_json) as WorkerReport),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+function mapInput(row: TaskInputRow): TaskInputRecord {
+  return {
+    id: row.id,
+    taskId: row.task_id,
+    seq: Number(row.seq),
+    kind: row.kind,
+    sourceInboxId: row.source_inbox_id ?? undefined,
+    actorId: row.actor_id ?? undefined,
+    text: row.text,
+    createdAt: row.created_at,
   };
 }
 
@@ -100,6 +128,22 @@ export interface NewTaskInput {
 export interface ClaimedTask {
   task: TaskRecord;
   assignment: AssignmentRecord;
+}
+
+export interface AddTaskInput {
+  taskId: string;
+  text: string;
+  kind?: TaskInputKind;
+  sourceInboxId?: string;
+  actorId?: string;
+  createdAt: string;
+}
+
+export interface AddedTaskInput {
+  input: TaskInputRecord;
+  task: TaskRecord;
+  /** False when this platform message already produced an input. */
+  inserted: boolean;
 }
 
 export class TaskRepository {
@@ -266,6 +310,11 @@ export class TaskRepository {
       const fencingToken = Number(fencing?.next ?? 1);
       const attempt = task.attempts + 1;
       const leaseUntil = new Date(new Date(now).getTime() + leaseMs).toISOString();
+      const latestInput = this.#db.all<{ seq: number }>(
+        `SELECT COALESCE(MAX(seq), 0) AS seq FROM pa_task_inputs WHERE task_id = ?`,
+        task.id,
+      )[0];
+      const dispatchedInputSeq = Number(latestInput?.seq ?? 0);
 
       this.#db.run(
         `UPDATE pa_tasks
@@ -280,8 +329,9 @@ export class TaskRepository {
       const assignmentRow = this.#db.all<AssignmentRow>(
         `INSERT INTO pa_assignments
           (id, task_id, task_revision, session_id, attempt, status, lease_until,
-           fencing_token, report_json, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, 'active', ?, ?, NULL, ?, ?)
+           fencing_token, dispatched_input_seq, consumed_input_seq,
+           report_json, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, 0, NULL, ?, ?)
          RETURNING *`,
         assignmentId,
         task.id,
@@ -290,6 +340,7 @@ export class TaskRepository {
         attempt,
         leaseUntil,
         fencingToken,
+        dispatchedInputSeq,
         now,
         now,
       )[0];
@@ -374,38 +425,129 @@ export class TaskRepository {
   }
 
   /**
-   * Append owner-supplied text for the next Worker run. A task waiting for the
-   * owner returns to the queue so it can be dispatched again; any other live
-   * status only records the input for the current or next assignment.
+   * Append an immutable owner input. The unique `(task_id, source_inbox_id)`
+   * key makes an effect retry for the same platform message a no-op. A task
+   * waiting for the owner returns to the queue; a running task keeps its
+   * assignment, which the report barrier prevents from completing early.
    */
-  supplement(taskId: string, text: string, now: string): TaskRecord | undefined {
+  addInput(input: AddTaskInput): AddedTaskInput | undefined {
     return this.#db.transaction(() => {
-      const current = this.get(taskId);
+      const current = this.get(input.taskId);
       if (current === undefined || isTerminal(current.status)) {
         return undefined;
       }
 
-      const ownerInput =
-        current.ownerInput === undefined || current.ownerInput.length === 0
-          ? text
-          : `${current.ownerInput}\n${text}`;
+      if (input.sourceInboxId !== undefined) {
+        const existing = this.#db.all<TaskInputRow>(
+          `SELECT * FROM pa_task_inputs
+           WHERE task_id = ? AND source_inbox_id = ?`,
+          input.taskId,
+          input.sourceInboxId,
+        )[0];
+        if (existing !== undefined) {
+          return { input: mapInput(existing), task: current, inserted: false };
+        }
+      }
+
+      const latest = this.#db.all<{ seq: number }>(
+        `SELECT COALESCE(MAX(seq), 0) AS seq FROM pa_task_inputs WHERE task_id = ?`,
+        input.taskId,
+      )[0];
+      const seq = Number(latest?.seq ?? 0) + 1;
+      const row = this.#db.all<TaskInputRow>(
+        `INSERT INTO pa_task_inputs
+           (id, task_id, seq, kind, source_inbox_id, actor_id, text, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         RETURNING *`,
+        randomUUID(),
+        input.taskId,
+        seq,
+        input.kind ?? "supplement",
+        input.sourceInboxId ?? null,
+        input.actorId ?? null,
+        input.text,
+        input.createdAt,
+      )[0];
+      if (row === undefined) {
+        throw new Error(`task input for ${input.taskId} was not inserted`);
+      }
+
       const status =
         current.status === "waiting_user" || current.status === "queued"
           ? "queued"
           : current.status;
+      if (status !== current.status) {
+        this.#db.run(
+          `UPDATE pa_tasks SET status = ?, updated_at = ? WHERE id = ?`,
+          status,
+          input.createdAt,
+          input.taskId,
+        );
+      }
 
-      this.#db.run(
-        `UPDATE pa_tasks
-         SET owner_input = ?, status = ?, updated_at = ?
-         WHERE id = ?`,
-        ownerInput,
-        status,
-        now,
-        taskId,
-      );
-
-      return this.get(taskId);
+      const task = this.get(input.taskId);
+      if (task === undefined) {
+        throw new Error(`task ${input.taskId} disappeared after adding input`);
+      }
+      return { input: mapInput(row), task, inserted: true };
     });
+  }
+
+  listInputs(taskId: string, upToSeq = Number.MAX_SAFE_INTEGER): TaskInputRecord[] {
+    return this.#db
+      .all<TaskInputRow>(
+        `SELECT * FROM pa_task_inputs
+         WHERE task_id = ? AND seq <= ?
+         ORDER BY seq ASC`,
+        taskId,
+        upToSeq,
+      )
+      .map(mapInput);
+  }
+
+  listInputsAfter(taskId: string, seq: number): TaskInputRecord[] {
+    return this.#db
+      .all<TaskInputRow>(
+        `SELECT * FROM pa_task_inputs
+         WHERE task_id = ? AND seq > ?
+         ORDER BY seq ASC`,
+        taskId,
+        seq,
+      )
+      .map(mapInput);
+  }
+
+  /** Inputs accepted but not yet covered by a report. */
+  countUnconsumedInputs(taskId: string): number {
+    const row = this.#db.all<{ count: number }>(
+      `SELECT COUNT(*) AS count FROM pa_task_inputs
+       WHERE task_id = ? AND seq > COALESCE((
+         SELECT MAX(consumed_input_seq) FROM pa_assignments WHERE task_id = ?
+       ), 0)`,
+      taskId,
+      taskId,
+    )[0];
+    return Number(row?.count ?? 0);
+  }
+
+  /** All accepted inputs; each one grants one additional work round. */
+  countInputs(taskId: string): number {
+    const row = this.#db.all<{ count: number }>(
+      `SELECT COUNT(*) AS count FROM pa_task_inputs WHERE task_id = ?`,
+      taskId,
+    )[0];
+    return Number(row?.count ?? 0);
+  }
+
+  markAssignmentConsumed(assignmentId: string, seq: number, now: string): void {
+    this.#db.run(
+      `UPDATE pa_assignments
+       SET consumed_input_seq = MAX(consumed_input_seq, ?), updated_at = ?
+       WHERE id = ?`,
+      seq,
+      now,
+      assignmentId,
+    );
   }
 
   /**

@@ -43,6 +43,7 @@ export function createServices(options: {
   maxActiveWorkers?: number;
   assignmentLeaseMs?: number;
   assignmentMaxLifetimeMs?: number;
+  maxTaskAttempts?: number;
   actionTtlMs?: number;
   model?: StaticRouterModel;
 } = {}): TestServices {
@@ -81,6 +82,7 @@ export function createServices(options: {
     maxActiveWorkers: options.maxActiveWorkers ?? 2,
     assignmentLeaseMs: options.assignmentLeaseMs,
     assignmentMaxLifetimeMs: options.assignmentMaxLifetimeMs,
+    maxTaskAttempts: options.maxTaskAttempts,
   });
   const actionService = new ActionService({
     store,

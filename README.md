@@ -17,7 +17,7 @@
 | Inbox | `channel + account + message_id` 唯一，重复事件返回原受理 | 已接 Router；真实 p2p `/status` 已受理 |
 | Outbox | 业务键唯一、按 task 分组排序、租约、重试、unknown、崩溃后按业务键核对 | 真实平台已接受 `om_`；无查询接口时保持 unknown |
 | Router | 确定性命令优先；模型 JSON 决策；补充/回答、修改、提醒列表/取消、任务前缀解析 | 真实模型质量需重复评测 |
-| Task / Assignment | Task 状态机、Mandate、revision、租约、fencingToken、心跳、最多两个 Worker | 10 分钟 assignment lifetime；长任务跨轮恢复需真实部署验证 |
+| Task / Assignment | Task 状态机、Mandate、revision、租约、fencingToken、心跳、最多两个 Worker；不可变 TaskInput 序号，任何未覆盖新输入的旧 Worker 报告都不能推进任务 | 10 分钟 assignment lifetime；长任务跨轮恢复需真实部署验证；真实模型 G2 补充场景待验证 |
 | 审批 / 动作 | 参数绑定、nonce、一次性消费、原子审批、执行器、取消/修订后拒绝重试、unknown/reconcile、mock 灯 | mock 灯是程序化工具；MCP 桥接与真机未接 |
 | 提醒 / 记忆 | 一次性提醒、runKey、TTL、聊天取消/列表；显式记忆查改删 | 周期提醒与语义检索未做 |
 | 本地服务 | `POST /webhooks/feishu`、`GET /healthz`、Node SQLite + 进程内 pi-durable | 配置 `OPENCODE_API_KEY` 后本地执行模型任务；未配置时模型任务明确失败 |
@@ -45,6 +45,13 @@ npm start
 - `wrangler dev`：`/webhooks/feishu` 受理 `200`，同 `message_id` 重推返回 `duplicate`；`/admin/status` 无 token `401`、有 token `200`；`/ask` 真实模型返回 `DO_OK`。
 - `wrangler dev`：`/remind` 创建提醒、`/reminders` 列表、`/cancel-reminder` 取消均通过；超过 1 MiB 的 webhook body 返回 `413`。
 - `wrangler dev` 真实模型任务：Router 创建任务，Worker 返回结构化报告，Task 状态变为 `succeeded`；结果 Outbox 因本地测试指向不可达飞书地址而按重试策略失败。
+
+**2026-11-17 验证（PA-02）：**
+
+- `npm test`：124 个确定性测试通过；新增 K13 用例覆盖“运行中补充输入 → 旧 Worker ready 报告被拒 → 新 Assignment 覆盖 input_seq 后完成”、同一平台消息重复补充只产生一条 TaskInput、旧报告重放不抢占新 Worker/不复活取消中任务、崩溃窗口重复补充可补派工、旧 failed 报告不能丢弃补充输入、补充轮次不计入重试上限、revise 后旧报告失权且输入保留、正常 working 报告仍重新排队。
+- `npm run typecheck` 与 `npm run deploy:dry-run` 通过。
+- 迁移冒烟：在真实 `agent.sqlite` 副本与 v4 旧库副本上执行迁移，`schema_version=5`、`pa_task_inputs` 建立、旧 `owner_input` 回填为 seq 1。
+- 证据边界：E1（faux 确定性测试）；真实模型 G2 与真实飞书投递仍未验证。
 
 ## 产品方向
 

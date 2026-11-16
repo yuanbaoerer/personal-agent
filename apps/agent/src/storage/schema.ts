@@ -237,6 +237,31 @@ const migrations: readonly (readonly string[])[] = [
     // Owner-supplied facts/answers are handed to the next Worker run.
     `ALTER TABLE pa_tasks ADD COLUMN owner_input TEXT`,
   ],
+  [
+    // Immutable TaskInput rows. `owner_input` was a mutable concatenation, so
+    // a Worker could report `ready` without ever seeing late additions. The
+    // assignment seq columns make that barrier observable and enforceable.
+    `CREATE TABLE pa_task_inputs (
+      id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL REFERENCES pa_tasks(id),
+      seq INTEGER NOT NULL,
+      kind TEXT NOT NULL CHECK (kind IN ('supplement')),
+      source_inbox_id TEXT,
+      actor_id TEXT,
+      text TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE (task_id, seq),
+      UNIQUE (task_id, source_inbox_id)
+    ) STRICT`,
+    `ALTER TABLE pa_assignments ADD COLUMN dispatched_input_seq INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE pa_assignments ADD COLUMN consumed_input_seq INTEGER NOT NULL DEFAULT 0`,
+    // Preserve input accepted before the migration as the first immutable row.
+    `INSERT INTO pa_task_inputs
+       (id, task_id, seq, kind, source_inbox_id, actor_id, text, created_at)
+     SELECT 'legacy:' || id, id, 1, 'supplement', NULL, NULL, owner_input, updated_at
+     FROM pa_tasks
+     WHERE owner_input IS NOT NULL AND length(owner_input) > 0`,
+  ],
 ];
 
 const SCHEMA_VERSION_KEY = "schema_version";

@@ -2,12 +2,17 @@ import type {
   AssignmentRecord,
   Evidence,
   ProposedAction,
+  TaskInputRecord,
   TaskRecord,
   WorkerReport,
 } from "../domain/types.ts";
 import type { ActionRepository } from "../storage/actions.ts";
 import type { EffectRepository } from "../storage/effects.ts";
-import { isTerminal, type TaskRepository } from "../storage/tasks.ts";
+import {
+  isTerminal,
+  type AddedTaskInput,
+  type TaskRepository,
+} from "../storage/tasks.ts";
 import type { Store } from "../storage/store.ts";
 import type { EffectDispatcher, EffectOutcome } from "../delivery/effects.ts";
 import type { AgentRuntime, WakeScheduler } from "../runtime/types.ts";
@@ -200,36 +205,61 @@ export class TaskService {
   }
 
   /**
-   * Accept owner text for a task waiting on the owner (or still queued) and
-   * dispatch it again. A running task only records the text; its next report
-   * or redispatch picks it up.
+   * Record an immutable owner input. A queued or waiting_user task is
+   * dispatched again immediately; a running or waiting_external task keeps
+   * its current work, and its report is rejected by the input barrier until a
+   * new assignment covers the input.
    */
-  supplement(taskId: string, text: string): TaskRecord | undefined {
+  supplement(
+    taskId: string,
+    text: string,
+    sourceInboxId?: string,
+  ): AddedTaskInput | undefined {
     const now = this.#now().toISOString();
     const before = this.#tasks.get(taskId);
     if (before === undefined || isTerminal(before.status)) {
       return undefined;
     }
 
-    const task = this.#tasks.supplement(taskId, text, now);
-    if (task === undefined) {
+    const added = this.#tasks.addInput({
+      taskId,
+      text,
+      sourceInboxId,
+      actorId: before.ownerId,
+      createdAt: now,
+    });
+    if (added === undefined) {
       return undefined;
+    }
+    if (!added.inserted) {
+      // The same platform message was already accepted; do not append a
+      // second input or reply. A crash can still leave the task queued
+      // without its dispatch effect, so the idempotent enqueue is repeated.
+      if (added.task.status === "queued") {
+        this.#enqueueDispatch(added.task, now);
+        void this.#wake.wake();
+      }
+      return added;
     }
 
     this.#store.recordAudit({
       event: "task.supplemented",
       subjectType: "task",
       subjectId: taskId,
-      after: { status: task.status, revision: task.revision },
+      after: {
+        status: added.task.status,
+        revision: added.task.revision,
+        inputSeq: added.input.seq,
+      },
       traceId: `task:${taskId}`,
       occurredAt: now,
     });
 
     if (before.status === "waiting_user" || before.status === "queued") {
-      this.#enqueueDispatch(task, now);
-      void this.#wake.wake();
+      this.#enqueueDispatch(added.task, now);
     }
-    return task;
+    void this.#wake.wake();
+    return added;
   }
 
   cancel(taskId: string): TaskRecord | undefined {
@@ -312,8 +342,10 @@ export class TaskService {
         continue;
       }
       // An expired lease that already reached the attempt limit must stop the
-      // task; requeueing it again would redispatch forever.
-      if (task.attempts >= this.#maxTaskAttempts) {
+      // task; requeueing it again would redispatch forever. Each accepted
+      // owner input grants one additional work round, so a long task that is
+      // supplemented is not failed as if the supplements were retries.
+      if (task.attempts >= this.#maxTaskAttempts + this.#tasks.countInputs(task.id)) {
         const failed = this.#tasks.updateTask(task.id, task.revision, {
           status: "failed",
           lastError: `assignment lease expired after ${task.attempts} attempt(s)`,
@@ -399,12 +431,14 @@ export class TaskService {
       };
     }
 
-    if (claimed.task.attempts > this.#maxTaskAttempts) {
+    const attemptLimit =
+      this.#maxTaskAttempts + this.#tasks.countInputs(claimed.task.id);
+    if (claimed.task.attempts > attemptLimit) {
       const at = this.#now().toISOString();
       this.#tasks.markAssignmentExpired(claimed.assignment.id, at);
       const failed = this.#tasks.updateTask(claimed.task.id, claimed.task.revision, {
         status: "failed",
-        lastError: `task exceeded the ${this.#maxTaskAttempts}-attempt limit`,
+        lastError: `task exceeded the ${attemptLimit}-attempt limit`,
         updatedAt: at,
       });
       if (failed !== undefined) {
@@ -443,9 +477,13 @@ export class TaskService {
       }
       this.#tasks.setAssignmentSession(claimed.assignment.id, opened.id, now.toISOString());
       const operationId = `assignment:${claimed.assignment.id}`;
+      const inputs = this.#tasks.listInputs(
+        claimed.task.id,
+        claimed.assignment.dispatchedInputSeq,
+      );
       await this.#runtime.submit(
         opened.id,
-        workerPrompt(claimed.task, this.#actions.listByTask(claimed.task.id)),
+        workerPrompt(claimed.task, inputs, this.#actions.listByTask(claimed.task.id)),
         operationId,
         "app.task",
       );
@@ -599,6 +637,71 @@ export class TaskService {
       // authority over the new revision.
       return { status: "done" };
     }
+    if (task.attempts !== assignment.attempt || task.status === "cancelling") {
+      // A newer attempt owns the task, or cancellation is already in flight.
+      // A replayed report from an older assignment must not requeue, revive,
+      // or otherwise advance it.
+      return { status: "done" };
+    }
+
+    const pendingInputs = this.#tasks.listInputsAfter(
+      task.id,
+      assignment.dispatchedInputSeq,
+    );
+    if (pendingInputs.length === 0) {
+      this.#tasks.markAssignmentConsumed(
+        assignment.id,
+        assignment.dispatchedInputSeq,
+        now,
+      );
+    } else {
+      // The Worker never saw these inputs. No report status, including
+      // `failed`, can stand in for input it never read: a failure produced
+      // without the input is itself stale. Requeue and let a new assignment
+      // cover the latest seq; that assignment's report is unbarred, so a
+      // persistent failure still terminates after one extra round per input.
+      //
+      // A report effect may replay after the barrier already redispatched, or
+      // after the task moved on for another reason. Never steal a task that
+      // already has an active Worker, an in-flight action, or a terminal
+      // outcome: a second dispatch would collide with the active assignment.
+      if (
+        isTerminal(task.status) ||
+        this.#tasks.listActiveAssignments(task.id).length > 0 ||
+        (task.status === "waiting_external" &&
+          this.#actions.listInFlight(task.id).length > 0)
+      ) {
+        return { status: "done" };
+      }
+      if (task.status !== "queued") {
+        this.#tasks.updateTask(task.id, task.revision, {
+          status: "queued",
+          updatedAt: now,
+        });
+        this.#store.recordAudit({
+          event: "assignment.input_barrier",
+          subjectType: "assignment",
+          subjectId: assignment.id,
+          after: {
+            taskId: task.id,
+            reportStatus: report.status,
+            dispatchedInputSeq: assignment.dispatchedInputSeq,
+            pendingInputSeq: pendingInputs.at(-1)?.seq ?? 0,
+          },
+          traceId: `assignment:${assignment.id}`,
+          occurredAt: now,
+        });
+        this.#reply(
+          task,
+          "status",
+          `收到新的补充输入，任务已重新排队并按最新输入执行。`,
+          `input-pending:${assignment.id}`,
+        );
+      }
+      this.#enqueueDispatch(task, now);
+      void this.#wake.wake();
+      return { status: "done" };
+    }
 
     this.#store.recordAudit({
       event: "assignment.reported",
@@ -722,7 +825,10 @@ export class TaskService {
         return { status: "done" };
       }
       case "working": {
-        if (task.attempts >= this.#maxTaskAttempts) {
+        if (
+          task.attempts >=
+          this.#maxTaskAttempts + this.#tasks.countInputs(task.id)
+        ) {
           this.#tasks.updateTask(task.id, task.revision, {
             status: "failed",
             lastError: "worker reported working after the attempt limit",
@@ -876,6 +982,7 @@ function workerBrief(task: TaskRecord): string {
 
 function workerPrompt(
   task: TaskRecord,
+  inputs: readonly TaskInputRecord[],
   priorActions: { tool: string; status: string; args: Record<string, unknown>; evidence?: Record<string, unknown> }[],
 ): string {
   const lines = [
@@ -891,9 +998,13 @@ function workerPrompt(
     `Completion criteria: ${task.completionCriteria}`,
     `Mandate: ${JSON.stringify(task.mandate)}`,
   ];
-  if (task.ownerInput !== undefined && task.ownerInput.length > 0) {
-    lines.push("Owner input (authoritative; use it to continue):");
-    lines.push(task.ownerInput);
+  if (inputs.length > 0) {
+    lines.push(
+      `Owner input (authoritative, ${inputs.length} item(s); a ready report must address all of them):`,
+    );
+    for (const input of inputs) {
+      lines.push(`#${input.seq} ${input.createdAt}: ${input.text}`);
+    }
   }
   if (task.resultRef !== undefined && task.resultRef.length > 0) {
     lines.push(`Previous worker summary: ${task.resultRef}`);
