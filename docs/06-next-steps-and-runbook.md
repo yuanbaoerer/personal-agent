@@ -24,7 +24,7 @@
 | Outbox traceId + `/诊断`/`/admin/diagnostics` 安全诊断（无正文/goal/args） | token/费用、预算、用量报表、真实 G2 链路 |
 | 模型解读记忆/提醒的确认项（最长 10 分钟，提醒以 dueAt 为上限；owner 校验、取消/过期不写入）；显式命令即时 | 项目范围隔离、Worker 记忆注入、真实误触发负例 |
 | GitHub 只读连接器：repo 白名单、GET-only、超时/大小/分页上限、资源 scope、来源 URL、可区分错误 | 真实 token/仓库 G1、只读自动审批策略 |
-| 159 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
+| 160 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
 
 ## 2. 下一步待办
 
@@ -145,7 +145,7 @@ npm run test:recovery   # apps/agent/test/recovery.test.ts
 | --- | --- | --- |
 | 模型写入确认 | `save_memory`/`remind` 不再直接落库；生成 `pa_confirmations`（最长 10 分钟，提醒以 dueAt 为上限；owner/source inbox 唯一） | `confirmations.test.ts` 记忆/提醒确认 |
 | 确认与撤销 | `/确认 <id>` 应用；`/取消确认 <id>` 取消；显式 `/remember`、`/remind` 保持即时 | 取消不写入、显式命令即时 |
-| 过期与鉴权 | 过期确认懒清理；跨 owner 前缀查询拒绝；提醒 runKey/outbox 幂等保留 | 过期/跨 owner 测试 |
+| 过期与鉴权 | 过期确认懒清理；跨 owner 前缀查询拒绝；提醒 runKey/outbox 幂等保留；timer 注册失败时取消 schedule 并报错 | 过期/跨 owner/ timer 失败测试 |
 | 审计 | `confirmation.created/confirmed/cancelled` | audit 事件 |
 | 待定 | memory `projectScope`、Worker 按 Mandate 注入记忆、自然语言提示注入负例 | 需项目标识与注入范围决策 |
 

@@ -211,6 +211,33 @@ describe("model-interpreted personal writes", () => {
     assert.equal(services.confirmations.listPending(services.owner.id).length, 0);
   });
 
+  it("never leaves a live schedule when the host timer rejects", async () => {
+    const services = createServices({
+      now: () => START,
+      reminderTimer: {
+        async schedule() {
+          throw new Error("timer down");
+        },
+        async cancel() {},
+      },
+    });
+
+    await sendText(
+      services,
+      `/remind ${new Date(START.getTime() + 3_600_000).toISOString()} drink tea`,
+      "evt_timer_failure",
+    );
+
+    const schedules = services.reminders.list(services.owner.id);
+    assert.equal(schedules.length, 1);
+    assert.equal(schedules[0]?.status, "cancelled");
+    assert.ok(
+      services.store
+        .listRecentOutbox(5)
+        .some((row) => row.text.includes("无法创建提醒")),
+    );
+  });
+
   it("never advertises a confirmation window beyond the reminder due time", async () => {
     let current = START;
     const services = createServices({ now: () => current });

@@ -80,7 +80,26 @@ export class ReminderService {
     });
 
     if (inserted) {
-      await this.#timer.schedule(schedule);
+      try {
+        await this.#timer.schedule(schedule);
+      } catch (error) {
+        // The row must not remain live if the host timer rejected it; the
+        // polling/maintenance path would otherwise fire it at dueAt even
+        // though the owner was told creation failed.
+        this.#schedules.cancel(schedule.id, createdAt);
+        this.#store.recordAudit({
+          event: "schedule.timer_failed",
+          subjectType: "schedule",
+          subjectId: schedule.id,
+          after: {
+            runKey: schedule.runKey,
+            error: error instanceof Error ? error.message : String(error),
+          },
+          traceId: `schedule:${schedule.id}`,
+          occurredAt: createdAt,
+        });
+        throw error;
+      }
       this.#store.recordAudit({
         event: "schedule.created",
         subjectType: "schedule",

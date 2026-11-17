@@ -12,7 +12,7 @@ import { EffectDispatcher } from "../src/delivery/effects.ts";
 import type { ConversationRecord, OwnerIdentity } from "../src/domain/types.ts";
 import { MemoryService } from "../src/personal/memory.ts";
 import { ConfirmationService } from "../src/personal/confirmations.ts";
-import { ReminderService } from "../src/personal/reminders.ts";
+import { ReminderService, type ReminderTimer } from "../src/personal/reminders.ts";
 import { FakeRuntime } from "../src/runtime/fake.ts";
 import { noopWake } from "../src/runtime/types.ts";
 import { ActionRepository } from "../src/storage/actions.ts";
@@ -58,6 +58,7 @@ export function createServices(options: {
   actionTtlMs?: number;
   model?: StaticRouterModel;
   github?: GitHubReadConfig;
+  reminderTimer?: ReminderTimer;
 } = {}): TestServices {
   const now = options.now ?? (() => new Date());
   const store = options.store ?? createStore();
@@ -114,7 +115,13 @@ export function createServices(options: {
   });
   taskService.setActionProposer(actionService);
 
-  const reminders = new ReminderService({ store, schedules, wake: noopWake, now });
+  const reminders = new ReminderService({
+    store,
+    schedules,
+    wake: noopWake,
+    timer: options.reminderTimer,
+    now,
+  });
   const memory = new MemoryService({ store, memories, now });
   const confirmation = new ConfirmationService({ store, confirmations, now });
   const model = options.model ?? new StaticRouterModel();
