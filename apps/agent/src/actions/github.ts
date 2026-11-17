@@ -25,6 +25,7 @@ export class GitHubReadTool implements ActionTool {
   readonly name = "github.read";
   readonly resource = "github";
   readonly readOnly = true;
+  readonly replayPolicy = "verify" as const;
   readonly timeoutMs = 10_000;
   readonly #config: Required<Pick<GitHubReadConfig, "timeoutMs" | "maxBytes">> &
     GitHubReadConfig;
@@ -199,8 +200,9 @@ export class GitHubReadTool implements ActionTool {
   }
 
   async verify(): Promise<ToolVerification> {
-    // A read has no external state to reconcile.
-    return { satisfied: true, evidence: { readOnly: true } };
+    // A lost GET result cannot be proven complete from local state; let
+    // reconcile re-read instead of reporting a fabricated success.
+    return { satisfied: false, evidence: { readOnly: true } };
   }
 
   #url(path: string, params: URLSearchParams): URL {

@@ -488,6 +488,22 @@ export class ActionService {
       return { status: "done" };
     }
 
+    if (tool.replayPolicy !== "verify") {
+      this.#actions.markNeedsManual(
+        action.id,
+        "tool does not declare verified replay; refusing to repeat the write",
+        this.#now().toISOString(),
+      );
+      this.#reply(
+        action,
+        "failure",
+        "动作结果无法判定，需要人工核对；不会重复执行。",
+        "needs_manual",
+      );
+      this.#onSettled(action.taskId);
+      return { status: "done" };
+    }
+
     if (action.executionAttempts >= this.#maxAttempts || effectAttempts >= this.#maxAttempts) {
       this.#actions.markNeedsManual(
         action.id,
@@ -522,8 +538,8 @@ export class ActionService {
     }
 
     // Verify runs before this retry. A timed-out write may still land
-    // afterwards; re-applying is safe only because the current write tool is
-    // an idempotent absolute set.
+    // afterwards; re-applying is safe only when the tool declares
+    // replayPolicy="verify" and its verify is reliable.
     try {
       const result = await this.#runTool(tool, action.args);
       this.#actions.markSucceeded(

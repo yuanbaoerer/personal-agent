@@ -25,7 +25,7 @@
 | 模型解读记忆/提醒的确认项（最长 10 分钟，提醒以 dueAt 为上限；owner 校验、取消/过期不写入）；显式命令即时 | 项目范围隔离、Worker 记忆注入、真实误触发负例 |
 | GitHub 只读连接器：repo 白名单、GET-only、超时/大小/分页上限、资源 scope、来源 URL、可区分错误 | 真实 token/仓库 G1、只读自动审批策略 |
 | SQLite 备份：VACUUM INTO、manifest SHA-256、integrity_check、600 权限、verify、恢复到空目录（拒绝较新 schema） | 恢复/升级自动化、加密、保留期 |
-| 175 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
+| 176 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
 
 ## 2. 下一步待办
 
@@ -127,6 +127,7 @@ npm run test:recovery   # apps/agent/test/recovery.test.ts
 | 人工指令响应 | 一个 wait handler 被持有（drain 单并发）时，`/status` 与 `/cancel` 仍走 ingress 持久受理 | E1 ingress smoke；不构成 p95 或并发阻塞证据 |
 | 并发上限 | Worker 名额与工具并发上限未改变；等待轮询不新增 Worker | 既有 K05/K06 测试 |
 | 慢工具上限 | 工具调用默认 15s 超时；只读超时按失败处理，写超时转 unknown + reconcile，避免无限占住 drain | `tool-timeout.test.ts` |
+| 重放能力 | 写工具须声明 `replayPolicy="verify"`；未声明或 verify 返回不满足的 unknown 动作直接 needs_manual，不重复写；verify 抛错只重试 reconcile 直到预算 | `tool-timeout.test.ts` “requires verified replay…” |
 
 边界：以上为 E1（fake slow runtime + 合成延迟）；真实模型长生成、真实飞书平台延迟、真实慢工具超时/隔离与物理并发压测仍 pending，PA-05 保持 OPEN。
 

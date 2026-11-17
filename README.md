@@ -18,7 +18,7 @@
 | Outbox | 业务键唯一、按 task 分组排序、租约、重试、unknown、崩溃后按业务键核对 | 真实平台已接受 `om_`；无查询接口时保持 unknown |
 | Router | 确定性命令优先；模型 JSON 决策；补充/回答、修改、提醒列表/取消、任务前缀解析 | 真实模型质量需重复评测 |
 | Task / Assignment | Task 状态机、Mandate、revision、租约、fencingToken、心跳、最多两个 Worker；不可变 TaskInput 序号，任何未覆盖新输入的旧 Worker 报告都不能推进任务；模型等待按 100ms 切片轮询，不长时间占用 Effect drain | 10 分钟 assignment lifetime；长任务跨轮恢复需真实部署验证；真实模型 G2 补充场景待验证 |
-| 审批 / 动作 | 参数绑定、nonce、一次性消费、原子审批、执行前重核 Task 状态/revision/Mandate、取消/修订后拒绝重试、unknown/reconcile、mock 灯 | mock 灯是程序化工具；MCP 桥接与真机未接；真实外部 API 未验证 |
+| 审批 / 动作 | 参数绑定、nonce、一次性消费、原子审批、执行前重核 Task 状态/revision/Mandate、取消/修订后拒绝重试、unknown/reconcile、mock 灯；写工具须声明 `replayPolicy=verify` 才允许重试 | mock 灯是程序化工具；MCP 桥接与真机未接；真实外部 API 未验证 |
 | 崩溃/重启恢复 | file-backed SQLite 重启脚本：Inbox 未路由、Assignment 租约过期、Action 外部已写未落库、needs_manual 可见；Effect/Outbox 租约回收 | E1 模拟重启；真实 SIGKILL、DO 驱逐、真实渠道恢复未验证 |
 | 可观测/诊断 | Outbox traceId 贯通 inbox/task/schedule；`/诊断` 与 `/admin/diagnostics` 输出过期 Assignment、unknown Action、unknown/needs_manual 投递；诊断不返回消息正文、goal、Action args 或自由文本 lastError；router 日志不记录模型输出/goal | token/费用、预算、用量报表未实现；真实 G2 链路追踪待验证 |
 | GitHub 只读 | `github.read` GET-only 连接器：repo 白名单、Bearer token、8s 超时、单次 ≤20 项/≤200KB、重定向拒绝；repo/commits/open issues/open pulls/PR 状态 + 来源 URL；Mandate 需 `github` resource | 每次读取仍走 Action 审批；真实 token/仓库 G1 未验证；不支持写 Issue |
@@ -102,7 +102,7 @@ npm start
 - `npm run backup -- --data ./data --out ./backups/<timestamp>`：`VACUUM INTO` 复制 `agent.sqlite`、可选 `pi.sqlite`；manifest 记录 SHA-256、字节数、schema_version；复制后跑 `PRAGMA integrity_check`；目录/文件权限 700/600。
 - `npm run backup -- --verify <dir>`：重新校验哈希与完整性；拒绝非空目标与非法 manifest 文件名。
 - `npm run backup -- --restore <dir> --target <emptyDir>`：校验后恢复 agent/pi 数据库到空目录；拒绝较新 schema、非空目标，恢复后重跑 integrity_check。
-- `npm test`：175 个确定性测试通过（当前）；CLI 创建/verify/restore 冒烟通过。
+- `npm test`：176 个确定性测试通过（当前）；CLI 创建/verify/restore 冒烟通过。
 - 证据边界：E1；恢复/升级自动化、加密与保留期未做。
 
 ## 产品方向

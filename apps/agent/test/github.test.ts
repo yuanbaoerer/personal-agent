@@ -51,6 +51,7 @@ describe("read-only GitHub connector", () => {
     const headers = new Headers(calls[0]?.init?.headers);
     assert.equal(headers.get("authorization"), "Bearer secret-token");
     assert.equal(result.evidence.source, "https://github.com/owner/repo");
+    assert.equal((await tool.verify()).satisfied, false);
     assert.deepEqual(result.evidence.item, {
       fullName: "owner/repo",
       defaultBranch: "main",

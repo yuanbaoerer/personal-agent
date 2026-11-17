@@ -42,6 +42,8 @@ export interface ActionTool {
   readonly resource?: string;
   /** A timed-out read is safely retryable; a write may have landed. */
   readonly readOnly?: boolean;
+  /** `verify` permits reconcile retry only after verify(); default never retries. */
+  readonly replayPolicy?: "verify" | "never";
   /** Bound on one tool call; defaults to 15s. */
   readonly timeoutMs?: number;
   canonicalize(args: Record<string, unknown>): Record<string, unknown>;
@@ -100,6 +102,7 @@ const LAMP_STATE_KEY = "mock_lamp.state";
 export class MockLampTool implements ActionTool {
   readonly name = "lamp.set_brightness";
   readonly readOnly = false;
+  readonly replayPolicy = "verify" as const;
   timeoutMs = 5_000;
   readonly #store: Store;
   readonly #now: () => Date;

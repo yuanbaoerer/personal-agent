@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import type { ActionTool } from "../src/actions/tools.ts";
+import { ToolUnknownError, type ActionTool } from "../src/actions/tools.ts";
 import { createServices, type TestServices } from "./services.ts";
 
 function slowTool(
@@ -95,6 +95,33 @@ describe("tool execution timeout", () => {
         .listRecentOutbox(5)
         .some((row) => row.text.includes("动作结果未知")),
     );
+  });
+
+  it("requires verified replay before retrying an unknown write", async () => {
+    const services = createServices();
+    let executions = 0;
+    services.tools.register({
+      name: "test.unverified",
+      canonicalize(args) {
+        return { value: args.value };
+      },
+      async execute() {
+        executions += 1;
+        throw new ToolUnknownError("write may have landed");
+      },
+      async verify() {
+        return { satisfied: false, evidence: {} };
+      },
+    });
+    const action = prepare(services, "test.unverified");
+
+    await services.actionService.handleExecute({ actionId: action.id });
+    assert.equal(services.actions.get(action.id)?.status, "unknown");
+
+    await services.effectDispatcher.drain(20);
+
+    assert.equal(services.actions.get(action.id)?.status, "needs_manual");
+    assert.equal(executions, 1);
   });
 
   it("releases the tool slot when execute throws synchronously", { timeout: 3_000 }, async () => {
