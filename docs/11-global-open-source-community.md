@@ -163,3 +163,7 @@ PA-15 实现基础 LICENSE/SECURITY/CONTRIBUTING/secret 扫描；PA-28 针对持
 - 按使用价值、支持成本、风险决定新功能，而不是以 GitHub stars 为唯一目标。
 
 > 未来成为全球开源社区使用的项目，依赖的是**可验证的可靠性、诚实的支持边界、开放可审查的治理和受控的维护成本**，不是同时发布最多平台和最复杂的 Agent 抽象。
+
+## 13. Mode 架构的全球开源贡献边界（2026-11-17）
+
+未来的 Coding / Organization 体验采用 **WorkProfile × ExecutionStrategy**，而不是为每个 Mode 重复维护一份后端状态机、权限与数据库。模式定义、Skill 和 WorkflowTemplate 应具有版本、禁用/回滚与权限声明；不能因安装第三方模式而自动获得 Shell、文件或网络执行权。跨语言客户端共享稳定 mode ID 与错误码，界面文案独立国际化。Organization 可作为后续实验性可选能力，**不阻断 Public Alpha 或 v0.4 自托管开源发布**。详见 [12 · Mode Architecture](12-mode-architecture.md)。

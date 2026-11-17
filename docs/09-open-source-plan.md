@@ -74,3 +74,7 @@ PA-12 标准部署；PA-13 适配器；PA-14 数据与升级；PA-15 开源治�
 ## 10. 全球开源社区发布准备与权限边界（2026-11-14）
 
 现有 PA-14（数据实际导出/恢复）、PA-15（许可证/安全/历史秘密）、PA-13（Provider/Channel/Tool 接口）、PA-22（OS 构建矩阵）继续承担具体实现；新增 PA-23～PA-29 的国际化、地区服务可用性、Agent 安全红队、Data Flow、可信发行、社区治理及无障碍是**互补的独立验收专题**。英文 README/Quickstart、明确许可证、SECURITY、全历史秘密检查、真实可用路径是 Public Alpha 发布前条件；Desktop/TUI 不必是 Public Alpha 前提。第三方 Provider 的地区服务限制与当地法律不能通过“自托管/开源”一笔勾销。具体分期与发布阻断项见 [11 · 全球开源社区路线图](11-global-open-source-community.md)。
+
+## 11. 可扩展模式不是公开发布强制依赖（2026-11-17）
+
+全球开源开发者可通过扩展 WorkProfile 与 ExecutionStrategy 定义领域和受控执行方式；实现须服从单一 Core、持久任务与授权边界，定义版本/兼容/禁用，不允许模式包自动获取凭据或全系统权限。**Coding 和 Organization 的完整能力不是 Public Alpha 或 v0.4 Open-source Ready 的阻断项**；公开前仍以核心可靠性、许可证、秘密审计、清晰英文文档和可执行使用路径为先。见 [12 · Mode Architecture](12-mode-architecture.md)。

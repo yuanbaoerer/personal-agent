@@ -195,3 +195,12 @@ Definition of Done：
 核心通过后再做：一个真实灯与 Connector、只读日历、最小管理页、第二渠道、周期提醒、语义记忆与浏览器任务。每次增加能力都扩展相应故障和权限用例。
 
 岗位表达与简历只使用已经完成的证据；K8s、Go、训练、多租户和大规模压测不作为本 MVP 的附加必修项。资料与技术来源见 [00](00-product-plan.md)、[01](01-feasibility.md)、[02](02-architecture.md)。
+
+## 9. 模式架构不前置于 MVP（2026-11-17）
+
+本文件原六周预算和 K01–K12 属于历史 MVP 基线；长期发布门槛以 [07](07-long-term-roadmap.md) / [08](08-evaluation.md) 为准。WorkProfile × ExecutionStrategy 的设计见 [12 · Mode Architecture](12-mode-architecture.md)。
+
+- **v0.2**：只做已有 Core 的可靠性、真实链路、授权、恢复；不开发 Organization DAG。
+- **v0.3 候选**：在权限/真实工具/验证器通过后试行 General/Coding Profile 与 Direct/Delegated；Coding 仅使用受控工具和工作区。
+- **v0.4 之后**：Organization 有界工作流进入 Spike；先对比 Delegated 的结果质量、成本、人工干预与恢复，再决定是否提供。
+- **Public Alpha / v0.4 自托管发布不依赖 Organization 完成**；新 MODE 场景独立报告，不改变原 40 场景分母。

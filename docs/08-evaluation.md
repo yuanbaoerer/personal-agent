@@ -108,3 +108,9 @@ K13 与 K14 必须包含至少一个可控竞态复现测试；应用的锁、�
 新增独立验收集合：SEC01–SEC08（Prompt Injection、资源越权、Local Connector、扩展可信边界、成本上限与跨语言攻击）；I18N（英文 UI/CLI、Unicode/RTL、IANA 时区与 DST）；PRIV（数据流/日志脱敏、遥测 opt-in、数据导出/删除边界）；REL（产物 hash / provenance / SBOM/安装与回滚证据）；A11Y（键盘、无色终端、屏幕阅读器与缩放）。
 
 **这些专项不是对 K01–K17 或已有 40 场景集的替换**；分别报告 case 数、环境证据、失败与 pending，不允许混入既有 40 场景通过率。Public Alpha、Beta 及 v1.0 的详细门槛参见 [11 · 全球开源社区路线图](11-global-open-source-community.md)。
+
+## 11. 模式与智能组织独立评测（2026-11-17）
+
+[12 · Mode Architecture](12-mode-architecture.md) 规定独立的 MODE01–MODE10 测试集，覆盖 Profile/Strategy 兼容组合、权限不扩大、模式版本冻结、任务修订失效、DAG 依赖/容量、故障恢复、Coding workspace/Shell/Git 隔离、独立任务验收和多客户端状态一致性。
+
+**统计口径**：MODE 测试与原 40 场景分开报告，不改变 K01–K17 或 SEC01–SEC08 的通过率分母。Organization 只在 PA-09/11 等基础完成判据成熟后进入比较实验：至少选取 10 个可分解 Coding/Research 任务，在同模型和可比工具/预算条件下，Delegated 与 Organization 各独立运行至少三次。报告逐次结果、成功/质量、人工干预、token/费用、时延及恢复情况。不能把“调用了更多 Worker”当作质量提升；缺少净收益时保持 Delegated 默认。任何越权外部写或关键恢复失败均阻断策略推广。
