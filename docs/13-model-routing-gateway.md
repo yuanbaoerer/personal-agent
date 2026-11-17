@@ -251,11 +251,11 @@ ModelPolicy      = 用哪个模型、满足什么能力、花费多少、怎样�
 - [PA-24](https://github.com/yuanbaoerer/personal-agent/issues/27)：BYOK、全球 Provider/Channel 可用性与无飞书 CLI 使用。
 - [PA-06](https://github.com/yuanbaoerer/personal-agent/issues/7)：任务 trace、硬预算和审计视图。
 - [PA-17](https://github.com/yuanbaoerer/personal-agent/issues/19)：统一 Client API；不新增独立模型控制后端。
-- MODEL-01：只做真实 Session/Assignment 级绑定与角色配置（补足 PA-13 的 Provider 配置层）。
-- MODEL-02：只做 Magpie/兼容 Gateway Adapter 与路由组、流式/工具兼容性 Spike。
-- MODEL-03：只做 Organization Workflow Node 级策略和实证优化。
+- [MODEL-01](https://github.com/yuanbaoerer/personal-agent/issues/35)：只做真实 Session/Assignment 级绑定与角色配置（补足 PA-13 的 Provider 配置层）。
+- [MODEL-02](https://github.com/yuanbaoerer/personal-agent/issues/36)：只做 Magpie/兼容 Gateway Adapter 与路由组、流式/工具兼容性 Spike。
+- [MODEL-03](https://github.com/yuanbaoerer/personal-agent/issues/37)：只做 Organization Workflow Node 级策略和实证优化。
 
-后续若建立 GitHub Issues，需先检查是否已经存在该工作项并添加具体依赖；规划项的存在不代表可用性已经实现。**Magpie 不是安装前置条件，也不应成为 Public Alpha 或 v0.4 Open-source Ready 的新增发布阻断项。**
+已创建 MODEL-01～03 GitHub 实施 Issues，均为待办；规划和 Issues 的存在不代表功能可用。**Magpie 不是安装前置条件，也不应成为 Public Alpha 或 v0.4 Open-source Ready 的新增发布阻断项。**
 
 ## 10. ADR 和修改约束
 
