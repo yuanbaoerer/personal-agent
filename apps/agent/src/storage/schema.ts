@@ -289,6 +289,9 @@ const migrations: readonly (readonly string[])[] = [
   ],
 ];
 
+/** Highest schema version this build can read/migrate. */
+export const LATEST_SCHEMA_VERSION = migrations.length;
+
 const SCHEMA_VERSION_KEY = "schema_version";
 
 export function migrate(db: Db): void {

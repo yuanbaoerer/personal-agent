@@ -50,7 +50,7 @@ K13 与 K14 必须包含至少一个可控竞态复现测试；应用的锁、�
 
 **只读 GitHub（PA-07 部分，E1）**：`github.read` 仅 GET，repo 精确白名单、Bearer token、拒重定向、8s 超时、单次 ≤20 项/≤200KB；返回 repo/commits/open issues/open pulls/PR 状态与来源 URL；工具名与 `github` Mandate resource 双重校验；401/403/429（含 retry-after）/404/timeout 可区分。真实 token/仓库 G1 与只读自动审批策略仍 pending。
 
-**备份/校验（PA-14 部分，E1）**：`npm run backup` 使用 `VACUUM INTO` 复制 agent/pi SQLite；manifest 记录 SHA-256/字节/schema_version；复制后 `integrity_check`，目录/文件 700/600；`--verify` 重新校验并拒绝路径型文件名。恢复/升级自动化、加密与保留期仍 pending。
+**备份/校验（PA-14 部分，E1）**：`npm run backup` 使用 `VACUUM INTO` 复制 agent/pi SQLite；manifest 记录 SHA-256/字节/schema_version；复制后 `integrity_check`，目录/文件 700/600；`--verify` 重新校验并拒绝路径型文件名；`--restore --target` 先 verify，只恢复到空目录，拒绝高于当前 build 的 schema，恢复后重跑完整性检查。恢复/升级自动化、加密与保留期仍 pending。
 
 ## 3. 40 场景结构
 

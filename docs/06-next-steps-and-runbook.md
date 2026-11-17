@@ -24,8 +24,8 @@
 | Outbox traceId + `/诊断`/`/admin/diagnostics` 安全诊断（无正文/goal/args） | token/费用、预算、用量报表、真实 G2 链路 |
 | 模型解读记忆/提醒的确认项（最长 10 分钟，提醒以 dueAt 为上限；owner 校验、取消/过期不写入）；显式命令即时 | 项目范围隔离、Worker 记忆注入、真实误触发负例 |
 | GitHub 只读连接器：repo 白名单、GET-only、超时/大小/分页上限、资源 scope、来源 URL、可区分错误 | 真实 token/仓库 G1、只读自动审批策略 |
-| SQLite 备份：VACUUM INTO、manifest SHA-256、integrity_check、600 权限、verify | 恢复/升级自动化、加密、保留期 |
-| 173 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
+| SQLite 备份：VACUUM INTO、manifest SHA-256、integrity_check、600 权限、verify、恢复到空目录（拒绝较新 schema） | 恢复/升级自动化、加密、保留期 |
+| 175 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
 
 ## 2. 下一步待办
 
@@ -172,6 +172,7 @@ npm run test:recovery   # apps/agent/test/recovery.test.ts
 ```bash
 npm run backup -- --data ./data --out ./backups/$(date +%Y%m%dT%H%M%S)
 npm run backup -- --verify ./backups/<timestamp>
+npm run backup -- --restore ./backups/<timestamp> --target ./restored-data
 ```
 
 | 内容 | 实现 | 证据 |
@@ -180,6 +181,7 @@ npm run backup -- --verify ./backups/<timestamp>
 | 完整性 | manifest 记录 SHA-256/字节/schema_version；复制后 `PRAGMA integrity_check`；verify 重算 | 篡改检测测试；CLI 冒烟 |
 | 权限 | 目录 700、文件/manifest 600 | 测试断言 mode |
 | 安全边界 | 拒绝路径型 manifest 文件名；不写入日志/密钥 | verify 校验 |
+| 恢复到新实例 | `--restore <backup> --target <emptyDir>` 先 verify，再复制并校验；拒绝非空目标与高于当前 build 的 schema | 恢复后 `openStore` 读取测试；较新 schema 拒绝 |
 | 待定 | 恢复/升级自动化、加密、保留期与异地存储策略 | 需部署/安全决策 |
 
 恢复（人工，E1 未演练）：停服务 → 保留现有数据目录副本 → 将备份的 `agent.sqlite`/`pi.sqlite` 复制回 `DATABASE_PATH`/`PI_DATABASE_PATH` → 删除目标目录残留 `-wal`/`-shm` → 启动并检查 `/healthz` 与 `/status`。

@@ -162,7 +162,7 @@ PA-10 的确认与范围已落地 E1：模型解读的 `save_memory`/`remind` �
 
 PA-07 的只读 GitHub 连接器已落地 E1：`github.read` 仅 GET，repo 精确白名单、Bearer token、超时/大小/分项上限、拒重定向，返回来源 URL，并以工具名 + `github` resource 双重校验；真实 token/仓库 G1 与只读自动审批策略 pending，PA-07 保持 OPEN。
 
-PA-14 的本地 SQLite 备份/校验已落地 E1：`npm run backup` 用 `VACUUM INTO` 复制 agent/pi 数据库，manifest 记录 SHA-256/字节/schema_version，复制后 `integrity_check`，目录/文件 700/600，`--verify` 可重算；恢复/升级自动化、加密与保留期 pending，PA-14 保持 OPEN。下一实施项受 PA-07 真实 G1、PA-12 宿主决策影响。详见 [06 · 待办 §2.9](06-next-steps-and-runbook.md)。
+PA-14 的本地 SQLite 备份/校验/恢复已落地 E1：`npm run backup` 用 `VACUUM INTO` 复制 agent/pi 数据库，manifest 记录 SHA-256/字节/schema_version，复制后 `integrity_check`，目录/文件 700/600；`--verify` 重算，`--restore --target` 只恢复到一个空目录并拒绝较新 schema；恢复/升级自动化、加密与保留期 pending，PA-14 保持 OPEN。下一实施项受 PA-07 真实 G1、PA-12 宿主决策影响。详见 [06 · 待办 §2.9](06-next-steps-and-runbook.md)。
 
 ## 9. 风险、监控指标与停止规则
 

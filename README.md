@@ -101,7 +101,8 @@ npm start
 
 - `npm run backup -- --data ./data --out ./backups/<timestamp>`：`VACUUM INTO` 复制 `agent.sqlite`、可选 `pi.sqlite`；manifest 记录 SHA-256、字节数、schema_version；复制后跑 `PRAGMA integrity_check`；目录/文件权限 700/600。
 - `npm run backup -- --verify <dir>`：重新校验哈希与完整性；拒绝非空目标与非法 manifest 文件名。
-- `npm test`：173 个确定性测试通过（当前）；CLI 冒烟通过。
+- `npm run backup -- --restore <dir> --target <emptyDir>`：校验后恢复 agent/pi 数据库到空目录；拒绝较新 schema、非空目标，恢复后重跑 integrity_check。
+- `npm test`：175 个确定性测试通过（当前）；CLI 创建/verify/restore 冒烟通过。
 - 证据边界：E1；恢复/升级自动化、加密与保留期未做。
 
 ## 产品方向

@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { chmod, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { DatabaseSync } from "node:sqlite";
+
+import { LATEST_SCHEMA_VERSION } from "../apps/agent/src/storage/schema.ts";
 
 export interface BackupFile {
   name: string;
@@ -30,6 +32,58 @@ export interface BackupOptions {
   /** Optional source names; defaults match the local Node service. */
   agentDatabase?: string;
   piDatabase?: string;
+}
+
+/** Restore a verified backup into a new/empty data directory. */
+export async function restoreBackup(options: {
+  backupDir: string;
+  targetDir: string;
+}): Promise<BackupManifest> {
+  const manifest = await verifyBackup(options.backupDir);
+  const source = resolve(options.backupDir);
+  const target = resolve(options.targetDir);
+  for (const file of manifest.files) {
+    const version = readSchemaVersion(join(source, file.name));
+    if (version === undefined) {
+      continue;
+    }
+    const parsed = Number(version);
+    if (!Number.isInteger(parsed)) {
+      throw new Error(`invalid schema version in ${file.name}: ${version}`);
+    }
+    if (parsed > LATEST_SCHEMA_VERSION) {
+      throw new Error(
+        `backup schema ${parsed} is newer than this build (${LATEST_SCHEMA_VERSION})`,
+      );
+    }
+  }
+
+  await mkdir(target, { recursive: true, mode: 0o700 });
+  const existing = await readdir(target);
+  if (existing.length > 0) {
+    throw new Error(`restore target is not empty: ${target}`);
+  }
+  await chmod(target, 0o700);
+  const copied: string[] = [];
+  try {
+    for (const file of manifest.files) {
+      const destination = join(target, file.name);
+      copied.push(destination);
+      await copyFile(join(source, file.name), destination);
+      await chmod(destination, 0o600);
+      assertIntegrity(destination);
+    }
+    const manifestTarget = join(target, "manifest.json");
+    copied.push(manifestTarget);
+    await copyFile(join(source, "manifest.json"), manifestTarget);
+    await chmod(manifestTarget, 0o600);
+  } catch (error) {
+    for (const path of copied) {
+      await rm(path, { force: true });
+    }
+    throw error;
+  }
+  return manifest;
 }
 
 const AGENT_DB = "agent.sqlite";
@@ -182,9 +236,15 @@ async function assertSource(path: string, required: boolean): Promise<void> {
   }
 }
 
-const KNOWN_FLAGS = new Set(["data", "out", "agent", "pi", "verify"]);
+const KNOWN_FLAGS = new Set(["data", "out", "agent", "pi", "verify", "restore", "target"]);
 
-function parseArgs(argv: string[]): BackupOptions & { verify?: string } {
+type CliOptions = BackupOptions & {
+  verify?: string;
+  restore?: string;
+  target?: string;
+};
+
+function parseArgs(argv: string[]): CliOptions {
   const args: Record<string, string> = {};
   for (let index = 0; index < argv.length; index += 1) {
     const key = argv[index] ?? "";
@@ -199,8 +259,25 @@ function parseArgs(argv: string[]): BackupOptions & { verify?: string } {
     args[name] = value;
     index += 1;
   }
+  if (args.verify !== undefined && args.restore !== undefined) {
+    throw new Error("use either --verify or --restore, not both");
+  }
+  if (args.target !== undefined && args.restore === undefined) {
+    throw new Error("--target requires --restore");
+  }
   if (args.verify !== undefined) {
     return { dataDir: "", outDir: "", verify: args.verify };
+  }
+  if (args.restore !== undefined) {
+    if (args.target === undefined) {
+      throw new Error("--restore requires --target");
+    }
+    return {
+      dataDir: "",
+      outDir: "",
+      restore: args.restore,
+      target: args.target,
+    };
   }
   const dataDir = args.data ?? "./data";
   const createdAt = new Date().toISOString().replace(/[:.]/g, "-");
@@ -216,9 +293,14 @@ if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.a
   try {
     const options = parseArgs(process.argv.slice(2));
     const result =
-      options.verify === undefined
-        ? await createBackup(options)
-        : await verifyBackup(options.verify);
+      options.verify !== undefined
+        ? await verifyBackup(options.verify)
+        : options.restore !== undefined && options.target !== undefined
+          ? await restoreBackup({
+              backupDir: options.restore,
+              targetDir: options.target,
+            })
+          : await createBackup(options);
     console.log(JSON.stringify(result, null, 2));
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));

@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 
-import { createBackup, verifyBackup } from "../../../scripts/backup.ts";
+import { createBackup, restoreBackup, verifyBackup } from "../../../scripts/backup.ts";
 import { openStore } from "../src/storage/node.ts";
 import { APP_ID, OWNER_OPEN_ID } from "./helpers.ts";
 
@@ -126,6 +127,92 @@ describe("sqlite backup", () => {
       });
 
       await verifyBackup(outDir);
+    });
+  });
+
+  it("restores into an empty target and opens the restored data", async () => {
+    await withDir(async (dir) => {
+      const dataDir = join(dir, "data");
+      const backupDir = join(dir, "backup");
+      const restoreDir = join(dir, "restore");
+      await mkdir(dataDir, { recursive: true });
+      const store = openStore(join(dataDir, "agent.sqlite"));
+      store.bindOwner({
+        channel: "feishu",
+        accountId: APP_ID,
+        actorId: OWNER_OPEN_ID,
+        verifiedAt: START.toISOString(),
+      });
+      store.close();
+      await createBackup({
+        dataDir,
+        outDir: backupDir,
+        now: START,
+        piDatabase: "missing.sqlite",
+      });
+
+      await restoreBackup({ backupDir, targetDir: restoreDir });
+
+      const restored = openStore(join(restoreDir, "agent.sqlite"));
+      assert.equal(restored.findOwner("feishu", APP_ID, OWNER_OPEN_ID)?.id !== undefined, true);
+      restored.close();
+      assert.equal((await stat(join(restoreDir, "manifest.json"))).mode & 0o777, 0o600);
+      await assert.rejects(
+        () => restoreBackup({ backupDir, targetDir: restoreDir }),
+        /not empty/,
+      );
+    });
+  });
+
+  it("refuses a backup newer than the running schema", async () => {
+    await withDir(async (dir) => {
+      const dataDir = join(dir, "data");
+      const backupDir = join(dir, "backup");
+      await mkdir(dataDir, { recursive: true });
+      const store = openStore(join(dataDir, "agent.sqlite"));
+      store.close();
+      await createBackup({
+        dataDir,
+        outDir: backupDir,
+        now: START,
+        piDatabase: "missing.sqlite",
+      });
+      const databasePath = join(backupDir, "agent.sqlite");
+      const db = new DatabaseSync(databasePath);
+      db.prepare("UPDATE pa_meta SET value = ? WHERE key = ?").run(
+        "999",
+        "schema_version",
+      );
+      db.close();
+
+      const manifestPath = join(backupDir, "manifest.json");
+      const parsed: unknown = JSON.parse(await readFile(manifestPath, "utf8"));
+      assert.ok(
+        parsed !== null &&
+          typeof parsed === "object" &&
+          "files" in parsed &&
+          Array.isArray(parsed.files)
+      );
+      const first = parsed.files[0];
+      assert.ok(
+        first !== null &&
+          typeof first === "object" &&
+          "bytes" in first &&
+          "sha256" in first,
+      );
+      const contents = await readFile(databasePath);
+      first.bytes = contents.byteLength;
+      first.sha256 = createHash("sha256").update(contents).digest("hex");
+      await writeFile(manifestPath, JSON.stringify(parsed));
+
+      await assert.rejects(
+        () =>
+          restoreBackup({
+            backupDir,
+            targetDir: join(dir, "restore-newer"),
+          }),
+        /newer than this build/,
+      );
     });
   });
 
