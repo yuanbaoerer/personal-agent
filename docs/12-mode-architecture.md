@@ -10,8 +10,8 @@
 
 Personal Agent 当前基于 dsh-superagent 风格的 **Task / Assignment / Mandate / Approval / Coordinator** 思路构建，并不是要构建几套各自拥有数据库和状态机的 Agent 软件。“智能组织”借鉴的是任务组织、知识沉淀和反馈改进理念，**不是百度企业组织图的逐项复刻**。
 
-- **WorkProfile（工作领域）**：回答“做什么”。定义技能、候选工具、上下文与验收判据，例如 \`general\`、\`coding\`、\`research\`。
-- **ExecutionStrategy（执行组织策略）**：回答“怎么做”。定义 \`direct\`、\`delegated\`、\`organization\`；它们共享权限、预算、持久状态和日志。
+- **WorkProfile（工作领域）**：回答“做什么”。定义技能、候选工具、上下文与验收判据，例如 `general`、`coding`、`research`。
+- **ExecutionStrategy（执行组织策略）**：回答“怎么做”。定义 `direct`、`delegated`、`organization`；它们共享权限、预算、持久状态和日志。
 - **Mode / Preset（产品上的模式按钮）**：易于理解的预设。可提供「通用」「编程」「智能组织」三个入口，但其内部不是三个互斥的后端实现。
 - **Core**：现有唯一 Coordinator/TaskService/Assignment/Mandate/ActionService/Approval/Scheduler/AgentRuntime/Storage/Inbox/Outbox 及 Client API；所有模式共享一个权威任务状态。
 - **Organization Workflow**：未来有界、可恢复、具有依赖关系的工作流，不等于任意多个 Agent 的自由互聊团队。
@@ -36,7 +36,7 @@ Personal Agent 当前基于 dsh-superagent 风格的 **Task / Assignment / Manda
 
 选择 Organization **不意味着必须实例化多个常驻角色**。实际节点可以由相同 Worker 类型按不同工作说明执行；全实例仍最多同时运行两个 Worker（除非未来有独立经验证的容量变更）。
 
-\`direct\` 对纯即时回复可不创建长期 Task；一旦需要持久工作、外部写入、审批或预算，仍必须进入既有 Coordinator / Task / Action 通路。Direct 不能绕过治理逻辑。
+`direct` 对纯即时回复可不创建长期 Task；一旦需要持久工作、外部写入、审批或预算，仍必须进入既有 Coordinator / Task / Action 通路。Direct 不能绕过治理逻辑。
 
 ## 3. 与当前 Core 的可演进关系
 
@@ -59,7 +59,7 @@ Personal Agent 当前基于 dsh-superagent 风格的 **Task / Assignment / Manda
 
 ## 4. 配置与版本契约（示意，并非现成代码）
 
-\`\`\`ts
+```ts
 type WorkProfileId = "general" | "coding" | "research";
 type ExecutionStrategyId = "direct" | "delegated" | "organization";
 
@@ -89,7 +89,7 @@ interface ResolvedTaskMode {
   resources: string[];
   tools: string[];
 }
-\`\`\`
+```
 
 - Task 创建时冻结已解析 Profile/Strategy/版本/有效权限；Assignment 引用对应版本。Profile 定义热更新**不能**改变执行中任务的行为。
 - 有效工具、资源应为「用户 Mandate ∩ Profile Capability ∩ 服务端策略」。请求的预算和并发只会被收紧，不会越过全局上限。
@@ -114,7 +114,7 @@ Coding 本身可以使用 Direct/Delegated；只有当多阶段依赖确有收�
 
 示例请求：“为 personal-agent 设计并实现一个 GitHub Tool，完成测试和代码安全 Review。”
 
-\`\`\`mermaid
+```mermaid
 flowchart TD
   P["Parent Task: GitHub Tool"]
   P --> A["A: 需求和接口分析"]
@@ -128,11 +128,11 @@ flowchart TD
   F --> V{"独立判据通过?"}
   V -->|通过| O["交付 / 必要审批"]
   V -->|未通过| R["有限返工或人工介入"]
-\`\`\`
+```
 
 A–F 是工作节点，不是六个常驻 Agent。Planner 只能提出 WorkflowPlan 候选，程序应核验 DAG、预算、权限、节点上限和依赖；不允许模型无限自由增殖。
 
-\`\`\`ts
+```ts
 interface WorkflowNodeSpec {
   id: string;
   title: string;
@@ -151,7 +151,7 @@ interface WorkflowPlan {
   taskRevision: number;
   nodes: WorkflowNodeSpec[];
 }
-\`\`\`
+```
 
 必须遵守的状态与运行约束：
 
@@ -179,11 +179,11 @@ Organization 更耗时、耗 token 也更复杂，不能因为“任务看起来
 
 推荐长期改进循环：
 
-\`\`\`text
+```text
 任务执行 → 程序/外部结果验证 → 人工评价
          → 失败归因 → Skill/Template 改进候选
          → 基准样例回归 → 人工批准新版 → 新任务采用
-\`\`\`
+```
 
 **不允许** Agent 将未经验证的“经验”自动提升为可信 Skill，或未经审批自动改写代码、系统 Prompt、权限规则、生产配置。Memory 不是授权，Skill 也不是另一个永久人格的 Agent。
 
@@ -197,19 +197,19 @@ CLI / TUI / Desktop / IM 可提供「通用、编程、智能组织」入口；�
 
 | API/事件 | 用途 |
 | --- | --- |
-| \`GET /modes\` | 返回可用预设与兼容模式，标注 experimental/unavailable |
-| \`POST /tasks\` | 提交 TaskModeRequest，由 Core 生成 ResolvedTaskMode |
-| \`GET /tasks/:id\` | 查询有效 Profile/Strategy/版本、授权、预算 |
-| \`POST /tasks/:id/revise\` | 改模式或目标，需要 revision 与新授权校验 |
-| \`GET /tasks/:id/workflow\` | 组织计划节点、依赖、进度、证据 |
-| \`GET /events\` | 任务/节点/审批事件流，支持 cursor 断点恢复 |
+| `GET /modes` | 返回可用预设与兼容模式，标注 experimental/unavailable |
+| `POST /tasks` | 提交 TaskModeRequest，由 Core 生成 ResolvedTaskMode |
+| `GET /tasks/:id` | 查询有效 Profile/Strategy/版本、授权、预算 |
+| `POST /tasks/:id/revise` | 改模式或目标，需要 revision 与新授权校验 |
+| `GET /tasks/:id/workflow` | 组织计划节点、依赖、进度、证据 |
+| `GET /events` | 任务/节点/审批事件流，支持 cursor 断点恢复 |
 
 示例 CLI（仅规划）：
 
-\`\`\`bash
+```bash
 pa task create --profile coding --strategy delegated "review repo"
 pa task create --profile coding --strategy organization "implement feature"
-\`\`\`
+```
 
 实际协议应服从 [PA-17](https://github.com/yuanbaoerer/personal-agent/issues/19) 的 Client API 设计。未实现的 Organization 不应在可用模式列表中假装“已支持”。
 
