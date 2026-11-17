@@ -204,3 +204,7 @@ Definition of Done：
 - **v0.3 候选**：在权限/真实工具/验证器通过后试行 General/Coding Profile 与 Direct/Delegated；Coding 仅使用受控工具和工作区。
 - **v0.4 之后**：Organization 有界工作流进入 Spike；先对比 Delegated 的结果质量、成本、人工干预与恢复，再决定是否提供。
 - **Public Alpha / v0.4 自托管发布不依赖 Organization 完成**；新 MODE 场景独立报告，不改变原 40 场景分母。
+
+## 10. 模型路由不扩张首版范围（2026-11-17）
+
+现有 MVP 的一个真实模型/一个 Router/最多两个 Worker 约束不变。未来多 Provider 与按 Worker 模型绑定，必须先完成实际 Node/Cloudflare Pi Session 接口验证、Provider 能力判断、费用/超时记录和故障恢复；**不能通过切换环境变量或透明重试替代会话级绑定**。Magpie Gateway Adapter 属 v0.3–v0.4 的可选 Spike，而非原六周 MVP、v0.2 可靠性、Public Alpha 或开源发布的强制项。增量合同使用 MRT01–MRT10，不修改既有 40 场景成功率。完整设计见 [13 · Model Routing & Gateway](13-model-routing-gateway.md)。
