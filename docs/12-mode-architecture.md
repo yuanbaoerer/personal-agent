@@ -262,3 +262,15 @@ Mode 专项测试不混入既有 40 场景，也不替换 K01–K17 / SEC01–SE
 **明确排除**：v0.2 重构成多 Agent 平台、多 Coordinator/多 Task DB、无限嵌套派工、基于 LLM 自述的审批/验收、自动获得 Shell 权限、未审核自我修改，以及将 Organization 设为全球开源的发布前置门槛。
 
 这份规划的目的，是为长期演进保留可扩展的产品抽象，同时不稀释当前 v0.2 最重要的可靠性、安全和实际可用性任务。
+
+## 12. 第三个正交维度：ModelPolicy（2026-11-17）
+
+现有 Mode Architecture 由两个维度扩展为 **WorkProfile × ExecutionStrategy × ModelPolicy**：
+
+- WorkProfile：`general/coding/research`，决定做什么及所需工具能力、知识与验证器。
+- ExecutionStrategy：`direct/delegated/organization`，决定如何组织任务和 Worker/Workflow Node。
+- ModelPolicy：决定 Router/Worker/不同 Node **分别使用哪个经验证的模型或路由组**、预算多少、是否允许有界降级；它不赋予新的 Mandate 权限。
+
+例如 `coding + organization` 可以为 Router、Planner、Implement、Review 选择不同模型，仍由同一个 Parent Task 统一控制成本和 Worker 名额（当前上限 2）。ModelPolicy 的静态角色映射先于任何基于模型判断的动态路由。每个 Assignment/Session 的实际 `ResolvedModelBinding` 应保存 modelRef、Provider/Gateway 来源、策略版本及使用预算；Profile/策略热更新不影响在途 Session。
+
+**Magpie 是可选 Gateway，不是第三个独立 Agent 核心，也不是开源发布前置依赖**。具体路由/故障转移/路由组/节点模型分配和独立 MRT 测试见 [13 · Model Routing & Gateway](13-model-routing-gateway.md)；新能力在真实 Pi Session 验证之前均为规划。
