@@ -180,3 +180,17 @@ Desktop、CLI、TUI、Web、IM 均应作为统一 Agent Core 的独立客户端�
 除长期自用、跨平台和 CLI/TUI/Desktop 外，全球开源社区还要求英文 Quickstart、多语言/时区语义、无需飞书的原生 CLI 使用路径、BYOK/Provider 能力检查、Prompt Injection 与 Local Connector 信任边界、可解释的数据流和隐私默认值、可验证的发行产物、社区治理及无障碍验收。完整细节、Public Alpha 与 Public Beta 分阶段发布阻断项、PA-23～PA-29 的边界见 [11 · 全球开源社区路线图](11-global-open-source-community.md)。
 
 **优先级约束**：v0.2 可靠性仍是唯一核心开发主线；PA-25 威胁模型与关键攻击用例提前进行。Public Alpha 是许可证/安全/隐私/英文文档及一条真实可用路径达标后的独立发布决策，**不等同 v1.0 或 Production Ready**；TUI/Desktop 尚未全部实现不能成为公开源码的机械性前置条件。代码公开只能由所有者明确决策，本文不授权自动修改 repository visibility。
+
+## 13. Mode Architecture：Coding 与智能组织是可组合而非互斥的能力（2026-11-17）
+
+对用户提供 **General / Coding / Organized Work** 等快捷模式，底层保持两个正交维度：
+
+- **WorkProfile（做什么）**：General / Coding / Research 的 Skills、候选工具、上下文与独立验收判据。
+- **ExecutionStrategy（如何做）**：Direct / Delegated / Organization 的直答、单派工与受控依赖图。
+- 因而「Coding + Organization」是有效组合，不能为不同模式建立各自的 Coordinator/Task DB。
+
+现有的 SuperAgent-inspired Coordinator、Task、Assignment、Mandate、Action/Approval、持久化与恢复继续作为唯一共同基座。Organization 的子节点不得扩大 Parent Mandate；全实例并发上限保持 2，不能依靠模型自报完成或无限分解任务。Skill、WorkflowTemplate 与 Human Feedback 必须有可验证版本、来源和人工发布流程。
+
+**版本边界**：v0.2 不变，优先真实模型闭环和权限/恢复；v0.3 在 PA-03/07/09/13 等真实能力验证后尝试最小 General/Coding Profile 与 Direct/Delegated；Organization 在 v0.4 以后以**可选技术 Spike**验证 DAG、取消、恢复和对照收益，**不是 Public Alpha/v0.4 Open-source Ready 的前置要求**。经验沉淀与 Improvement Loop 后置。
+
+完整领域契约、候选 API、Coding 隔离与 MODE01–MODE10 评测见 [12 · Mode Architecture](12-mode-architecture.md)。本阶段工作包标识 MODE-01～MODE-05，仅为设计待办，未创建 GitHub Issues，不与已有 PA-01～PA-29 混淆。
