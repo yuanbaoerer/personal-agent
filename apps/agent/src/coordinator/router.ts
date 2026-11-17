@@ -431,7 +431,8 @@ export class Router implements InboundHandler {
     const tasks = this.#tasks.listByOwner(ownerId, 5);
     const lines = [
       `服务运行中。受理 ${this.#store.countInbox("accepted")} 条，拒绝 ${this.#store.countInbox("rejected")} 条；`,
-      `待发送 ${this.#store.countOutbox("pending")} 条，待核对 ${this.#store.countOutbox("unknown")} 条。`,
+      `待发送 ${this.#store.countOutbox("pending")} 条，待核对 ${this.#store.countOutbox("unknown")} 条，` +
+        `需人工 ${this.#store.countOutbox("needs_manual")} 条。`,
       `任务：排队 ${this.#tasks.countByStatus("queued")}，运行 ${this.#tasks.countByStatus("running")}，` +
         `等待 ${this.#tasks.countByStatus("waiting_user") + this.#tasks.countByStatus("waiting_external")}，` +
         `完成 ${this.#tasks.countByStatus("succeeded")}，失败 ${this.#tasks.countByStatus("failed")}。`,

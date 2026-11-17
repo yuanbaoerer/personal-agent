@@ -19,6 +19,7 @@
 | Router | 确定性命令优先；模型 JSON 决策；补充/回答、修改、提醒列表/取消、任务前缀解析 | 真实模型质量需重复评测 |
 | Task / Assignment | Task 状态机、Mandate、revision、租约、fencingToken、心跳、最多两个 Worker；不可变 TaskInput 序号，任何未覆盖新输入的旧 Worker 报告都不能推进任务 | 10 分钟 assignment lifetime；长任务跨轮恢复需真实部署验证；真实模型 G2 补充场景待验证 |
 | 审批 / 动作 | 参数绑定、nonce、一次性消费、原子审批、执行前重核 Task 状态/revision/Mandate、取消/修订后拒绝重试、unknown/reconcile、mock 灯 | mock 灯是程序化工具；MCP 桥接与真机未接；真实外部 API 未验证 |
+| 崩溃/重启恢复 | file-backed SQLite 重启脚本：Inbox 未路由、Assignment 租约过期、Action 外部已写未落库、needs_manual 可见；Effect/Outbox 租约回收 | E1 模拟重启；真实 SIGKILL、DO 驱逐、真实渠道恢复未验证 |
 | 提醒 / 记忆 | 一次性提醒、runKey、TTL、聊天取消/列表；显式记忆查改删 | 周期提醒与语义检索未做 |
 | 本地服务 | `POST /webhooks/feishu`、`GET /healthz`、Node SQLite + 进程内 pi-durable | 配置 `OPENCODE_API_KEY` 后本地执行模型任务；未配置时模型任务明确失败 |
 | Cloudflare DO | `Assistant` + PiHarness + Lifecycle、DO SQLite 中的 `pa_*`、webhook、jobs | 已真实部署；飞书回调入口超时待解；驱逐恢复未验证 |
@@ -48,16 +49,22 @@ npm start
 
 **2026-11-17 验证（PA-02）：**
 
-- `npm test`：129 个确定性测试通过；新增 K13 用例覆盖“运行中补充输入 → 旧 Worker ready 报告被拒 → 新 Assignment 覆盖 input_seq 后完成”、同一平台消息重复补充只产生一条 TaskInput、旧报告重放不抢占新 Worker/不复活取消中任务、崩溃窗口重复补充可补派工、旧 failed 报告不能丢弃补充输入、补充轮次不计入重试上限、revise 后旧报告失权且输入保留、正常 working 报告仍重新排队。
+- `npm test`：124 个确定性测试通过（PA-02 时点）；新增 K13 用例覆盖“运行中补充输入 → 旧 Worker ready 报告被拒 → 新 Assignment 覆盖 input_seq 后完成”、同一平台消息重复补充只产生一条 TaskInput、旧报告重放不抢占新 Worker/不复活取消中任务、崩溃窗口重复补充可补派工、旧 failed 报告不能丢弃补充输入、补充轮次不计入重试上限、revise 后旧报告失权且输入保留、正常 working 报告仍重新排队。
 - `npm run typecheck` 与 `npm run deploy:dry-run` 通过。
 - 迁移冒烟：在真实 `agent.sqlite` 副本与 v4 旧库副本上执行迁移，`schema_version=5`、`pa_task_inputs` 建立、旧 `owner_input` 回填为 seq 1。
 - 证据边界：E1（faux 确定性测试）；真实模型 G2 与真实飞书投递仍未验证。
 
 **2026-11-17 验证（PA-03）：**
 
-- `npm test`：129 个确定性测试通过；K14 覆盖执行前 Task 已失败/取消、审批入口拒绝已结束任务、同一审批重复 claim 只有一次成功、approved Action 错过执行窗口后转为 expired 且不调用工具。
+- `npm test`：129 个确定性测试通过（PA-03 时点）；K14 覆盖执行前 Task 已失败/取消、审批入口拒绝已结束任务、同一审批重复 claim 只有一次成功、approved Action 错过执行窗口后转为 expired 且不调用工具。
 - `npm run typecheck` 与 `npm run deploy:dry-run` 通过。
 - 证据边界：E1（mock 灯）；真实写工具、平台审批点击与故障注入未验证。
+
+**2026-11-17 验证（PA-04 部分）：**
+
+- `npm run test:recovery`：6 个 file-backed SQLite 重启用例通过；覆盖 Inbox 路由前中断、Assignment 租约过期、Effect 租约过期、Task 创建后派工 effect 丢失、Action 外部已写但本地 unknown、`/status` 显示 needs_manual。
+- `npm test`：135 个确定性测试通过（当前）；`npm run typecheck`、`npm run deploy:dry-run` 通过。
+- 证据边界：E1（模拟进程重启）；真实 SIGKILL、Cloudflare DO 驱逐、真实渠道/Pi 会话恢复仍 pending。
 
 ## 产品方向
 

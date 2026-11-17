@@ -19,7 +19,8 @@
 | Node 进程内 pi-durable 模型运行时（`apps/agent/src/runtime/node-pi.ts`，未配置 key 时显式失败） | 真实模型 E3 证据、SIGKILL 恢复演练 |
 | 单一组合根 `apps/agent/src/app.ts`，Node 与 DO 只注入适配层 | — |
 | 不可变 TaskInput（`pa_task_inputs`，按 task 单调 seq，同一 inbox 幂等）与 Assignment 输入屏障；旧 Worker 报告不能绕过补充输入 | 真实模型 G2、SIGKILL 中断窗口 |
-| 129 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
+| file-backed 重启脚本：Inbox 未路由、Assignment/Effect 租约过期、派工 effect 丢失、Action 外部已写但 unknown、needs_manual 可见 | 真实 SIGKILL、DO 驱逐、真实渠道/Pi 恢复 |
+| 135 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
 
 ## 2. 下一步待办
 
@@ -67,7 +68,7 @@ N01–N13 是历史工作分解，后续执行以 PA Issue 为准；本节记录
 | 完成屏障 | 任何旧报告（含 `failed`）都先比较当前最新 seq；存在未派发输入时任务回到 `queued` 并重新派工，旧报告不能标记 `succeeded`，也不处理其 `proposedActions` | K13 测试：旧 ready 被拒、新 Assignment 完成后才 `succeeded` 且 `consumedInputSeq=1` |
 | 并发隔离 | 补充一个任务不影响另一个运行中的任务完成 | K13 测试中的第二任务独立 `succeeded` |
 | 重放与取消/修订 | 旧 attempt 的报告不得推进任务，不抢占已报告的新 Assignment，不复活 `cancelling` 任务；崩溃窗口由同一消息重试补齐派工；每个输入额外授予一轮执行（含 `working`/租约路径），不按重试上限误杀；revise 后输入保留且旧报告失权；正常 `working` 报告仍重新排队 | 七个回归测试（replay / newer attempt / cancelling / crash window / attempt budget / stale failed / revise）与 working 队列测试 |
-| 聊天语义 | 补充回复带输入序号；running 时明确“旧结果不会生效，结束后按最新输入重新执行”；waiting_user 立即重新排队；`/tasks` 显示待消费输入数 | `router.ts`；129 个测试 |
+| 聊天语义 | 补充回复带输入序号；running 时明确“旧结果不会生效，结束后按最新输入重新执行”；waiting_user 立即重新排队；`/tasks` 显示待消费输入数 | `router.ts`；PA-02 时点 124 个测试 |
 
 边界：以上为 E1 确定性证据；真实模型 G2、真实飞书消息与 SIGKILL 恢复仍未验证。PA-02 保持 OPEN，直到 G2 与故障注入证据补齐。
 
@@ -85,6 +86,28 @@ N01–N13 是历史工作分解，后续执行以 PA Issue 为准；本节记录
 | 外部已发 | 保留 unknown → reconcile；重试前仍重核授权，不盲目重复写 | 既有 reconcile 边界测试 |
 
 边界：以上为 E1；真实外部写、真实平台审批点击与崩溃注入未验证。PA-03 保持 OPEN，直到真实写工具和故障注入证据补齐。
+
+### 2.4 2026-11-17 实施进展（PA-04 重启恢复，E1 部分）
+
+当前优先级：**PA-04（本轮完成 E1 重启脚本；E4 凭证/环境就绪后补）→ PA-05/06 可并行 → PA-01 的 E3**。PA-04 的真实 SIGKILL、DO 驱逐与真实渠道恢复仍 pending，不能以模拟重启替代。
+
+可重跑命令与覆盖窗口：
+
+```bash
+npm run test:recovery   # apps/agent/test/recovery.test.ts
+```
+
+| 故障窗口 | 注入方式 | 恢复断言 |
+| --- | --- | --- |
+| Inbox 已受理、Router 尚未持久化 | handler 在 `accept` 中抛错后关闭 SQLite | 重启 `recoverPending` 后只产生一条回复，Inbox 标记 processed |
+| Assignment 已打开 Worker、等待报告前中断 | 关闭进程，时钟推进超过租约 | `sweep` 将旧 Assignment 置 expired，显式提交旧报告被拒，任务重新派工并完成；新旧 Worker session id 不同 |
+| Effect 已领取、handler 未完成 | 手动 claim 后关闭，时钟推进超过租约 | 重启 `recoverExpired` 回收并执行，任务完成 |
+| Task 已创建、派工 effect 未入队 | 删除派工 effect 后关闭，重放同一 Router 决策 | `TaskService.create` 的幂等修复重新入队，任务不再永久 queued |
+| Action 外部写已生效、本地 unknown | mock 灯写状态后抛 `ToolUnknownError`，不处理 reconcile 即关闭 | 重启后 reconcile 依据持久灯状态判定 succeeded，证据含 `reconciled:true` |
+| needs_manual 不可见 | Outbox 进入 `needs_manual` | `/status` 显示“需人工 N 条” |
+| Outbox 平台已接受、本地未记 | 既有 `outbox.test.ts` 发送租约中断场景 | 有查询能力时按 businessKey 核对，不重复发送 |
+
+边界：以上均为 E1（file-backed SQLite + mock 灯 + 模拟进程重建）。未覆盖：真实 SIGKILL 时序、Cloudflare DO 驱逐、Pi 会话/提醒时钟跨重启、真实飞书回执与真实写工具。PA-04 保持 OPEN。
 
 ## 3. 环境与密钥
 

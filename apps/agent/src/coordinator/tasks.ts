@@ -129,6 +129,11 @@ export class TaskService {
         occurredAt: now,
       });
       this.#enqueueDispatch(task, now);
+    } else if (task.status === "queued") {
+      // A crash can land between the task INSERT and the dispatch enqueue.
+      // Replaying the same decision must repair the missing effect; the
+      // business key keeps this idempotent when the effect already exists.
+      this.#enqueueDispatch(task, now);
     }
 
     return task;

@@ -13,6 +13,8 @@ export interface FakeSubmission {
   entryKind?: string;
 }
 
+let runtimeInstances = 0;
+
 /**
  * Deterministic runtime for contract tests. Answers are queued per session;
  * when the queue is empty the runtime returns a generic JSON report so tests
@@ -23,6 +25,7 @@ export class FakeRuntime implements AgentRuntime {
   readonly interrupted: string[] = [];
   readonly opened: RuntimeSessionSpec[] = [];
   readonly #answers = new Map<string, RuntimeAnswer[]>();
+  readonly #prefix = `fake-${(runtimeInstances += 1)}`;
   #counter = 0;
   defaultAnswer: RuntimeAnswer = {
     status: "answered",
@@ -46,7 +49,7 @@ export class FakeRuntime implements AgentRuntime {
   async open(spec: RuntimeSessionSpec): Promise<OpenedSession> {
     this.#counter += 1;
     this.opened.push(spec);
-    return { id: `fake-session-${this.#counter}` };
+    return { id: `${this.#prefix}-session-${this.#counter}` };
   }
 
   async submit(

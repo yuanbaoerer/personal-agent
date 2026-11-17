@@ -40,6 +40,7 @@ export interface TestServices {
 
 export function createServices(options: {
   now?: () => Date;
+  store?: Store;
   maxActiveWorkers?: number;
   assignmentLeaseMs?: number;
   assignmentMaxLifetimeMs?: number;
@@ -48,11 +49,15 @@ export function createServices(options: {
   model?: StaticRouterModel;
 } = {}): TestServices {
   const now = options.now ?? (() => new Date());
-  const store = createStore();
-  const owner = store.findOwner("feishu", APP_ID, OWNER_OPEN_ID);
-  if (owner === undefined) {
-    throw new Error("test owner was not bound");
-  }
+  const store = options.store ?? createStore();
+  const owner =
+    store.findOwner("feishu", APP_ID, OWNER_OPEN_ID) ??
+    store.bindOwner({
+      channel: "feishu",
+      accountId: APP_ID,
+      actorId: OWNER_OPEN_ID,
+      verifiedAt: now().toISOString(),
+    });
   const conversation = store.upsertConversation({
     ownerId: owner.id,
     channel: "feishu",

@@ -12,6 +12,7 @@
   "scripts": {
     "typecheck": "tsc -p apps/agent/tsconfig.json && tsc -p infra/tsconfig.json",
     "test": "node --test apps/agent/test/*.test.ts",
+    "test:recovery": "node --test apps/agent/test/recovery.test.ts",
     "start": "node --env-file-if-exists=.env apps/agent/src/main.ts",
     "dev:cloudflare": "wrangler dev --config infra/wrangler.jsonc",
     "deploy:dry-run": "wrangler deploy --config infra/wrangler.jsonc --dry-run --outdir .wrangler/dry-run",
