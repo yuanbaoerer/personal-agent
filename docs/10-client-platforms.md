@@ -126,3 +126,9 @@ K15–K17 是建议扩展标签；不改写原 K01–K14 的定义，也不以�
 ## 10. 全球社区客户端要求（2026-11-14）
 
 CLI/TUI/Desktop 的 `locale` 及对话语言相互独立，CLI 机器可读 JSON/错误码不随语言翻译改变。macOS/Windows 的原生支持不仅包含路径与安装，还包含 OS/arch 对应语言显示、Unicode、IANA 时区、无色/窄屏终端、键盘访问和故障提示。多端安全必须覆盖 Prompt Injection 从外部文档进入工具调用、设备 token 撤销和隐私日志限制；正式发行应有可验证来源与更新策略。详见 [11 · 全球开源社区路线图](11-global-open-source-community.md) 中 PA-23、PA-25、PA-27、PA-29。
+
+## 11. 模式入口与多客户端共享（2026-11-17，设计提案）
+
+CLI/TUI/Desktop/IM 不应各自实现 Coding Agent / Organization Agent 后端。统一 Core 的 Task 记录保存 WorkProfile × ExecutionStrategy 的**有效值和版本**。UI 可提供「General / Coding / Organized Work」预设，高级组合允许 Coding + Organization。CLI 命令和候选 API 形状参见 [12 · Mode Architecture](12-mode-architecture.md)；最终接口由 [PA-17 Client API](https://github.com/yuanbaoerer/personal-agent/issues/19) 确定。
+
+客户端不能通过切换 UI 模式扩大正在运行任务的 Mandate；服务端负责认证、预算和版本修订。未实现的 Organization 在可用模式列表中应标记 unavailable/experimental，不能向 macOS/Windows 用户假装已交付。
