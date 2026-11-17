@@ -338,3 +338,11 @@ docs/
 - [dsh-superagent Effects / Outbox](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/main/docs/007-architecture.md)
 
 必须用代码验证：平台真实回调和主动发送；Pi 提交幂等与多会话；Worker 忙碌时响应新输入；进程中断后的恢复；审批重复/过期/撤销；外部已生效但未落库；消息已发送但回执未落库。版本隔离、接口名称和平台能力不能仅凭本文认定已实现。
+
+## 13. WorkProfile 与 ExecutionStrategy 架构扩展（2026-11-17，设计提案）
+
+长期保持**同一个** Coordinator/TaskService、Assignment、Mandate、ActionService、Scheduler、Inbox/Outbox。客户端通过 Client API 提交期望的 `WorkProfile`（general/coding/research）与 `ExecutionStrategy`（direct/delegated/organization），后端负责校验并冻结实际模式版本、工具/资源 scope 与预算。Router 可以建议策略，不能自行授权。
+
+Coding Profile 不自动开放 Shell、文件写入或 Git push；Organization 是**后续的有界 WorkflowPlan/DAG**，由 Parent Task 受控派生有依赖、验证器、预算的工作节点；全实例 Worker 上限仍为 2；子节点权限必须是 Parent Mandate 子集；任务修订/取消后旧计划和 Assignment 通过 revision/fencing 失效，外部在途结果独立核对。
+
+**当前没有 Mode Registry、Organization DAG 或 Coding 沙箱实现**；本节不改变 v0.2 的 Task 状态机与可靠性验收。详细领域模型、模式组合、隔离边界、恢复策略和新 MODE 测试见 [12 · Mode Architecture](12-mode-architecture.md)。
