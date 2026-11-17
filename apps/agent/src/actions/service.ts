@@ -226,6 +226,28 @@ export class ActionService {
     }
 
     const now = this.#now().toISOString();
+    const unauthorized = this.#executionGuard(action);
+    if (unauthorized !== undefined) {
+      // A task that ended, was cancelled, or was revised cannot receive a new
+      // execution grant just because an old approval prompt is still open.
+      this.#actions.supersede(action.id, unauthorized, now);
+      this.#store.recordAudit({
+        event: "action.approval_rejected",
+        subjectType: "action",
+        subjectId: action.id,
+        after: { reason: unauthorized, taskId: action.taskId },
+        traceId: `action:${action.id}`,
+        occurredAt: now,
+      });
+      this.#reply(
+        action,
+        "failure",
+        `无法批准：${unauthorized}`,
+        `approval_failed:${unauthorized}`,
+      );
+      this.#onSettled(action.taskId);
+      return { ok: false, reason: unauthorized };
+    }
     const result = this.#actions.approve(
       action.id,
       {
@@ -303,14 +325,43 @@ export class ActionService {
       return { status: "failed", reason: "action.execute payload is incomplete" };
     }
 
-    const action = this.#actions.claimForExecution(
+    const claim = this.#actions.claimForExecution(
       actionId,
       this.#now().toISOString(),
       this.#leaseMs,
+      (claimed) => this.#executionGuard(claimed),
     );
-    if (action === undefined) {
+    if (!claim.ok) {
+      if (claim.revoked) {
+        // The approval existed, but the task no longer authorizes this write
+        // or the execution window has closed.
+        this.#store.recordAudit({
+          event: "action.execution_rejected",
+          subjectType: "action",
+          subjectId: actionId,
+          after: { reason: claim.reason, action: claim.action },
+          traceId: `action:${actionId}`,
+          occurredAt: this.#now().toISOString(),
+        });
+        if (claim.action !== undefined) {
+          this.#reply(
+            claim.action,
+            "failure",
+            claim.reason === "action_expired"
+              ? "动作审批已过期，未执行。"
+              : "该动作已不再被授权，未执行。",
+            claim.reason === "action_expired" ? "expired" : "superseded",
+          );
+          this.#onSettled(claim.action.taskId);
+        }
+      } else if (claim.action?.status === "expired") {
+        // Replayed claim after a crash: the action is already expired, so
+        // only finish its task settlement; never re-audit or re-notify.
+        this.#onSettled(claim.action.taskId);
+      }
       return { status: "done" };
     }
+    const action = claim.action;
 
     const tool = this.#tools.get(action.tool);
     if (tool === undefined) {
@@ -436,7 +487,7 @@ export class ActionService {
 
     // A cancelled or revised task revokes the action's authority even though
     // the external write may still be in doubt. Never execute on its behalf.
-    if (!this.#actionAuthorized(action)) {
+    if (this.#executionGuard(action) !== undefined) {
       const at = this.#now().toISOString();
       if (!this.#actions.markSuperseded(action.id, "action is no longer authorized", at)) {
         this.#actions.markNeedsManual(action.id, "action is no longer authorized", at);
@@ -543,13 +594,27 @@ export class ActionService {
       );
   }
 
-  #actionAuthorized(action: ActionRecord): boolean {
+  /**
+   * Re-read the task at every authorization boundary. Revision, ownership and
+   * mandate are cheap to check and stop an approved action from outliving the
+   * task state it was approved for.
+   */
+  #executionGuard(action: ActionRecord): string | undefined {
     if (this.#tasks === undefined) {
-      return true;
+      return undefined;
     }
     const task = this.#tasks.get(action.taskId);
     if (task === undefined) {
-      return false;
+      return "task_not_found";
+    }
+    if (task.ownerId !== action.ownerId) {
+      return "task_owner_mismatch";
+    }
+    if (task.conversationId !== action.conversationId) {
+      return "task_conversation_mismatch";
+    }
+    if (task.revision !== action.taskRevision) {
+      return "task_revision_mismatch";
     }
     if (
       task.status === "cancelled" ||
@@ -557,9 +622,12 @@ export class ActionService {
       task.status === "failed" ||
       task.status === "succeeded"
     ) {
-      return false;
+      return "task_not_executable";
     }
-    return task.revision === action.taskRevision;
+    if (!task.mandate.tools.includes(action.tool)) {
+      return "tool_outside_mandate";
+    }
+    return undefined;
   }
 
   async #runTool(tool: ActionTool, args: Record<string, unknown>) {

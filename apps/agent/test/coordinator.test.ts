@@ -486,8 +486,9 @@ describe("task and assignment coordination", () => {
       approverId: services.owner.id,
       conversationId: services.conversation.id,
     });
-    assert.ok(
-      services.actions.claimForExecution(action.id, services.now().toISOString(), 30_000),
+    assert.equal(
+      services.actions.claimForExecution(action.id, services.now().toISOString(), 30_000).ok,
+      true,
     );
     services.taskService.supplement(task.id, "use 50 instead", "inbox:k13-cancel");
     services.taskService.cancel(task.id);
@@ -768,12 +769,13 @@ describe("task and assignment coordination", () => {
       approverId: services.owner.id,
       conversationId: services.conversation.id,
     });
-    assert.ok(
+    assert.equal(
       services.actions.claimForExecution(
         action.id,
         services.now().toISOString(),
         30_000,
-      ),
+      ).ok,
+      true,
     );
 
     const revised = services.taskService.revise(task.id, { goal: "lamp v2" });
@@ -1096,7 +1098,7 @@ describe("approval and action execution", () => {
       services.now().toISOString(),
       30_000,
     );
-    assert.ok(claimedAction);
+    assert.equal(claimedAction.ok, true);
 
     services.taskService.cancel(task.id);
     assert.equal(services.tasks.get(task.id)?.status, "cancelling");

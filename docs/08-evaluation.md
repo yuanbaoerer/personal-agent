@@ -38,6 +38,8 @@ K13 与 K14 必须包含至少一个可控竞态复现测试；应用的锁、�
 
 **K13 实现状态（2026-11-17，E1）**：`pa_task_inputs` 保存不可变输入（同一 `task_id + source_inbox_id` 幂等）；`pa_assignments` 记录 `dispatched_input_seq` 与 `consumed_input_seq`；任何旧报告（含 `failed`）在当前最新 seq 高于派工快照时都不能推进任务，而是回到 `queued` 重新派工，也不处理其 `proposedActions`。`coordinator.test.ts` 覆盖补充与旧报告交错、两个并发任务隔离、重复平台消息、旧 attempt 重放不抢占新 Assignment、取消中任务不被旧报告复活、崩溃窗口补派工、补充轮次不计入重试上限、revise 后旧报告失权且输入保留。真实模型 G2、平台投递和崩溃窗口仍 pending，不能据此把 K13 标为 E3 通过。
 
+**K14 实现状态（2026-11-17，E1）**：`ActionRepository.claimForExecution` 在同一事务内重核 owner/conversation/taskRevision、Task 非终态/非 cancelling、Mandate 含工具；失败则 approved → superseded、消费一次性审批并审计，不调用工具。审批入口同样重核；同一审批重复 claim 只有一次成功（`action_executing`）；approved Action 错过执行窗口时转为 expired 并消费审批；外部已发仍走 unknown → reconcile。真实写工具、平台审批点击与故障注入 pending，不能据此把 K14 标为 E3 通过。
+
 ## 3. 40 场景结构
 
 保留原有 40 场景的 8+10+10+8+4 分类：渠道/投递 8、任务协作 10、审批/权限 10、中断/恢复 8、记忆/提醒 4。**K13 和 K14 是这 40 场景之内的附加契约标签**，不要为了增项把总数改成 42，也不能通过删旧场景提成功率。

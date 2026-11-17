@@ -19,7 +19,7 @@
 | Node 进程内 pi-durable 模型运行时（`apps/agent/src/runtime/node-pi.ts`，未配置 key 时显式失败） | 真实模型 E3 证据、SIGKILL 恢复演练 |
 | 单一组合根 `apps/agent/src/app.ts`，Node 与 DO 只注入适配层 | — |
 | 不可变 TaskInput（`pa_task_inputs`，按 task 单调 seq，同一 inbox 幂等）与 Assignment 输入屏障；旧 Worker 报告不能绕过补充输入 | 真实模型 G2、SIGKILL 中断窗口 |
-| 124 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
+| 129 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
 
 ## 2. 下一步待办
 
@@ -67,9 +67,24 @@ N01–N13 是历史工作分解，后续执行以 PA Issue 为准；本节记录
 | 完成屏障 | 任何旧报告（含 `failed`）都先比较当前最新 seq；存在未派发输入时任务回到 `queued` 并重新派工，旧报告不能标记 `succeeded`，也不处理其 `proposedActions` | K13 测试：旧 ready 被拒、新 Assignment 完成后才 `succeeded` 且 `consumedInputSeq=1` |
 | 并发隔离 | 补充一个任务不影响另一个运行中的任务完成 | K13 测试中的第二任务独立 `succeeded` |
 | 重放与取消/修订 | 旧 attempt 的报告不得推进任务，不抢占已报告的新 Assignment，不复活 `cancelling` 任务；崩溃窗口由同一消息重试补齐派工；每个输入额外授予一轮执行（含 `working`/租约路径），不按重试上限误杀；revise 后输入保留且旧报告失权；正常 `working` 报告仍重新排队 | 七个回归测试（replay / newer attempt / cancelling / crash window / attempt budget / stale failed / revise）与 working 队列测试 |
-| 聊天语义 | 补充回复带输入序号；running 时明确“旧结果不会生效，结束后按最新输入重新执行”；waiting_user 立即重新排队；`/tasks` 显示待消费输入数 | `router.ts`；124 个测试 |
+| 聊天语义 | 补充回复带输入序号；running 时明确“旧结果不会生效，结束后按最新输入重新执行”；waiting_user 立即重新排队；`/tasks` 显示待消费输入数 | `router.ts`；129 个测试 |
 
 边界：以上为 E1 确定性证据；真实模型 G2、真实飞书消息与 SIGKILL 恢复仍未验证。PA-02 保持 OPEN，直到 G2 与故障注入证据补齐。
+
+### 2.3 2026-11-17 实施进展（PA-03 / K14）
+
+当前优先级：**PA-03（本轮实现）→ PA-04 故障注入（可与 PA-05/06 并行）→ PA-01 的 E3 证据（需真实凭据）**。PA-03 的真实外部写工具仍受“未接 GitHub 写工具”限制，E1 使用 mock 灯。
+
+| 内容 | 实现 | 证据 |
+| --- | --- | --- |
+| 执行前事务化重核 | `claimForExecution` 在同一事务内调用授权守卫：Action owner/conversation/taskRevision 与 Task 一致；Task 非终态/非 cancelling；Mandate 仍包含工具 | `actions.test.ts` “execution-time authorization (K14)” |
+| 撤销旧审批 | 守卫失败时 approved → superseded、消费一次性审批、记录 `action.execution_rejected`，不调用工具 | “does not execute ... after the task ended/cancellation” |
+| 审批入口重核 | 任务已结束/取消/修订时拒绝批准并把 proposed Action 置为 superseded，避免旧审批卡片重新授权 | “rejects approval when the task already ended” |
+| 重复领取 | 同一审批只有一次 approved → executing；第二次 claim 返回 `action_executing` | “allows only one claim for the same approval” |
+| 执行窗口 | approved Action 超过 expiresAt 时在 claim 中置为 expired、消费审批、通知并 settle，不调用工具 | “expires an approved action that misses its execution window” |
+| 外部已发 | 保留 unknown → reconcile；重试前仍重核授权，不盲目重复写 | 既有 reconcile 边界测试 |
+
+边界：以上为 E1；真实外部写、真实平台审批点击与崩溃注入未验证。PA-03 保持 OPEN，直到真实写工具和故障注入证据补齐。
 
 ## 3. 环境与密钥
 

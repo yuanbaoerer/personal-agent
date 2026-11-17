@@ -148,7 +148,9 @@ ID 是工作流标识；GitHub Issue 编号以实际创建结果为准。实施�
 
 **2026-11-14 状态**：PA-01 已合并首批实现（`cc1831b`、`f77c74d`、`1714c52`）：Node 进程内 Pi 运行时、单一组合根、Pi/`pa_*` 分库、ADR-0001 临时方向。真实模型飞书 E3 与 SIGKILL E4 证据仍缺，PA-01 保持 OPEN。
 
-**2026-11-17 状态**：PA-02 的实现已落地（不可变 TaskInput、Assignment `dispatched/consumed_input_seq`、旧报告输入屏障含 `failed`），E1 覆盖 K13、同一消息幂等、崩溃窗口补派工与补充轮次预算；真实模型 G2 与故障注入仍待 PA-04，PA-02 保持 OPEN。当前执行顺序：PA-03 → PA-01 证据（凭据就绪时）→ PA-04/05/06；PA-03 与 PA-02 可并行评审。详见 [06 · 待办 §2.2](06-next-steps-and-runbook.md)。
+**2026-11-17 状态**：PA-02 的实现已落地（不可变 TaskInput、Assignment `dispatched/consumed_input_seq`、旧报告输入屏障含 `failed`），E1 覆盖 K13、同一消息幂等、崩溃窗口补派工与补充轮次预算；真实模型 G2 与故障注入仍待 PA-04，PA-02 保持 OPEN。
+
+PA-03 的执行前授权重核已落地（E1）：claim 在同一事务内校验 Task 状态/revision/Mandate，旧审批撤销并消费，审批入口同样重核；真实写工具与平台审批点击仍未验证，PA-03 保持 OPEN。当前执行顺序：PA-04 故障注入（可与 PA-05/06 并行）→ PA-01 的 E3 证据（凭据就绪时）。详见 [06 · 待办 §2.3](06-next-steps-and-runbook.md)。
 
 ## 9. 风险、监控指标与停止规则
 

@@ -1,7 +1,7 @@
 # 02 · 架构与可靠性设计
 
 > **2026-11-14 架构续篇**：原有状态机与授权设计继续保留。运行中补充输入的 input_seq/消费序号、执行前授权、非阻塞调度、按任务类型完成验证和组件化部署，详见 [07 · 长期路线图](07-long-term-roadmap.md) 及 [08 · 评测契约 K13/K14](08-evaluation.md)。Node/Cloudflare 唯一默认宿主尚未决定，见 [ADR-0001](adr/0001-runtime-hosting.md)。
-> **2026-11-17**：运行中补充输入已按 K13 落地（不可变 `pa_task_inputs`、Assignment 输入序号与旧报告屏障；含 `failed` 报告）；K14 执行前授权仍未实现。
+> **2026-11-17**：运行中补充输入已按 K13 落地（不可变 `pa_task_inputs`、Assignment 输入序号与旧报告屏障；含 `failed` 报告）；K14 执行前授权已按 PA-03 落地（E1），真实写工具与平台审批点击仍未验证。
 
 
 > 2026-11-09 修订。本文是目标设计；Week 1 的本地入口/投递骨架与 Week 2–4 的独立代码（Router/Worker、Task/Assignment、审批/执行、提醒、显式记忆、DO `pa_*`）已实现并通过本地确定性测试（见 [README](../README.md)）。真实飞书 p2p 回调与主动回复已通过本地 Node（webhook + 长连接）验证；Cloudflare Worker 已真实部署；飞书侧稳定入口与对象驱逐恢复仍未验证。产品范围以 [00](00-product-plan.md) 为准，交付门槛以 [04](04-build-plan.md) 为准，术语以 [CONTEXT.md](../CONTEXT.md) 为准。
@@ -215,6 +215,8 @@ stateDiagram-v2
 Action 使用不可变的工具名、规范化参数、argsHash、owner、conversation、taskRevision、fencingToken、expiresAt 和 nonce。改参数必须新建 Action，不能复用旧审批。
 
 审批卡片仅携带不透明引用，服务端校验平台来源、点击者身份、绑定对话、动作参数与版本。approved → executing、一次性审批消费和执行待办创建在同一事务内完成。执行器发送前再校验当前授权；模型拿不到审批凭据。
+
+执行前重核（PA-03）在 claim 的同一事务内重新读取 `pa_tasks`：owner、conversation、taskRevision 必须与 Action 一致，Task 不得是 `cancelled`/`cancelling`/`succeeded`/`failed`，且当前 Mandate 仍包含该工具。校验失败或审批已过期时，Action 转为 superseded/expired、消费一次性审批并记录 `action.execution_rejected`，绝不调用 `tool.execute`。审批入口也做同一重核，防止任务结束后再用旧审批卡片批准；执行中的外部请求仍按 unknown → reconcile 处理，不假装物理撤销。
 
 纯服务端审批先依赖平台验签、主人身份和持久状态，不把自建 OAuth / Passkey 作为首版任务。本地命令需要签名和重放保护，见 §8。
 

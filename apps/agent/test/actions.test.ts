@@ -19,8 +19,8 @@ interface Fixture {
   lamp: MockLampTool;
 }
 
-function setup(options: { maxExecutionAttempts?: number } = {}): Fixture {
-  const services = createServices();
+function setup(options: { maxExecutionAttempts?: number; now?: () => Date } = {}): Fixture {
+  const services = createServices({ now: options.now });
   const { registry, lamp } = createDefaultToolRegistry(services.store, services.now);
   const actionService = new ActionService({
     store: services.store,
@@ -87,8 +87,9 @@ function approve(fixture: Fixture, action: ActionRecord): void {
 /** Marks the action's execution outcome unknown without running the dispatcher. */
 function interrupt(fixture: Fixture, action: ActionRecord): void {
   const now = fixture.services.now().toISOString();
-  assert.ok(
-    fixture.services.actions.claimForExecution(action.id, now, 30_000),
+  assert.equal(
+    fixture.services.actions.claimForExecution(action.id, now, 30_000).ok,
+    true,
     "action should be claimable after approval",
   );
   assert.equal(fixture.services.actions.markUnknown(action.id, "simulated crash", now), true);
@@ -155,6 +156,137 @@ describe("action reconciliation bounds", () => {
   });
 });
 
+describe("execution-time authorization (K14)", () => {
+  it("does not execute an approved action after the task ended", async () => {
+    const fixture = setup();
+    const { task, action } = propose(fixture);
+    approve(fixture, action);
+    fixture.services.tasks.updateTask(task.id, task.revision, {
+      status: "failed",
+      updatedAt: fixture.services.now().toISOString(),
+    });
+
+    await fixture.services.effectDispatcher.drain(50);
+
+    assert.equal(fixture.services.actions.get(action.id)?.status, "superseded");
+    assert.equal(fixture.lamp.getState().brightness, 0);
+    assert.equal(
+      fixture.services.store.db.all(
+        "SELECT id FROM pa_audit WHERE event = ? AND subject_id = ?",
+        "action.execution_rejected",
+        action.id,
+      ).length,
+      1,
+    );
+  });
+
+  it("does not execute an approved action after cancellation", async () => {
+    const fixture = setup();
+    const { task, action } = propose(fixture);
+    approve(fixture, action);
+    // Set the terminal state directly so the approved row must be revoked by
+    // the claim guard, not by TaskService.cancel()'s supersedeForTask().
+    fixture.services.tasks.updateTask(task.id, task.revision, {
+      status: "cancelled",
+      updatedAt: fixture.services.now().toISOString(),
+    });
+    assert.equal(fixture.services.tasks.get(task.id)?.status, "cancelled");
+
+    await fixture.services.effectDispatcher.drain(50);
+
+    assert.equal(fixture.services.actions.get(action.id)?.status, "superseded");
+    assert.equal(fixture.lamp.getState().brightness, 0);
+    assert.equal(
+      fixture.services.store.db.all(
+        "SELECT id FROM pa_audit WHERE event = ? AND subject_id = ?",
+        "action.execution_rejected",
+        action.id,
+      ).length,
+      1,
+    );
+  });
+
+  it("rejects approval when the task already ended", () => {
+    const fixture = setup();
+    const { task, action } = propose(fixture);
+    fixture.services.tasks.updateTask(task.id, task.revision, {
+      status: "failed",
+      updatedAt: fixture.services.now().toISOString(),
+    });
+
+    const result = fixture.actionService.approve({
+      actionId: action.id,
+      nonce: action.nonce,
+      approverId: fixture.services.owner.id,
+      conversationId: fixture.services.conversation.id,
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, "task_not_executable");
+    assert.equal(fixture.services.actions.get(action.id)?.status, "superseded");
+  });
+
+  it("expires an approved action that misses its execution window", async () => {
+    let current = new Date("2026-01-01T00:00:00.000Z");
+    const fixture = setup({ now: () => current });
+    const { action } = propose(fixture);
+    approve(fixture, action);
+    current = new Date(current.getTime() + 11 * 60_000);
+
+    await fixture.services.effectDispatcher.drain(50);
+
+    assert.equal(fixture.services.actions.get(action.id)?.status, "expired");
+    assert.equal(fixture.lamp.getState().brightness, 0);
+    const approval = fixture.services.store.db.all<{ consumed_at: string | null }>(
+      "SELECT consumed_at FROM pa_approvals WHERE action_id = ?",
+      action.id,
+    )[0];
+    assert.equal(approval?.consumed_at, current.toISOString());
+
+    const audits = () =>
+      fixture.services.store.db.all(
+        "SELECT id FROM pa_audit WHERE event = ? AND subject_id = ?",
+        "action.execution_rejected",
+        action.id,
+      ).length;
+    assert.equal(audits(), 1);
+
+    // A replayed execute effect sees the closed row, settles the task again
+    // (idempotent) and must not re-audit or send another notice.
+    const replay = await fixture.actionService.handleExecute({ actionId: action.id });
+    assert.equal(replay.status, "done");
+    assert.equal(audits(), 1);
+    assert.equal(
+      fixture.services.store.db.all(
+        "SELECT id FROM pa_outbox WHERE business_key = ?",
+        `action:${action.id}:expired`,
+      ).length,
+      1,
+    );
+  });
+
+  it("allows only one claim for the same approval", () => {
+    const fixture = setup();
+    const { action } = propose(fixture);
+    approve(fixture, action);
+    const now = fixture.services.now().toISOString();
+
+    const first = fixture.services.actions.claimForExecution(action.id, now, 30_000);
+    const second = fixture.services.actions.claimForExecution(action.id, now, 30_000);
+
+    assert.equal(first.ok, true);
+    assert.equal(second.ok, false);
+    assert.equal(second.ok ? "" : second.reason, "action_executing");
+    assert.equal(
+      fixture.services.store.db.all(
+        "SELECT consumed_at FROM pa_approvals WHERE action_id = ?",
+        action.id,
+      )[0]?.consumed_at,
+      now,
+    );
+  });
+});
+
 describe("action approval atomicity and binding", () => {
   it("rolls back the approval when the after-approve callback throws", () => {
     const fixture = setup();
@@ -187,7 +319,7 @@ describe("action approval atomicity and binding", () => {
         .length,
       0,
     );
-    assert.equal(services.actions.claimForExecution(action.id, now, 30_000), undefined);
+    assert.equal(services.actions.claimForExecution(action.id, now, 30_000).ok, false);
   });
 
   it("rejects a mismatched expected args hash or task revision", () => {

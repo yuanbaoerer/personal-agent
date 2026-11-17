@@ -107,6 +107,16 @@ export type ApprovalResult =
   | { ok: true; action: ActionRecord }
   | { ok: false; reason: string };
 
+export type ClaimExecutionResult =
+  | { ok: true; action: ActionRecord }
+  | {
+      ok: false;
+      reason: string;
+      action?: ActionRecord;
+      /** True when the claim itself revoked the approved action. */
+      revoked?: boolean;
+    };
+
 export class ActionRepository {
   readonly #db: Db;
 
@@ -369,17 +379,63 @@ export class ActionRepository {
 
   /**
    * Consume the one-time approval and move approved -> executing in the same
-   * transaction that leases the action for the executor.
+   * transaction that leases the action for the executor. The optional
+   * `authorize` guard runs inside that transaction and must re-check the
+   * current Task before the external call is allowed.
    */
-  claimForExecution(actionId: string, now: string, leaseMs: number): ActionRecord | undefined {
+  claimForExecution(
+    actionId: string,
+    now: string,
+    leaseMs: number,
+    authorize?: (action: ActionRecord) => string | undefined,
+  ): ClaimExecutionResult {
     return this.#db.transaction(() => {
       const action = this.get(actionId);
-      if (
-        action === undefined ||
-        action.status !== "approved" ||
-        action.expiresAt <= now
-      ) {
-        return undefined;
+      if (action === undefined) {
+        return { ok: false, reason: "action_not_found" };
+      }
+      if (action.status !== "approved") {
+        // A replayed claim must still be able to settle its task (for example
+        // after a crash between the first claim's commit and onSettled), but
+        // it must not re-audit or re-notify an already-closed action.
+        return {
+          ok: false,
+          reason: `action_${action.status}`,
+          action: action.status === "expired" ? action : undefined,
+        };
+      }
+      if (action.expiresAt <= now) {
+        // An approved action that misses its execution window must not stay
+        // approved forever; close it and its one-time approval together.
+        this.#db.run(
+          `UPDATE pa_actions
+           SET status = 'expired', lease_until = NULL, last_error = ?, updated_at = ?
+           WHERE id = ? AND status = 'approved'`,
+          "action expired before execution",
+          now,
+          actionId,
+        );
+        this.#consumeApproval(actionId, now);
+        return {
+          ok: false,
+          reason: "action_expired",
+          action: this.get(actionId),
+          revoked: true,
+        };
+      }
+
+      const reason = authorize?.(action);
+      if (reason !== undefined) {
+        // The approval is valid but its authority is gone. Revoke the action
+        // and close the approval in the same transaction as the claim.
+        this.supersede(actionId, reason, now);
+        this.#consumeApproval(actionId, now);
+        return {
+          ok: false,
+          reason,
+          action: this.get(actionId),
+          revoked: true,
+        };
       }
 
       const leaseUntil = new Date(new Date(now).getTime() + leaseMs).toISOString();
@@ -394,18 +450,35 @@ export class ActionRepository {
         now,
       );
       if (changes === 0) {
-        return undefined;
+        return { ok: false, reason: "action_claim_conflict" };
       }
 
+      this.#consumeApproval(actionId, now);
+      return { ok: true, action: this.get(actionId) as ActionRecord };
+    });
+  }
+
+  #consumeApproval(actionId: string, now: string): void {
+    this.#db.run(
+      `UPDATE pa_approvals SET consumed_at = ?
+       WHERE action_id = ? AND consumed_at IS NULL`,
+      now,
+      actionId,
+    );
+  }
+
+  /** Revoke an action whose approval no longer grants execution authority. */
+  supersede(actionId: string, reason: string, now: string): boolean {
+    return (
       this.#db.run(
-        `UPDATE pa_approvals SET consumed_at = ?
-         WHERE action_id = ? AND consumed_at IS NULL`,
+        `UPDATE pa_actions
+         SET status = 'superseded', lease_until = NULL, last_error = ?, updated_at = ?
+         WHERE id = ? AND status IN ('proposed', 'approved')`,
+        reason,
         now,
         actionId,
-      );
-
-      return this.get(actionId);
-    });
+      ) > 0
+    );
   }
 
   markExecutingExpired(actionId: string, now: string, reason: string): boolean {
