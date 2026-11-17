@@ -16,6 +16,10 @@ export interface AppConfig {
   /** pi_* tables live in their own SQLite file; see docs/adr/0001. */
   piDatabasePath: string;
   model: ModelConfig;
+  github: {
+    token?: string;
+    allowedRepos: string[];
+  };
   ownerOpenId?: string;
   eventMode: FeishuEventMode;
   feishu: FeishuConfig;
@@ -59,6 +63,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     model: {
       modelId: read("OPENCODE_MODEL") ?? "deepseek-v4.1-flash",
       apiKey: read("OPENCODE_API_KEY"),
+    },
+    github: {
+      token: read("GITHUB_TOKEN"),
+      allowedRepos: (read("GITHUB_ALLOWED_REPOS") ?? "")
+        .split(",")
+        .map((repo) => repo.trim())
+        .filter((repo) => repo.length > 0),
     },
     ownerOpenId: read("OWNER_FEISHU_OPEN_ID"),
     eventMode: eventModeRaw,

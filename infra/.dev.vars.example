@@ -13,3 +13,8 @@ OWNER_FEISHU_OPEN_ID=
 
 # Protects /ask and /admin/*. Without it those routes return 503.
 ADMIN_TOKEN=
+
+# Optional read-only GitHub connector. Both are required for the tool to be
+# registered; repos are comma-separated owner/name entries.
+GITHUB_TOKEN=
+GITHUB_ALLOWED_REPOS=

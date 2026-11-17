@@ -153,6 +153,25 @@ export class ActionService {
       return undefined;
     }
 
+    if (
+      tool.resource !== undefined &&
+      !task.mandate.resources.includes(tool.resource)
+    ) {
+      this.#store.recordAudit({
+        event: "action.proposal_rejected",
+        subjectType: "task",
+        subjectId: task.id,
+        after: {
+          reason: "resource_outside_mandate",
+          tool: tool.name,
+          resource: tool.resource,
+        },
+        traceId: `task:${task.id}`,
+        occurredAt: now,
+      });
+      return undefined;
+    }
+
     try {
       return { tool, args: tool.canonicalize(proposed.args) };
     } catch (error) {
@@ -625,6 +644,13 @@ export class ActionService {
     }
     if (!task.mandate.tools.includes(action.tool)) {
       return "tool_outside_mandate";
+    }
+    const tool = this.#tools.get(action.tool);
+    if (
+      tool?.resource !== undefined &&
+      !task.mandate.resources.includes(tool.resource)
+    ) {
+      return "resource_outside_mandate";
     }
     return undefined;
   }

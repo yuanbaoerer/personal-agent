@@ -48,6 +48,8 @@ K13 与 K14 必须包含至少一个可控竞态复现测试；应用的锁、�
 
 **确认与范围（PA-10 部分，E1）**：模型解读的 `save_memory`/`remind` 进入最长 10 分钟确认项（提醒以 dueAt 为上限；owner + source inbox 唯一），`/确认` 后应用；`/取消确认`、过期、跨 owner 均不写入；显式 `/remember`、`/remind` 保持即时。项目范围隔离与 Worker 记忆注入仍 pending。
 
+**只读 GitHub（PA-07 部分，E1）**：`github.read` 仅 GET，repo 精确白名单、Bearer token、拒重定向、8s 超时、单次 ≤20 项/≤200KB；返回 repo/commits/open issues/open pulls/PR 状态与来源 URL；工具名与 `github` Mandate resource 双重校验；401/403/429（含 retry-after）/404/timeout 可区分。真实 token/仓库 G1 与只读自动审批策略仍 pending。
+
 ## 3. 40 场景结构
 
 保留原有 40 场景的 8+10+10+8+4 分类：渠道/投递 8、任务协作 10、审批/权限 10、中断/恢复 8、记忆/提醒 4。**K13 和 K14 是这 40 场景之内的附加契约标签**，不要为了增项把总数改成 42，也不能通过删旧场景提成功率。

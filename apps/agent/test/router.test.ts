@@ -79,6 +79,26 @@ describe("router decision parsing", () => {
     assert.deepEqual(decision?.task?.mandate?.tools, ["lamp.set_brightness"]);
   });
 
+  it("preserves the read-only github capability in a task mandate", () => {
+    const decision = parseRouterDecision(
+      JSON.stringify({
+        action: "create_task",
+        text: "ok",
+        task: {
+          goal: "summarize PRs",
+          completionCriteria: "with source URLs",
+          mandate: {
+            resources: ["chat", "github", "shell"],
+            tools: ["github.read", "github.write"],
+          },
+        },
+      }),
+    );
+
+    assert.deepEqual(decision?.task?.mandate?.resources, ["chat", "github"]);
+    assert.deepEqual(decision?.task?.mandate?.tools, ["github.read"]);
+  });
+
   it("parses a supplement_task decision with its task id and answer", () => {
     const decision = parseRouterDecision(
       '{"action":"supplement_task","taskId":"aaaaaaaa-0000-4000-8000-000000000001","text":"明天下午三点"}',

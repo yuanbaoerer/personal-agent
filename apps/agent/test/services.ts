@@ -1,5 +1,10 @@
 import { ActionService } from "../src/actions/service.ts";
-import { createDefaultToolRegistry, type MockLampTool } from "../src/actions/tools.ts";
+import {
+  createDefaultToolRegistry,
+  type MockLampTool,
+  type ToolRegistry,
+} from "../src/actions/tools.ts";
+import type { GitHubReadConfig } from "../src/actions/github.ts";
 import { Router, StaticRouterModel } from "../src/coordinator/router.ts";
 import { IngressService } from "../src/coordinator/ingress.ts";
 import { TaskService } from "../src/coordinator/tasks.ts";
@@ -30,6 +35,7 @@ export interface TestServices {
   confirmations: ConfirmationRepository;
   runtime: FakeRuntime;
   lamp: MockLampTool;
+  tools: ToolRegistry;
   taskService: TaskService;
   actionService: ActionService;
   reminders: ReminderService;
@@ -51,6 +57,7 @@ export function createServices(options: {
   maxTaskAttempts?: number;
   actionTtlMs?: number;
   model?: StaticRouterModel;
+  github?: GitHubReadConfig;
 } = {}): TestServices {
   const now = options.now ?? (() => new Date());
   const store = options.store ?? createStore();
@@ -78,7 +85,7 @@ export function createServices(options: {
   const schedules = new ScheduleRepository(db);
   const memories = new MemoryRepository(db);
   const confirmations = new ConfirmationRepository(db);
-  const { registry, lamp } = createDefaultToolRegistry(store, now);
+  const { registry, lamp } = createDefaultToolRegistry(store, now, options.github);
   const runtime = new FakeRuntime();
 
   const taskService = new TaskService({
@@ -145,6 +152,7 @@ export function createServices(options: {
     confirmations,
     runtime,
     lamp,
+    tools: registry,
     taskService,
     actionService,
     reminders,

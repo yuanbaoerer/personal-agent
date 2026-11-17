@@ -23,7 +23,8 @@
 | 非阻塞调度：Assignment/Router 短切片轮询，两个 Worker 等待时普通 effect 与 status/cancel 不被长等待拖住 | 真实模型长生成、平台延迟、物理并发压测 |
 | Outbox traceId + `/诊断`/`/admin/diagnostics` 安全诊断（无正文/goal/args） | token/费用、预算、用量报表、真实 G2 链路 |
 | 模型解读记忆/提醒的确认项（最长 10 分钟，提醒以 dueAt 为上限；owner 校验、取消/过期不写入）；显式命令即时 | 项目范围隔离、Worker 记忆注入、真实误触发负例 |
-| 149 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
+| GitHub 只读连接器：repo 白名单、GET-only、超时/大小/分页上限、资源 scope、来源 URL、可区分错误 | 真实 token/仓库 G1、只读自动审批策略 |
+| 159 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
 
 ## 2. 下一步待办
 
@@ -150,6 +151,19 @@ npm run test:recovery   # apps/agent/test/recovery.test.ts
 
 边界：E1；真实模型误触发、项目隔离和记忆注入未验证，PA-10 保持 OPEN。
 
+### 2.8 2026-11-18 实施进展（PA-07 只读 GitHub，E1 部分）
+
+| 内容 | 实现 | 证据 |
+| --- | --- | --- |
+| 只读连接器 | `github.read` 仅 GET；repo 精确白名单、Bearer token、拒重定向、8s 超时、≤20 项、≤200KB | `github.test.ts` 认证/白名单/分页/超时 |
+| 查询能力 | repo、commits、open issues、open pulls、PR 状态；每项返回来源 URL | 同上；fixture 断言 source URL |
+| 授权范围 | 工具名与 `github` Mandate resource 双重校验；提案/执行入口都重核 | “requires the github Mandate resource…” |
+| 错误 | 401 / 403/429（含 rate limit 与 retry-after）/ 404 / timeout 可区分；token 不入错误 | 错误分类测试 |
+| 配置 | `GITHUB_TOKEN` + `GITHUB_ALLOWED_REPOS`；任一缺失不注册工具 | “absent from the registry…” |
+| 待定 | 只读请求是否自动批准（当前仍逐次审批）、token 类型（PAT/App）、白名单仓库、真实 G1 | 需用户决策/凭据 |
+
+边界：E1（fake GitHub API）；真实 GitHub/Feishu G1 未验证，PA-07 保持 OPEN。
+
 ## 3. 环境与密钥
 
 ```bash
@@ -168,6 +182,7 @@ cp infra/.dev.vars.example infra/.dev.vars  # 本地 workerd
 | `OWNER_FEISHU_OPEN_ID` | 显式主人绑定；禁止昵称推断 |
 | `OPENCODE_API_KEY` | 本地模型；未设置时模型任务显式失败。DO 部署时用 Worker secret |
 | `OPENCODE_MODEL` | 本地模型 id，默认 `deepseek-v4.1-flash`；provider 固定 `opencode-go` |
+| `GITHUB_TOKEN` / `GITHUB_ALLOWED_REPOS` | 只读 GitHub 连接器；两者都需配置，仓库为逗号分隔 `owner/name` 精确白名单；不配置则不注册工具 |
 | `DATABASE_PATH` | 本地 Node SQLite（`pa_*` 应用状态），默认 `./data/agent.sqlite` |
 | `PI_DATABASE_PATH` | Pi 会话库（`pi_*`），默认 `./data/pi.sqlite`；与上一项成对备份 |
 | `OUTBOX_*` | 租约、重试次数、退避 |

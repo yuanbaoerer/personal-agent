@@ -18,8 +18,15 @@ export class RouterPendingError extends Error {
   }
 }
 
-const ALLOWED_RESOURCES: Record<string, true> = { chat: true, weather: true };
-const ALLOWED_TOOLS: Record<string, true> = { "lamp.set_brightness": true };
+const ALLOWED_RESOURCES: Record<string, true> = {
+  chat: true,
+  weather: true,
+  github: true,
+};
+const ALLOWED_TOOLS: Record<string, true> = {
+  "lamp.set_brightness": true,
+  "github.read": true,
+};
 
 /**
  * Model-backed Router. It uses one long-lived Pi session; each inbox gets a
@@ -123,6 +130,7 @@ export function routerPrompt(input: RouterInput): string {
     "- Use revise_task only when the owner explicitly asks to change an existing task's goal, completion criteria, mandate, or priority.",
     "- Use save_memory only when the owner explicitly asks you to remember something.",
     "- Use remind only when the owner explicitly asks for a reminder.",
+    "- For read-only GitHub requests, set mandate.resources to include \"github\" and mandate.tools to [\"github.read\"]; do not promise write access.",
     "- Never infer personal facts, preferences, or plans; only remember what the owner explicitly asks to remember.",
     "- If it is unclear whether the owner wants something remembered, a reminder set, or just a reply, reply and ask for confirmation.",
     `Owner message: ${input.text}`,

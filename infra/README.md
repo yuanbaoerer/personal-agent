@@ -61,6 +61,8 @@ npx wrangler deployments list --config infra/wrangler.jsonc
 ```bash
 npx wrangler secret put OPENCODE_API_KEY --config infra/wrangler.jsonc
 npx wrangler secret put ADMIN_TOKEN --config infra/wrangler.jsonc
+npx wrangler secret put GITHUB_TOKEN --config infra/wrangler.jsonc
+npx wrangler secret put GITHUB_ALLOWED_REPOS --config infra/wrangler.jsonc
 ```
 
 ## DO 语义
@@ -85,6 +87,8 @@ npx wrangler secret put FEISHU_VERIFICATION_TOKEN --config infra/wrangler.jsonc
 npx wrangler secret put FEISHU_ENCRYPT_KEY --config infra/wrangler.jsonc
 npx wrangler secret put OWNER_FEISHU_OPEN_ID --config infra/wrangler.jsonc
 npx wrangler secret put ADMIN_TOKEN --config infra/wrangler.jsonc
+npx wrangler secret put GITHUB_TOKEN --config infra/wrangler.jsonc
+npx wrangler secret put GITHUB_ALLOWED_REPOS --config infra/wrangler.jsonc
 ```
 
 `ADMIN_TOKEN` 保护 `/ask` 和 `/admin/*`；没有它这些入口返回 503。`OPENCODE_API_KEY` 来自你的 omp 登录；如果账号或密钥轮换，需要同步更新 `.env`、`infra/.dev.vars` 和 Worker secret。

@@ -25,6 +25,8 @@ import { openStoreFromDb, type Store } from "../../apps/agent/src/storage/store.
 interface Env {
   OPENCODE_API_KEY: string;
   ADMIN_TOKEN?: string;
+  GITHUB_TOKEN?: string;
+  GITHUB_ALLOWED_REPOS?: string;
   FEISHU_APP_ID?: string;
   FEISHU_APP_SECRET?: string;
   FEISHU_VERIFICATION_TOKEN?: string;
@@ -164,6 +166,13 @@ export class Assistant extends DurableObject<Env> {
       runtime,
       wake,
       reminderTimer: timer,
+      github: {
+        token: this.env.GITHUB_TOKEN,
+        allowedRepos: (this.env.GITHUB_ALLOWED_REPOS ?? "")
+          .split(",")
+          .map((repo) => repo.trim())
+          .filter((repo) => repo.length > 0),
+      },
       model: new PiRouterModel(store, runtime),
     });
 

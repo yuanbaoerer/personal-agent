@@ -126,6 +126,7 @@ async function main(): Promise<void> {
     store,
     runtime: local.runtime,
     wake: noopWake,
+    github: config.github,
     // A keyless process must not persist a placeholder session id: the next
     // run with a model key would inherit an id Pi cannot resolve.
     model:

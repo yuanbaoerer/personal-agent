@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 
+import { GitHubReadTool, type GitHubReadConfig } from "./github.ts";
 import type { Store } from "../storage/store.ts";
 
 export class ToolRejectedError extends Error {
@@ -29,6 +30,8 @@ export interface ToolVerification {
 
 export interface ActionTool {
   readonly name: string;
+  /** Mandate resource required to use this tool, if any. */
+  readonly resource?: string;
   canonicalize(args: Record<string, unknown>): Record<string, unknown>;
   execute(args: Record<string, unknown>): Promise<ToolExecution>;
   verify(args: Record<string, unknown>): Promise<ToolVerification>;
@@ -164,12 +167,24 @@ export class MockLampTool implements ActionTool {
   }
 }
 
-export function createDefaultToolRegistry(store: Store, now?: () => Date): {
+export function createDefaultToolRegistry(
+  store: Store,
+  now?: () => Date,
+  github?: GitHubReadConfig,
+): {
   registry: ToolRegistry;
   lamp: MockLampTool;
 } {
   const registry = new ToolRegistry();
   const lamp = new MockLampTool(store, now);
   registry.register(lamp);
+  if (
+    github !== undefined &&
+    github.token !== undefined &&
+    github.token.trim().length > 0 &&
+    github.allowedRepos.length > 0
+  ) {
+    registry.register(new GitHubReadTool(github));
+  }
   return { registry, lamp };
 }

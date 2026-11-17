@@ -158,7 +158,9 @@ PA-05 的非阻塞调度已落地 E1：Assignment 等待改为 100ms 切片 + 25
 
 PA-06 的可观测/诊断已落地 E1：Outbox traceId 贯通 inbox/task/schedule，`/诊断` 与 `/admin/diagnostics` 提供过期 Assignment、unknown Action、needs_manual 投递和安全处理提示，诊断不返回消息正文/goal/Action args/lastError；token/费用、预算与用量报表 pending，PA-06 保持 OPEN。
 
-PA-10 的确认与范围已落地 E1：模型解读的 `save_memory`/`remind` 先生成 10 分钟确认项，`/确认` 后应用，`/取消确认`、过期、跨 owner 均不写入；显式命令保持即时。项目范围隔离与 Worker 记忆注入 pending，PA-10 保持 OPEN。下一实施项为 PA-10 剩余范围/注入或 PA-07（需 GitHub 凭证与仓库白名单决策）。详见 [06 · 待办 §2.7](06-next-steps-and-runbook.md)。
+PA-10 的确认与范围已落地 E1：模型解读的 `save_memory`/`remind` 先生成 10 分钟确认项，`/确认` 后应用，`/取消确认`、过期、跨 owner 均不写入；显式命令保持即时。项目范围隔离与 Worker 记忆注入 pending，PA-10 保持 OPEN。
+
+PA-07 的只读 GitHub 连接器已落地 E1：`github.read` 仅 GET，repo 精确白名单、Bearer token、超时/大小/分项上限、拒重定向，返回来源 URL，并以工具名 + `github` resource 双重校验；真实 token/仓库 G1 与只读自动审批策略 pending，PA-07 保持 OPEN。下一实施项为 PA-07 真实 G1 或 PA-12（均需决策/凭据）。详见 [06 · 待办 §2.8](06-next-steps-and-runbook.md)。
 
 ## 9. 风险、监控指标与停止规则
 
