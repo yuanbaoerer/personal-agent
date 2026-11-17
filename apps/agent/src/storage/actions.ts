@@ -551,7 +551,7 @@ export class ActionRepository {
       this.#db.run(
         `UPDATE pa_actions
          SET status = 'unknown', lease_until = NULL, last_error = ?, updated_at = ?
-         WHERE id = ? AND status IN ('executing', 'unknown', 'reconciling')`,
+         WHERE id = ? AND status IN ('executing', 'reconciling')`,
         reason,
         now,
         actionId,
@@ -597,14 +597,17 @@ export class ActionRepository {
     );
   }
 
-  supersedeForTask(taskId: string, now: string): number {
-    return this.#db.run(
-      `UPDATE pa_actions
-       SET status = 'superseded', updated_at = ?
-       WHERE task_id = ? AND status IN ('proposed', 'approved')`,
-      now,
-      taskId,
-    );
+  supersedeForTask(taskId: string, now: string): ActionRecord[] {
+    return this.#db
+      .all<ActionRow>(
+        `UPDATE pa_actions
+         SET status = 'superseded', updated_at = ?
+         WHERE task_id = ? AND status IN ('proposed', 'approved')
+         RETURNING *`,
+        now,
+        taskId,
+      )
+      .map(mapAction);
   }
 
   expireProposed(actionId: string, now: string): boolean {

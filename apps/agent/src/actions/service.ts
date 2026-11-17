@@ -385,6 +385,7 @@ export class ActionService {
     const tool = this.#tools.get(action.tool);
     if (tool === undefined) {
       this.#actions.markFailed(action.id, `unknown tool ${action.tool}`, this.#now().toISOString());
+      this.#auditAction(action, "action.failed", { reason: "unknown_tool" });
       this.#reply(action, "failure", "动作失败：未知工具。", "failed");
       this.#onSettled(action.taskId);
       return { status: "done" };
@@ -392,12 +393,15 @@ export class ActionService {
 
     try {
       const result = await this.#runTool(tool, action.args);
-      this.#actions.markSucceeded(
+      const marked = this.#actions.markSucceeded(
         action.id,
         result.evidence,
         result.externalRef,
         this.#now().toISOString(),
       );
+      if (marked) {
+        this.#auditAction(action, "action.succeeded");
+      }
       this.#reply(action, "result", `动作已完成：${JSON.stringify(result.evidence)}`, "succeeded");
       this.#onSettled(action.taskId);
       return { status: "done" };
@@ -405,6 +409,7 @@ export class ActionService {
       const at = this.#now().toISOString();
       if (error instanceof ToolRejectedError) {
         this.#actions.markFailed(action.id, error.message, at);
+        this.#auditAction(action, "action.failed", { reason: error.message });
         this.#reply(action, "failure", `动作失败：${error.message}`, "failed");
         this.#onSettled(action.taskId);
         return { status: "done" };
@@ -414,7 +419,10 @@ export class ActionService {
         error instanceof ToolUnknownError
           ? error.message
           : `unexpected tool error: ${error instanceof Error ? error.message : String(error)}`;
-      this.#actions.markUnknown(action.id, reason, at);
+      const marked = this.#actions.markUnknown(action.id, reason, at);
+      if (marked) {
+        this.#auditAction(action, "action.unknown", { reason });
+      }
       this.#reply(
         action,
         "status",
@@ -444,6 +452,7 @@ export class ActionService {
     const tool = this.#tools.get(action.tool);
     if (tool === undefined) {
       this.#actions.markNeedsManual(action.id, `unknown tool ${action.tool}`, this.#now().toISOString());
+      this.#auditAction(action, "action.needs_manual", { reason: "unknown_tool" });
       this.#reply(action, "failure", "动作需要人工核对：工具不存在。", "needs_manual");
       this.#onSettled(action.taskId);
       return { status: "done" };
@@ -460,6 +469,9 @@ export class ActionService {
           `reconcile failed: ${error instanceof Error ? error.message : String(error)}`,
           this.#now().toISOString(),
         );
+        this.#auditAction(action, "action.needs_manual", {
+          reason: "reconcile_verify_failed",
+        });
         this.#reply(action, "failure", "动作需要人工核对。", "needs_manual");
         this.#onSettled(action.taskId);
         return { status: "done" };
@@ -472,12 +484,15 @@ export class ActionService {
     }
 
     if (verification.satisfied) {
-      this.#actions.markSucceeded(
+      const marked = this.#actions.markSucceeded(
         action.id,
         { ...verification.evidence, reconciled: true },
         undefined,
         this.#now().toISOString(),
       );
+      if (marked) {
+        this.#auditAction(action, "action.reconciled");
+      }
       this.#reply(
         action,
         "result",
@@ -494,6 +509,9 @@ export class ActionService {
         "tool does not declare verified replay; refusing to repeat the write",
         this.#now().toISOString(),
       );
+      this.#auditAction(action, "action.needs_manual", {
+        reason: "replay_policy_missing",
+      });
       this.#reply(
         action,
         "failure",
@@ -510,6 +528,9 @@ export class ActionService {
         "external state does not match and retry budget is exhausted",
         this.#now().toISOString(),
       );
+      this.#auditAction(action, "action.needs_manual", {
+        reason: "retry_budget_exhausted",
+      });
       this.#reply(
         action,
         "failure",
@@ -526,6 +547,11 @@ export class ActionService {
       const at = this.#now().toISOString();
       if (!this.#actions.markSuperseded(action.id, "action is no longer authorized", at)) {
         this.#actions.markNeedsManual(action.id, "action is no longer authorized", at);
+        this.#auditAction(action, "action.needs_manual", {
+          reason: "unauthorized",
+        });
+      } else {
+        this.#auditAction(action, "action.superseded", { reason: "unauthorized" });
       }
       this.#reply(
         action,
@@ -542,12 +568,15 @@ export class ActionService {
     // replayPolicy="verify" and its verify is reliable.
     try {
       const result = await this.#runTool(tool, action.args);
-      this.#actions.markSucceeded(
+      const marked = this.#actions.markSucceeded(
         action.id,
         { ...result.evidence, retried: true },
         result.externalRef,
         this.#now().toISOString(),
       );
+      if (marked) {
+        this.#auditAction(action, "action.reconciled", { retried: true });
+      }
       this.#reply(
         action,
         "result",
@@ -565,6 +594,9 @@ export class ActionService {
           `reconcile retry failed: ${reason}`,
           at,
         );
+        this.#auditAction(action, "action.needs_manual", {
+          reason: `reconcile_retry_failed: ${reason}`,
+        });
         this.#reply(
           action,
           "failure",
@@ -574,7 +606,12 @@ export class ActionService {
         this.#onSettled(action.taskId);
         return { status: "done" };
       }
-      this.#actions.markUnknown(action.id, reason, at);
+      const marked = this.#actions.markUnknown(action.id, reason, at);
+      if (marked) {
+        this.#auditAction(action, "action.unknown", {
+          reason: `reconcile_retry_failed: ${reason}`,
+        });
+      }
       // Retry this same effect so its attempt counter is the bound; enqueuing a
       // fresh reconcile would reset the count and loop forever.
       return {
@@ -590,6 +627,7 @@ export class ActionService {
 
     for (const action of this.#actions.listExpiredProposed(now)) {
       if (this.#actions.expireProposed(action.id, now)) {
+        this.#auditAction(action, "action.expired");
         this.#reply(action, "failure", "动作审批已过期。", "expired");
         this.#onSettled(action.taskId);
       }
@@ -597,6 +635,9 @@ export class ActionService {
 
     for (const action of this.#actions.listExpiredExecuting(now)) {
       if (this.#actions.markExecutingExpired(action.id, now, "execution lease expired")) {
+        this.#auditAction(action, "action.unknown", {
+          reason: "execution_lease_expired",
+        });
         this.#reply(action, "status", "动作执行中断，正在核对。", "unknown");
         this.#enqueueReconcile(action, now);
       }
@@ -674,8 +715,17 @@ export class ActionService {
   }
 
   async #runTool(tool: ActionTool, args: Record<string, unknown>) {
+    const queuedAt = this.#now().getTime();
     await this.#acquireToolSlot();
-    const timeoutMs = tool.timeoutMs ?? 15_000;
+    const waitMs = Math.max(0, this.#now().getTime() - queuedAt);
+    const remainingMs = this.#leaseMs - 1_000 - waitMs;
+    if (remainingMs <= 0) {
+      this.#releaseToolSlot();
+      throw tool.readOnly === true
+        ? new ToolRejectedError("tool queue wait exceeded the execution lease")
+        : new ToolUnknownError("tool queue wait exceeded the execution lease; outcome unknown");
+    }
+    const timeoutMs = Math.min(tool.timeoutMs ?? 15_000, remainingMs);
     const timeout = Promise.withResolvers<never>();
     const timer = setTimeout(
       () => timeout.reject(new ToolTimeoutError(`tool timed out after ${timeoutMs}ms`)),
@@ -718,6 +768,21 @@ export class ActionService {
       return;
     }
     this.#activeTools -= 1;
+  }
+
+  #auditAction(
+    action: ActionRecord,
+    event: string,
+    after: Record<string, unknown> = {},
+  ): void {
+    this.#store.recordAudit({
+      event,
+      subjectType: "action",
+      subjectId: action.id,
+      after: { tool: action.tool, ...after },
+      traceId: `action:${action.id}`,
+      occurredAt: this.#now().toISOString(),
+    });
   }
 
   #reply(

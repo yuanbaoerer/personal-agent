@@ -60,12 +60,12 @@ function createTask(fixture: Fixture, sourceKey = "source:actions"): {
   return { task, assignment: claimed.assignment };
 }
 
-function propose(fixture: Fixture, brightness = 80): {
+function propose(fixture: Fixture, brightness = 80, sourceKey = "source:actions"): {
   task: TaskRecord;
   assignment: AssignmentRecord;
   action: ActionRecord;
 } {
-  const { task, assignment } = createTask(fixture);
+  const { task, assignment } = createTask(fixture, sourceKey);
   const action = fixture.actionService.propose(task, assignment, {
     tool: TOOL,
     args: { brightness },
@@ -100,6 +100,81 @@ function pendingReconciles(fixture: Fixture): number {
     .listPending(200)
     .filter((effect) => effect.kind === "action.reconcile").length;
 }
+
+describe("action audit", () => {
+  it("records a successful execution decision", async () => {
+    const fixture = setup();
+    const { action } = propose(fixture);
+    approve(fixture, action);
+
+    await fixture.actionService.handleExecute({ actionId: action.id });
+
+    const rows = fixture.services.store.db.all<{ event: string }>(
+      "SELECT event FROM pa_audit WHERE event = ? AND subject_id = ?",
+      "action.succeeded",
+      action.id,
+    );
+    assert.equal(rows.length, 1);
+  });
+
+  it("audits actions superseded by task cancellation", () => {
+    const fixture = setup();
+    const { task, action } = propose(fixture);
+
+    fixture.services.taskService.cancel(task.id);
+
+    const rows = fixture.services.store.db.all<{ event: string }>(
+      "SELECT event FROM pa_audit WHERE event = ? AND subject_id = ?",
+      "action.superseded",
+      action.id,
+    );
+    assert.equal(rows.length, 1);
+    assert.equal(fixture.services.actions.get(action.id)?.status, "superseded");
+  });
+
+  it("audits proposed and executing expiry from sweep", () => {
+    let current = new Date("2026-01-01T00:00:00.000Z");
+    const fixture = setup({ now: () => current });
+    const { action } = propose(fixture);
+    current = new Date(current.getTime() + 11 * 60_000);
+
+    fixture.actionService.sweep();
+
+    assert.equal(fixture.services.actions.get(action.id)?.status, "expired");
+    assert.equal(
+      fixture.services.store.db.all(
+        "SELECT id FROM pa_audit WHERE event = ? AND subject_id = ?",
+        "action.expired",
+        action.id,
+      ).length,
+      1,
+    );
+
+    const second = propose(fixture, 20, "source:actions-expiry");
+    approve(fixture, second.action);
+    const now = current.toISOString();
+    assert.equal(
+      fixture.services.actions.claimForExecution(
+        second.action.id,
+        now,
+        1_000,
+      ).ok,
+      true,
+    );
+    current = new Date(current.getTime() + 2_000);
+    fixture.actionService.sweep();
+
+    assert.equal(fixture.services.actions.get(second.action.id)?.status, "unknown");
+    assert.equal(
+      fixture.services.store.db.all(
+        "SELECT id FROM pa_audit WHERE event = ? AND subject_id = ?",
+        "action.unknown",
+        second.action.id,
+      ).length,
+      1,
+    );
+  });
+});
 
 describe("action reconciliation bounds", () => {
   it("stops after the effect attempt budget instead of enqueuing forever", async () => {

@@ -26,7 +26,7 @@
 | GitHub 只读连接器：repo 白名单、GET-only、超时/大小/分页上限、资源 scope、来源 URL、可区分错误 | 真实 token/仓库 G1、只读自动审批策略 |
 | SQLite 备份：VACUUM INTO、manifest SHA-256、integrity_check、600 权限、verify、恢复到空目录（拒绝较新 schema） | 恢复/升级自动化、加密、保留期 |
 | 工具扩展 seam + 只读样例：`registerTools`、resource/readOnly/timeoutMs/replayPolicy 双重校验 | Provider/Channel 扩展契约、真实第三方工具 |
-| 181 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
+| 184 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
 
 ## 2. 下一步待办
 
@@ -90,6 +90,7 @@ N01–N13 是历史工作分解，后续执行以 PA Issue 为准；本节记录
 | 重复领取 | 同一审批只有一次 approved → executing；第二次 claim 返回 `action_executing` | “allows only one claim for the same approval” |
 | 执行窗口 | approved Action 超过 expiresAt 时在 claim 中置为 expired、消费审批、通知并 settle，不调用工具 | “expires an approved action that misses its execution window” |
 | 外部已发 | 保留 unknown → reconcile；重试前仍重核授权，不盲目重复写 | 既有 reconcile 边界测试 |
+| 审计 | `action.succeeded/failed/unknown/expired/reconciled/needs_manual/superseded` 均写 audit；task cancel/revise 的批量 supersede 也逐条记录 | `actions.test.ts` 成功/取消 supersede/proposed+executing sweep |
 
 边界：以上为 E1；真实外部写、真实平台审批点击与崩溃注入未验证。PA-03 保持 OPEN，直到真实写工具和故障注入证据补齐。
 
@@ -127,7 +128,7 @@ npm run test:recovery   # apps/agent/test/recovery.test.ts
 | 双 Worker 并发 | 两个 Assignment 可同时 active；slow wait 不再阻塞同一 drain 中的普通 effect | “does not let two slow worker waits starve another effect” |
 | 人工指令响应 | 一个 wait handler 被持有（drain 单并发）时，`/status` 与 `/cancel` 仍走 ingress 持久受理 | E1 ingress smoke；不构成 p95 或并发阻塞证据 |
 | 并发上限 | Worker 名额与工具并发上限未改变；等待轮询不新增 Worker | 既有 K05/K06 测试 |
-| 慢工具上限 | 工具调用默认 15s 超时；只读超时按失败处理，写超时转 unknown + reconcile，避免无限占住 drain | `tool-timeout.test.ts` |
+| 慢工具上限 | 工具调用默认 15s，且不超过 execution lease−1s；只读超时按失败处理，写超时转 unknown + reconcile，避免无限占住 drain | `tool-timeout.test.ts` |
 | 重放能力 | 写工具须声明 `replayPolicy="verify"`；未声明或 verify 返回不满足的 unknown 动作直接 needs_manual，不重复写；verify 抛错只重试 reconcile 直到预算 | `tool-timeout.test.ts` “requires verified replay…” |
 
 边界：以上为 E1（fake slow runtime + 合成延迟）；真实模型长生成、真实飞书平台延迟、真实慢工具超时/隔离与物理并发压测仍 pending，PA-05 保持 OPEN。

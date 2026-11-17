@@ -42,9 +42,9 @@ K13 与 K14 必须包含至少一个可控竞态复现测试；应用的锁、�
 
 **恢复证据（PA-04 部分，E1）**：`npm run test:recovery` 使用 file-backed SQLite 重建进程，覆盖 Inbox 已受理但未路由、Assignment/Effect 租约过期、Task 创建后派工 effect 丢失、Action 外部写已生效但本地 unknown 后 reconcile、Reminder 到期跨重启只外发一次、`needs_manual` 在 `/status` 可见；Outbox 发送中断的 businessKey 核对由 `outbox.test.ts` 覆盖。真实 SIGKILL、DO 驱逐、Pi 会话跨重启、真实飞书回执仍为 pending，不能据此宣称 E4 通过。
 
-**非阻塞调度（PA-05 部分，E1）**：Assignment 等待按 100ms 切片轮询，pending 使用 250ms–5s 退避；Router 等待按 250ms 切片轮询，pending 使用 250ms–2s 退避。两个 pending Worker 与普通 effect 同轮处理时普通 effect 不被饿死；一个 wait handler 被持有时 `/status`/`/cancel` 仍通过 ingress 受理（E1 smoke，不是 p95 证据）。工具调用默认 15s 超时：只读超时失败、写超时转 unknown/reconcile；未知写仅在 `replayPolicy="verify"` 且 verify 不满足时才重试，否则 needs_manual。真实模型长生成、平台延迟、真实慢工具隔离和物理并发压测仍 pending，不能据此宣称 E3/E4。
+**非阻塞调度（PA-05 部分，E1）**：Assignment 等待按 100ms 切片轮询，pending 使用 250ms–5s 退避；Router 等待按 250ms 切片轮询，pending 使用 250ms–2s 退避。两个 pending Worker 与普通 effect 同轮处理时普通 effect 不被饿死；一个 wait handler 被持有时 `/status`/`/cancel` 仍通过 ingress 受理（E1 smoke，不是 p95 证据）。工具调用默认 15s 超时且不超过 execution lease−1s：只读超时失败、写超时转 unknown/reconcile；未知写仅在 `replayPolicy="verify"` 且 verify 不满足时才重试，否则 needs_manual。真实模型长生成、平台延迟、真实慢工具隔离和物理并发压测仍 pending，不能据此宣称 E3/E4。
 
-**可观测/诊断（PA-06 部分，E1）**：Outbox 增加 `trace_id`（schema v6），Inbox/Router/Task/Action/Reminder 投递带因果 trace；`/诊断` 与 `/admin/diagnostics` 列出过期 Assignment、unknown Action、unknown/needs_manual/failed 投递与 Effect 计数，不含消息正文、goal、Action args 或自由文本 lastError；`/admin/recent` 已移除正文与错误文本；`/usage` 与 `/admin/usage` 提供 Task/Action/Effect/Outbox/Tool 聚合，token/费用明确未采集；router 日志记录 action、长度与错误原因，不记录模型输出或 goal。真实 token/费用、硬预算、真实 G2 全链路仍未验证。
+**可观测/诊断（PA-06 部分，E1）**：Outbox 增加 `trace_id`（schema v6），Inbox/Router/Task/Action/Reminder 投递带因果 trace；`/诊断` 与 `/admin/diagnostics` 列出过期 Assignment、unknown Action、unknown/needs_manual/failed 投递与 Effect 计数，不含消息正文、goal、Action args 或自由文本 lastError；`/admin/recent` 已移除正文与错误文本；`/usage` 与 `/admin/usage` 提供 Task/Action/Effect/Outbox/Tool 聚合，token/费用明确未采集；router 日志记录 action、长度与错误原因，不记录模型输出或 goal；action succeeded/failed/unknown/expired/reconciled/needs_manual/superseded 均写审计（含 task cancel/revise 批量 supersede）。真实 token/费用、硬预算、真实 G2 全链路仍未验证。
 
 **确认与范围（PA-10 部分，E1）**：模型解读的 `save_memory`/`remind` 进入最长 10 分钟确认项（提醒以 dueAt 为上限；owner + source inbox 唯一），`/确认` 后应用；`/取消确认`、过期、跨 owner 均不写入；显式 `/remember`、`/remind` 保持即时；timer 注册失败会取消 schedule 并报错。项目范围隔离与 Worker 记忆注入仍 pending。
 

@@ -1,4 +1,5 @@
 import type {
+  ActionRecord,
   AssignmentRecord,
   Evidence,
   ProposedAction,
@@ -165,7 +166,7 @@ export class TaskService {
       return undefined;
     }
 
-    this.#actions.supersedeForTask(taskId, now);
+    this.#auditSuperseded(this.#actions.supersedeForTask(taskId, now), "task_revised", now);
     this.#cancelTaskEffects(taskId, now);
     this.#store.cancelOutboxForTask(taskId, now);
     if (activeSessions.length > 0) {
@@ -294,7 +295,7 @@ export class TaskService {
       return undefined;
     }
 
-    this.#actions.supersedeForTask(taskId, now);
+    this.#auditSuperseded(this.#actions.supersedeForTask(taskId, now), "task_cancelled", now);
     this.#cancelTaskEffects(taskId, now);
     this.#store.cancelOutboxForTask(taskId, now);
     this.#store.recordAudit({
@@ -979,6 +980,23 @@ export class TaskService {
       if (effect.payload.taskId === taskId) {
         this.#effects.cancel(effect.id, now);
       }
+    }
+  }
+
+  #auditSuperseded(
+    actions: readonly ActionRecord[],
+    reason: string,
+    now: string,
+  ): void {
+    for (const action of actions) {
+      this.#store.recordAudit({
+        event: "action.superseded",
+        subjectType: "action",
+        subjectId: action.id,
+        after: { tool: action.tool, reason },
+        traceId: `action:${action.id}`,
+        occurredAt: now,
+      });
     }
   }
 
