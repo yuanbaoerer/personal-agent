@@ -218,7 +218,7 @@ pa task create --profile coding --strategy organization "implement feature"
 | 阶段 | 做什么 | 前置条件 | 不做 |
 | --- | --- | --- | --- |
 | **v0.2 Reliable Core** | 保持现有 SuperAgent 风格基座；真实消息→Router→Worker→结果、Task 一致性、授权、恢复与安全 | PA-01～06、PA-25 | 不实现新模式框架/DAG |
-| **v0.3 最小可用模式** | General/Coding WorkProfile 的配置和版本快照；Direct/Delegated；Coding 小范围受控演示 | PA-03/07/09/13/17/18/25 | 不允许任意 Shell/全盘文件写 |
+| **v0.3 最小可用模式候选** | General/Coding WorkProfile 的最小声明、版本快照及 Direct/Delegated；先用测试入口验证，不要求所有正式 UI 就绪 | PA-01/03/07/09/25；PA-13/17/18 中必要的最小契约可提前抽取，完整工作项不构成阻断 | 不允许任意 Shell/全盘文件写 |
 | **v0.4 之后 Strategy Spike** | Organization WorkflowPlan/DAG、节点验收与恢复、限制成本；与 Delegated 比较 | PA-02/04/05/06/09/11 | **不把 Organization 作为 v0.4 开源阻断项** |
 | **后续稳定化** | 版本化 Skill/Workflow 模板、反馈与可回滚的受控进化 | 真实使用与基准证据 | 不自动自我改写/无限 Agent |
 
@@ -226,7 +226,7 @@ pa task create --profile coding --strategy organization "implement feature"
 
 | ID | 交付 | 推荐优先级 |
 | --- | --- | --- |
-| MODE-01 | WorkProfile / ExecutionStrategy 声明、服务端解析、版本冻结 | v0.3 P1 |
+| MODE-01 | WorkProfile / ExecutionStrategy 声明、服务端解析、版本冻结（先最小实现，不等待完整 PA-13） | v0.3 P1 |
 | MODE-02 | Coding Profile：隔离工作区、受控工具、真实验证器 | v0.3 P1/P2 |
 | MODE-03 | Organization Plan：DAG、任务依赖、取消/恢复、预算 | v0.4+ P2 |
 | MODE-04 | Delegated vs Organization 受控 Benchmark 与质量门槛 | v0.4+ P2 |
