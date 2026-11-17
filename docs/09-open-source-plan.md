@@ -78,3 +78,9 @@ PA-12 标准部署；PA-13 适配器；PA-14 数据与升级；PA-15 开源治�
 ## 11. 可扩展模式不是公开发布强制依赖（2026-11-17）
 
 全球开源开发者可通过扩展 WorkProfile 与 ExecutionStrategy 定义领域和受控执行方式；实现须服从单一 Core、持久任务与授权边界，定义版本/兼容/禁用，不允许模式包自动获取凭据或全系统权限。**Coding 和 Organization 的完整能力不是 Public Alpha 或 v0.4 Open-source Ready 的阻断项**；公开前仍以核心可靠性、许可证、秘密审计、清晰英文文档和可执行使用路径为先。见 [12 · Mode Architecture](12-mode-architecture.md)。
+
+## 12. 可选模型 Gateway 与多模型发布边界（2026-11-17）
+
+全球开源使用者可直接配置受支持 Provider，也可选用 Magpie 或其他经验证的兼容 Gateway；**Magpie 不应是安装、升级或 Public Alpha/v0.4 Open-source Ready 的必需依赖**。模型适配由原 [PA-13](https://github.com/yuanbaoerer/personal-agent/issues/14) 保持稳定，Session 级模型绑定和 Gateway 路由扩展按 [13 · Model Routing & Gateway](13-model-routing-gateway.md) 分阶段落地。
+
+远程 Gateway 必须明确 TLS、最小权限的 Key、可用模型范围、费用上限和数据处理/出站位置；`127.0.0.1` 仅指相应运行宿主的本地回环地址，不能从 Cloudflare 直接指向用户 Mac。开源文档不能以“OpenAI 兼容”直接保证 Pi 的流式工具调用、reasoning、恢复与上下文完全兼容；展示真实测试矩阵和已知限制。Gateway 内部模型可能变化，不得错误声明模型固定、准确账单或无条件零重复执行。
