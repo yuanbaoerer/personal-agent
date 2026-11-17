@@ -133,6 +133,7 @@ flowchart TB
 | [03 · 岗位适配](docs/03-job-fit.md) | 项目证据与岗位要求；规划不能写成已实现 |
 | [05 · JD 附录](docs/05-jd-appendix.md) | 原始岗位样本，不作为功能清单 |
 | [12 · Mode Architecture](docs/12-mode-architecture.md) | WorkProfile × ExecutionStrategy：Coding / General / Research 与智能组织工作流（设计提案，未实现） |
+| [13 · Model Routing & Gateway](docs/13-model-routing-gateway.md) | ModelPolicy、Router/Worker 会话级模型绑定、Magpie 可选中转、Fallback 与成本评测（长期设计，未实现） |
 | [本地 spike](spikes/pi-durable-smoke/README.md) | Pi 本地验证与证据边界 |
 
 ## 已有 spike
