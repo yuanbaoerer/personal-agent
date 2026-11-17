@@ -166,11 +166,13 @@ async function main(): Promise<void> {
         const recovered = await app.ingress.recoverPending(20);
         app.taskService.sweep();
         app.actionService.sweep();
+        const expiredConfirmations = app.confirmation.expirePending();
         const fired = await app.reminders.fireDue();
         const effectResult = await app.effectDispatcher.drain(20);
         const result = await dispatcher.drain(10);
         const changed =
           recovered +
+          expiredConfirmations +
           fired +
           effectResult.done +
           effectResult.retried +
@@ -183,6 +185,7 @@ async function main(): Promise<void> {
         if (changed > 0) {
           logger.info("maintenance", {
             recovered,
+            expiredConfirmations,
             fired,
             effects: effectResult,
             ...result,

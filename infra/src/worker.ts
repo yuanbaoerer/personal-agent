@@ -272,6 +272,7 @@ export class Assistant extends DurableObject<Env> {
             tasks: app.tasks,
             actions: app.actions,
             effects: app.effects,
+            confirmations: app.confirmation,
           },
           new Date().toISOString(),
           { limit: 50 },
@@ -325,6 +326,7 @@ export class Assistant extends DurableObject<Env> {
     await app.ingress.recoverPending(20);
     app.taskService.sweep();
     app.actionService.sweep();
+    app.confirmation.expirePending();
     await app.reminders.fireDue();
     await app.effectDispatcher.drain(20);
     if (app.dispatcher !== undefined) {

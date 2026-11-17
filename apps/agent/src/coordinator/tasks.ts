@@ -557,6 +557,7 @@ export class TaskService {
         status: "retry",
         at: new Date(this.#now().getTime() + 5_000).toISOString(),
         reason: `runtime wait failed: ${error instanceof Error ? error.message : String(error)}`,
+        maxAttempts: 1_000,
       };
     }
 

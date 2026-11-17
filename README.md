@@ -93,7 +93,7 @@ npm start
 
 - `github.read` 只读连接器：仅 GET、Bearer token、拒绝重定向、repo 精确白名单、8s 超时、单次最多 20 项/200KB；支持 repo、commits、open issues、open pulls、PR 状态。
 - 错误区分 401/403/429（含 retry-after）/404/timeout；返回来源 URL；`github` Mandate resource 与工具名双重校验。
-- `npm test`：160 个确定性测试通过（当前）；token 缺失或白名单为空时工具不注册。
+- `npm test`：162 个确定性测试通过（当前）；token 缺失或白名单为空时工具不注册。
 - 证据边界：E1（fake GitHub API）；真实 token/仓库 G1、真实 Feishu 演示与只读自动审批策略 pending。
 
 ## 产品方向

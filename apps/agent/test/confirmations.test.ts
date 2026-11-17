@@ -211,6 +211,26 @@ describe("model-interpreted personal writes", () => {
     assert.equal(services.confirmations.listPending(services.owner.id).length, 0);
   });
 
+  it("sweeps expired pending confirmations and excludes them from the count", () => {
+    let current = START;
+    const services = createServices({ now: () => current });
+    const { confirmation } = services.confirmation.create({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceInboxId: "inbox:expire-sweep",
+      kind: "memory_save",
+      payload: { key: "drink", value: "tea" },
+    });
+    assert.equal(services.confirmation.countPending(), 1);
+
+    current = new Date(START.getTime() + 11 * 60_000);
+    assert.equal(services.confirmation.countPending(), 0);
+    assert.equal(services.confirmation.countPending("other-owner"), 0);
+    assert.equal(services.confirmation.expirePending(), 1);
+    assert.equal(services.confirmations.get(confirmation.id)?.status, "expired");
+    assert.equal(services.confirmation.countPending(), 0);
+  });
+
   it("never leaves a live schedule when the host timer rejects", async () => {
     const services = createServices({
       now: () => START,

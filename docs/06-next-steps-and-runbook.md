@@ -24,7 +24,7 @@
 | Outbox traceId + `/诊断`/`/admin/diagnostics` 安全诊断（无正文/goal/args） | token/费用、预算、用量报表、真实 G2 链路 |
 | 模型解读记忆/提醒的确认项（最长 10 分钟，提醒以 dueAt 为上限；owner 校验、取消/过期不写入）；显式命令即时 | 项目范围隔离、Worker 记忆注入、真实误触发负例 |
 | GitHub 只读连接器：repo 白名单、GET-only、超时/大小/分页上限、资源 scope、来源 URL、可区分错误 | 真实 token/仓库 G1、只读自动审批策略 |
-| 160 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
+| 162 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
 
 ## 2. 下一步待办
 
@@ -119,7 +119,7 @@ npm run test:recovery   # apps/agent/test/recovery.test.ts
 
 | 内容 | 实现 | 证据 |
 | --- | --- | --- |
-| Assignment 等待切片 | `handleWait` 每次只等 100ms；pending 返回 retry，退避 250ms→5s，效果上限 1000，租约继续延长 | `coordinator.test.ts` 断言 timeout=100ms、maxAttempts=1000 |
+| Assignment 等待切片 | `handleWait` 每次只等 100ms；pending 返回 retry，退避 250ms→5s 并延长租约；瞬时 runtime 错误返回固定 5s retry、不延长租约（靠租约到期重排任务）；效果上限 1000 | `coordinator.test.ts` 断言 timeout=100ms、maxAttempts=1000 |
 | Router 等待切片 | `PiRouterModel` 等待 250ms；pending 抛 `RouterPendingError`，Router 返回 250ms→2s 退避的有界 retry | `scheduling.test.ts` “passes the bounded slice...” 与 “turns a pending router model...” |
 | 双 Worker 并发 | 两个 Assignment 可同时 active；slow wait 不再阻塞同一 drain 中的普通 effect | “does not let two slow worker waits starve another effect” |
 | 人工指令响应 | 一个 wait handler 被持有（drain 单并发）时，`/status` 与 `/cancel` 仍走 ingress 持久受理 | E1 ingress smoke；不构成 p95 或并发阻塞证据 |
@@ -132,7 +132,7 @@ npm run test:recovery   # apps/agent/test/recovery.test.ts
 | 内容 | 实现 | 证据 |
 | --- | --- | --- |
 | 投递 trace | `pa_outbox.trace_id`（schema v6）；Inbox/Router 用 `inbox:*`，Task/Action 用 `task:*`，Reminder 用 `schedule:*` | `observability.test.ts` 断言 ingress 回复 trace；真实库副本迁移 v6 |
-| 所有者诊断 | `/诊断` 输出过期 Assignment、unknown Action、unknown/needs_manual/failed 投递、Effect 计数与安全处理提示 | 同上；格式化文本不含私聊正文 |
+| 所有者诊断 | `/诊断` 输出过期 Assignment、unknown Action、unknown/needs_manual/failed 投递、Effect 计数、待确认项计数与安全处理提示 | 同上；格式化文本不含私聊正文 |
 | 管理员诊断 | `GET /admin/diagnostics` 返回结构化快照；`/admin/recent` 移除 goal/text/result | `infra/src/worker.ts`；鉴权沿用 ADMIN_TOKEN |
 | 脱敏 | 诊断结构不含消息正文、goal、Action args 或自由文本 lastError；`listOutboxDiagnostics` 只查询安全列，`/admin/recent` 同样移除 lastError | 测试断言 SECRET 与工具错误文本不出现在 JSON/文本中 |
 | 待定 | token/费用采集、单 Task/每日硬预算、用量报表、日志全链路脱敏策略 | 需运行时 usage 接口与预算口径决策 |
@@ -145,7 +145,7 @@ npm run test:recovery   # apps/agent/test/recovery.test.ts
 | --- | --- | --- |
 | 模型写入确认 | `save_memory`/`remind` 不再直接落库；生成 `pa_confirmations`（最长 10 分钟，提醒以 dueAt 为上限；owner/source inbox 唯一） | `confirmations.test.ts` 记忆/提醒确认 |
 | 确认与撤销 | `/确认 <id>` 应用；`/取消确认 <id>` 取消；显式 `/remember`、`/remind` 保持即时 | 取消不写入、显式命令即时 |
-| 过期与鉴权 | 过期确认懒清理；跨 owner 前缀查询拒绝；提醒 runKey/outbox 幂等保留；timer 注册失败时取消 schedule 并报错 | 过期/跨 owner/ timer 失败测试 |
+| 过期与鉴权 | 过期确认在维护 tick 清理并计数；跨 owner 前缀查询拒绝；提醒 runKey/outbox 幂等保留；timer 注册失败时取消 schedule 并报错 | 过期/跨 owner/ timer 失败测试 |
 | 审计 | `confirmation.created/confirmed/cancelled` | audit 事件 |
 | 待定 | memory `projectScope`、Worker 按 Mandate 注入记忆、自然语言提示注入负例 | 需项目标识与注入范围决策 |
 

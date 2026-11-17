@@ -82,6 +82,7 @@ describe("operator diagnostics", () => {
         tasks: services.tasks,
         actions: services.actions,
         effects: services.effects,
+        confirmations: services.confirmation,
       },
       current.toISOString(),
       { ownerId: services.owner.id },
@@ -91,6 +92,8 @@ describe("operator diagnostics", () => {
     assert.match(text, /过期 Assignment 1 条/);
     assert.match(text, /未知 Action 1 条/);
     assert.match(text, /需核对投递/);
+    assert.match(text, /待确认项：0 条/);
+    assert.equal(snapshot.confirmations.pending, 0);
     assert.ok(snapshot.outbox.some((row) => row.status === "needs_manual"));
     assert.match(text, /needs_manual attempts 1/);
     assert.ok(!text.includes("platform receipt unclear"));

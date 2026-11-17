@@ -617,6 +617,7 @@ export class Router implements InboundHandler {
           tasks: this.#tasks,
           actions: this.#actions,
           effects: this.#effects,
+          confirmations: this.#confirmation,
         },
         now,
         { ownerId, limit: 10 },

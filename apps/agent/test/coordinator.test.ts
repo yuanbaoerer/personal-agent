@@ -175,6 +175,35 @@ describe("task and assignment coordination", () => {
     assert.equal(services.tasks.get(task.id)?.status, "running");
   });
 
+  it("keeps retrying a wait that hits a runtime error", async () => {
+    const services = createServices();
+    const task = services.taskService.create({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "source:failed-wait",
+      goal: "slow worker",
+      completionCriteria: "done",
+    });
+    const claimed = services.tasks.claimNext(services.now().toISOString(), 60_000, 2);
+    assert.ok(claimed);
+    services.runtime.wait = async () => {
+      throw new Error("runtime temporarily unavailable");
+    };
+
+    const outcome = await services.taskService.handleWait({
+      assignmentId: claimed.assignment.id,
+      sessionId: "fake-session-failed",
+      operationId: `assignment:${claimed.assignment.id}`,
+    });
+
+    assert.equal(outcome.status, "retry");
+    assert.match(
+      outcome.status === "retry" ? outcome.reason : "",
+      /runtime temporarily unavailable/,
+    );
+    assert.equal(outcome.status === "retry" ? outcome.maxAttempts : 0, 1_000);
+  });
+
   it("supplements a waiting_user task and requeues it", () => {
     const services = createServices();
     const task = services.taskService.create({

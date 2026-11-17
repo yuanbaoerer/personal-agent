@@ -2,12 +2,14 @@ import type { ActionRepository } from "../storage/actions.ts";
 import type { EffectRepository } from "../storage/effects.ts";
 import type { Store } from "../storage/store.ts";
 import type { TaskRepository } from "../storage/tasks.ts";
+import type { ConfirmationService } from "../personal/confirmations.ts";
 
 export interface DiagnosticsDeps {
   store: Store;
   tasks: TaskRepository;
   actions: ActionRepository;
   effects: EffectRepository;
+  confirmations: ConfirmationService;
 }
 
 export interface DiagnosticsSnapshot {
@@ -47,6 +49,9 @@ export interface DiagnosticsSnapshot {
     pending: number;
     running: number;
     failed: number;
+  };
+  confirmations: {
+    pending: number;
   };
 }
 
@@ -107,6 +112,9 @@ export function buildDiagnostics(
       running: deps.effects.count("running"),
       failed: deps.effects.count("failed"),
     },
+    confirmations: {
+      pending: deps.confirmations.countPending(options.ownerId),
+    },
   };
 }
 
@@ -116,6 +124,7 @@ export function formatDiagnostics(snapshot: DiagnosticsSnapshot): string {
     `任务：${snapshot.tasks.length} 条（最近）；过期 Assignment ${snapshot.expiredAssignments.length} 条；` +
       `未知 Action ${snapshot.unknownActions.length} 条。`,
     `Effect：pending ${snapshot.effects.pending}，running ${snapshot.effects.running}，failed ${snapshot.effects.failed}。`,
+    `待确认项：${snapshot.confirmations.pending} 条。`,
   ];
 
   if (snapshot.expiredAssignments.length > 0) {

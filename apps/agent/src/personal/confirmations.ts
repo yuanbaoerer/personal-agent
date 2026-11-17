@@ -111,6 +111,15 @@ export class ConfirmationService {
     return updated;
   }
 
+  /** Close expired pending rows during maintenance. */
+  expirePending(): number {
+    return this.#confirmations.expirePending(this.#now().toISOString());
+  }
+
+  countPending(ownerId?: string): number {
+    return this.#confirmations.countPending(this.#now().toISOString(), ownerId);
+  }
+
   cancel(
     ownerId: string,
     idOrPrefix: string,

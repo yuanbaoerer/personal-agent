@@ -139,4 +139,27 @@ export class ConfirmationRepository {
     )[0];
     return row === undefined ? undefined : mapConfirmation(row);
   }
+
+  /** Lazily close rows that can no longer be applied. Returns the count. */
+  expirePending(now: string): number {
+    return this.#db.run(
+      `UPDATE pa_confirmations
+       SET status = 'expired', updated_at = ?
+       WHERE status = 'pending' AND expires_at <= ?`,
+      now,
+      now,
+    );
+  }
+
+  countPending(now: string, ownerId?: string): number {
+    const row = this.#db.all<{ count: number }>(
+      `SELECT COUNT(*) AS count FROM pa_confirmations
+       WHERE status = 'pending' AND expires_at > ?
+         AND (? IS NULL OR owner_id = ?)`,
+      now,
+      ownerId ?? null,
+      ownerId ?? null,
+    )[0];
+    return Number(row?.count ?? 0);
+  }
 }
