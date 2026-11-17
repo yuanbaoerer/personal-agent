@@ -23,6 +23,7 @@
 | 可观测/诊断 | Outbox traceId 贯通 inbox/task/schedule；`/诊断` 与 `/admin/diagnostics` 输出过期 Assignment、unknown Action、unknown/needs_manual 投递；诊断不返回消息正文、goal、Action args 或自由文本 lastError；router 日志不记录模型输出/goal | token/费用、预算、用量报表未实现；真实 G2 链路追踪待验证 |
 | GitHub 只读 | `github.read` GET-only 连接器：repo 白名单、Bearer token、8s 超时、单次 ≤20 项/≤200KB、重定向拒绝；repo/commits/open issues/open pulls/PR 状态 + 来源 URL；Mandate 需 `github` resource | 每次读取仍走 Action 审批；真实 token/仓库 G1 未验证；不支持写 Issue |
 | 提醒 / 记忆 | 一次性提醒、runKey、TTL、聊天取消/列表；显式记忆查改删；模型解读的记忆/提醒先进入最长 10 分钟确认（提醒以到期时间为上限），owner 校验，取消/过期不写入 | 项目范围隔离、Worker 记忆注入、周期提醒与语义检索未做 |
+| 备份/校验 | `npm run backup`：`VACUUM INTO` 复制 agent/pi SQLite，manifest SHA-256 + integrity_check，目录/文件 700/600；`--verify` 重新校验 | 恢复/升级自动化、加密与保留期策略未做 |
 | 本地服务 | `POST /webhooks/feishu`、`GET /healthz`、Node SQLite + 进程内 pi-durable | 配置 `OPENCODE_API_KEY` 后本地执行模型任务；未配置时模型任务明确失败 |
 | Cloudflare DO | `Assistant` + PiHarness + Lifecycle、DO SQLite 中的 `pa_*`、webhook、jobs | 已真实部署；飞书回调入口超时待解；驱逐恢复未验证 |
 | 本地真实模型 | `opencode-go/deepseek-v4.1-flash`，本地 key；`apps/agent/src/runtime/node-pi.ts` 是 Node 运行时 | spike 单会话/三会话并发通过；应用侧目前只有 faux provider 的确定性测试，真实模型端到端待验证 |
@@ -93,8 +94,15 @@ npm start
 
 - `github.read` 只读连接器：仅 GET、Bearer token、拒绝重定向、repo 精确白名单、8s 超时、单次最多 20 项/200KB；支持 repo、commits、open issues、open pulls、PR 状态。
 - 错误区分 401/403/429（含 retry-after）/404/timeout；返回来源 URL；`github` Mandate resource 与工具名双重校验。
-- `npm test`：168 个确定性测试通过（当前）；token 缺失或白名单为空时工具不注册。
+- `npm test`：168 个确定性测试通过（PA-07 时点）；token 缺失或白名单为空时工具不注册。
 - 证据边界：E1（fake GitHub API）；真实 token/仓库 G1、真实 Feishu 演示与只读自动审批策略 pending。
+
+**2026-11-18 验证（PA-14 部分）：**
+
+- `npm run backup -- --data ./data --out ./backups/<timestamp>`：`VACUUM INTO` 复制 `agent.sqlite`、可选 `pi.sqlite`；manifest 记录 SHA-256、字节数、schema_version；复制后跑 `PRAGMA integrity_check`；目录/文件权限 700/600。
+- `npm run backup -- --verify <dir>`：重新校验哈希与完整性；拒绝非空目标与非法 manifest 文件名。
+- `npm test`：173 个确定性测试通过（当前）；CLI 冒烟通过。
+- 证据边界：E1；恢复/升级自动化、加密与保留期未做。
 
 ## 产品方向
 

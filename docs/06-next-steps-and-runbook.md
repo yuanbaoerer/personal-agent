@@ -24,7 +24,8 @@
 | Outbox traceId + `/诊断`/`/admin/diagnostics` 安全诊断（无正文/goal/args） | token/费用、预算、用量报表、真实 G2 链路 |
 | 模型解读记忆/提醒的确认项（最长 10 分钟，提醒以 dueAt 为上限；owner 校验、取消/过期不写入）；显式命令即时 | 项目范围隔离、Worker 记忆注入、真实误触发负例 |
 | GitHub 只读连接器：repo 白名单、GET-only、超时/大小/分页上限、资源 scope、来源 URL、可区分错误 | 真实 token/仓库 G1、只读自动审批策略 |
-| 168 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
+| SQLite 备份：VACUUM INTO、manifest SHA-256、integrity_check、600 权限、verify | 恢复/升级自动化、加密、保留期 |
+| 173 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
 
 ## 2. 下一步待办
 
@@ -165,6 +166,25 @@ npm run test:recovery   # apps/agent/test/recovery.test.ts
 | 待定 | 只读请求是否自动批准（当前仍逐次审批）、token 类型（PAT/App）、白名单仓库、真实 G1 | 需用户决策/凭据 |
 
 边界：E1（fake GitHub API）；真实 GitHub/Feishu G1 未验证，PA-07 保持 OPEN。
+
+### 2.9 2026-11-18 实施进展（PA-14 备份/校验，E1 部分）
+
+```bash
+npm run backup -- --data ./data --out ./backups/$(date +%Y%m%dT%H%M%S)
+npm run backup -- --verify ./backups/<timestamp>
+```
+
+| 内容 | 实现 | 证据 |
+| --- | --- | --- |
+| 一致性快照 | 两个 SQLite 文件用 `VACUUM INTO`；目标目录必须为空 | `backup.test.ts` |
+| 完整性 | manifest 记录 SHA-256/字节/schema_version；复制后 `PRAGMA integrity_check`；verify 重算 | 篡改检测测试；CLI 冒烟 |
+| 权限 | 目录 700、文件/manifest 600 | 测试断言 mode |
+| 安全边界 | 拒绝路径型 manifest 文件名；不写入日志/密钥 | verify 校验 |
+| 待定 | 恢复/升级自动化、加密、保留期与异地存储策略 | 需部署/安全决策 |
+
+恢复（人工，E1 未演练）：停服务 → 保留现有数据目录副本 → 将备份的 `agent.sqlite`/`pi.sqlite` 复制回 `DATABASE_PATH`/`PI_DATABASE_PATH` → 删除目标目录残留 `-wal`/`-shm` → 启动并检查 `/healthz` 与 `/status`。
+
+边界：E1；未在真实生产数据上演练恢复，PA-14 保持 OPEN。
 
 ## 3. 环境与密钥
 
