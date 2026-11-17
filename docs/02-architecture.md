@@ -353,3 +353,15 @@ docs/
 Coding Profile 不自动开放 Shell、文件写入或 Git push；Organization 是**后续的有界 WorkflowPlan/DAG**，由 Parent Task 受控派生有依赖、验证器、预算的工作节点；全实例 Worker 上限仍为 2；子节点权限必须是 Parent Mandate 子集；任务修订/取消后旧计划和 Assignment 通过 revision/fencing 失效，外部在途结果独立核对。
 
 **当前没有 Mode Registry、Organization DAG 或 Coding 沙箱实现**；本节不改变 v0.2 的 Task 状态机与可靠性验收。详细领域模型、模式组合、隔离边界、恢复策略和新 MODE 测试见 [12 · Mode Architecture](12-mode-architecture.md)。
+
+## 14. ModelPolicy、会话级模型绑定与可选 Gateway（2026-11-17）
+
+现有架构扩展为 **WorkProfile × ExecutionStrategy × ModelPolicy**，但**只有一个 Coordinator/TaskService、Task/Assignment/Mandate、ActionService、Scheduler 和 AgentRuntime 生命周期体系**。ModelPolicy 负责根据任务角色（Router/Worker/未来 Workflow Node）、用户明确指定模型、能力需求、预算和数据出站限制解析模型；ModelTransport 使用 Direct Provider 或可选 Gateway Adapter（Magpie 等）。网关不拥有 Task/Action 权限状态，也不决定业务是否完成。
+
+**代码现状**：`NodePiRuntimeOptions.model` 目前是 Node Runtime 级默认值；`PiRuntime.open(spec)` 尚未消费 per-Session 模型参数；Cloudflare Worker 仍有固定默认模型。因此需要先为 `RuntimeSessionSpec` 增加经服务端解析的模型绑定，分别验证 Node/Cloudflare 的 Pi 实际 API；不能把概念类型当成已实现能力。
+
+模型应在 Assignment / Session 创建时冻结 provider/model/route、Policy 版本、能力与预算；`ModelCatalog` 和 `ModelResolver` 做可用性/工具协议/上下文/费用及授权检查。用户修订或策略热更新不能悄悄改变当前 Session。Gateway Route Group 可能在后续请求选择不同底层模型；需验证长期会话粘性，无法保证时不宣称“固定模型”，保留实际请求的模型来源未知状态。
+
+**关键故障限制**：模型输出开始、工具调用可能已发生或请求接受状态不明时，不得把 Fallback 视为无副作用透明重试。继续遵守既有 K03、K08–K14 和 unknown/reconcile。Gateway 的出站数据和凭据需要显式授权；Cloudflare 的 loopback 不是用户本地 Mac 的 loopback。
+
+完整领域类型、路由规则、Magpie 集成、预算、MRT 专项评测和分阶段实施见 [13 · Model Routing & Gateway](13-model-routing-gateway.md)。本节是长期架构方案，**当前 v0.2 不开发自建模型网关或自动路由算法**。

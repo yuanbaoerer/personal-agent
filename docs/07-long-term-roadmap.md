@@ -202,3 +202,16 @@ Desktop、CLI、TUI、Web、IM 均应作为统一 Agent Core 的独立客户端�
 **版本边界**：v0.2 不变，优先真实模型闭环和权限/恢复；v0.3 依赖 PA-01/03/07/09/25 的必要安全与完成判据，先做最小 General/Coding Profile 与 Direct/Delegated 试验；PA-13/17/18 中所需接口可以提前抽取，但不要求完整 P2 适配器工作提前完成；Organization 在 v0.4 以后以**可选技术 Spike**验证 DAG、取消、恢复和对照收益，**不是 Public Alpha/v0.4 Open-source Ready 的前置要求**。经验沉淀与 Improvement Loop 后置。
 
 完整领域契约、候选 API、Coding 隔离与 MODE01–MODE10 评测见 [12 · Mode Architecture](12-mode-architecture.md)。本阶段工作包标识 MODE-01～MODE-05，仅为设计待办，未创建 GitHub Issues，不与已有 PA-01～PA-29 混淆。
+
+## 14. ModelPolicy 与可选多模型 Gateway 路线（2026-11-17）
+
+长期产品架构进一步明确为 **WorkProfile × ExecutionStrategy × ModelPolicy**。不同角色可以使用不同模型：低延迟 Router、Code Worker、Research Worker，以及后续 Organization 的 Planner/Reviewer/Summary 节点；模型分配属于 Task/Assignment/Session 的受控配置，而不是增加一组常驻 Agent 或独立调度器。
+
+**实施顺序与优先级**：
+- **v0.2 当前主线不变**：继续完善真实链路/持久化恢复/权限和 PA-06 中最小模型用量追踪，不新建网关或自动多模型选择器。
+- **v0.3 候选**：在 PA-13 的最小 Provider/Runtime 契约上提前验证 ModelCatalog、最低能力检查、Session 级绑定与 Router/Worker 独立模型配置（MODEL-01）；PA-13 的完整 P2 扩展工作不必全部前置。
+- **v0.3–v0.4 可选集成**：Magpie Gateway Adapter、路由组/用量/容错协议 Spike（MODEL-02），**不替代 Direct Provider、不阻断 Public Alpha 或 v0.4 Open-source Ready**。
+- **Organization 后期**：Workflow Node 级动态 ModelPolicy（MODEL-03）及 Delegated/Organization、多模型与单模型对照评测；真实数据证明收益后再增加动态选模型。
+- 更后期可考虑受限的性能/费用智能路由，模型切换不能绕过授权和未知副作用核对。
+
+MODEL-01～03 是本轮拆分的未来工程工作包，与已存在的 [PA-13](https://github.com/yuanbaoerer/personal-agent/issues/14)（Provider/Runtime 扩展）、[PA-24](https://github.com/yuanbaoerer/personal-agent/issues/27)（BYOK 和全球可用性）、[PA-06](https://github.com/yuanbaoerer/personal-agent/issues/7)（成本/追踪）各有边界，不复制工作。会话级模型绑定、Magpie 可选集成和故障转移安全标准见 [13 · Model Routing & Gateway](13-model-routing-gateway.md)。

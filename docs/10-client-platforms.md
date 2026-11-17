@@ -132,3 +132,9 @@ CLI/TUI/Desktop 的 `locale` 及对话语言相互独立，CLI 机器可读 JSON
 CLI/TUI/Desktop/IM 不应各自实现 Coding Agent / Organization Agent 后端。统一 Core 的 Task 记录保存 WorkProfile × ExecutionStrategy 的**有效值和版本**。UI 可提供「General / Coding / Organized Work」预设，高级组合允许 Coding + Organization。CLI 命令和候选 API 形状参见 [12 · Mode Architecture](12-mode-architecture.md)；最终接口由 [PA-17 Client API](https://github.com/yuanbaoerer/personal-agent/issues/19) 确定。
 
 客户端不能通过切换 UI 模式扩大正在运行任务的 Mandate；服务端负责认证、预算和版本修订。未实现的 Organization 在可用模式列表中应标记 unavailable/experimental，不能向 macOS/Windows 用户假装已交付。
+
+## 12. 跨客户端的 ModelPolicy 配置与状态（2026-11-17）
+
+未来 CLI/TUI/Desktop/IM 可在 Core API 支持后显示 **Profile × Strategy × ModelPolicy** 及每个 Task、Assignment、Workflow Node 的实际模型绑定/版本/消耗。用户可指定授权的模型配置或逻辑路由组，但客户端不得直写 Provider 凭据、实例级策略、`pa_*` 数据表或独立调用 Gateway 绕开 Core 预算。
+
+建议在 [PA-17](https://github.com/yuanbaoerer/personal-agent/issues/19) 的 Client API 里纳入只读 ModelCatalog/Role Defaults 与受控设置，CLI 支持 `pa models list`、任务模型状态与 `pa doctor` 的 Gateway 连通性探测（**命令尚未实现**）。模型切换属于任务修订，生效结果应显示旧/新 Session 与是否有待核对动作；多平台密钥应使用相应 OS SecretStore。详见 [13 · Model Routing & Gateway](13-model-routing-gateway.md)。

@@ -167,3 +167,9 @@ PA-15 实现基础 LICENSE/SECURITY/CONTRIBUTING/secret 扫描；PA-28 针对持
 ## 13. Mode 架构的全球开源贡献边界（2026-11-17）
 
 未来的 Coding / Organization 体验采用 **WorkProfile × ExecutionStrategy**，而不是为每个 Mode 重复维护一份后端状态机、权限与数据库。模式定义、Skill 和 WorkflowTemplate 应具有版本、禁用/回滚与权限声明；不能因安装第三方模式而自动获得 Shell、文件或网络执行权。跨语言客户端共享稳定 mode ID 与错误码，界面文案独立国际化。Organization 可作为后续实验性可选能力，**不阻断 Public Alpha 或 v0.4 自托管开源发布**。详见 [12 · Mode Architecture](12-mode-architecture.md)。
+
+## 14. 全球模型网关可选兼容与数据治理（2026-11-17）
+
+个人自托管 Core 必须支持在**没有 Magpie 或中转 Gateway 时**通过已验证的 Direct Provider 完成核心流程。Magpie 仅是可选 Gateway Adapter，用户自行配置可达 Endpoint、Key、出站权限和可用模型列表，不能默认代理其私有对话和工具结果。第三方 Gateway 可能访问完整提示词与模型输出，因此 Data Flow、不同提供商的数据处理范围、密钥隔离、审计与撤销策略应覆盖这段路径。
+
+模型目录和协议兼容需要真实运行验证；模型路由组的逻辑名称、实际 Provider/Model、价格元数据来源和容灾情况可能不同，不可混为同一审计事实。个人 Agent 的业务授权、预算和完成判定始终由本地 Core 执行。完整边界及独立 MRT 测试见 [13 · Model Routing & Gateway](13-model-routing-gateway.md)，与 PA-24、PA-26、PA-27 协作，不能声称项目已经支持所有国家/模型。
