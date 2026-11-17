@@ -129,3 +129,9 @@ Cloudflare 是主选托管环境；单用户 DO 中承载多个独立会话是**
 产品长期允许用户选择「通用 / 编程 / 智能组织」快捷模式，但内部统一建模为 **WorkProfile（General/Coding/Research）× ExecutionStrategy（Direct/Delegated/Organization）**。Coding 决定领域能力与工具；智能组织决定任务依赖、分工、验收和经验沉淀，并非两个互斥的 Agent 实例。
 
 全平台共享一个 Task/Approval/Memory Core；MVP 中单 Router、最多两个 Worker、禁止任意高权限操作的边界不变。详细类型、Coding 工作区隔离、Organization DAG、模式版本和分期实施见 [12 · Mode Architecture](12-mode-architecture.md)。原三条主流程仍是 v0.2 的验收范围，不能因规划扩展而视作已实现。
+
+## 10. 多模型与中转网关（2026-11-17，长期增强项）
+
+长期将模型分配独立为 **ModelPolicy**，与 WorkProfile 和 ExecutionStrategy 可组合：Router 可选择低延迟模型，Coding/Research Worker 与智能组织 Workflow Node 可分别使用验证适配的模型；任务预算、数据出站、Provider 凭据和安全回退由单一 Core 强制执行。Magpie 等网关是**可选适配器**，不是本项目独立 Agent 系统，也不替代直接连接已支持模型供应商。
+
+**v0.2 不开发多模型网关或智能路由**；先验证真实单模型链路、权限和恢复。后续按 Session 级模型选择、可选 Gateway 集成、Node 级策略评测的顺序演进，具体见 [13 · Model Routing & Gateway](13-model-routing-gateway.md)。
