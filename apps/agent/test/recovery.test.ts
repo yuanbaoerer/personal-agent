@@ -224,6 +224,44 @@ describe("process restart recovery", () => {
     });
   });
 
+  it("fires a due reminder exactly once across a restart", async () => {
+    await withDir(async (path) => {
+      let current = new Date("2026-01-01T00:00:00.000Z");
+      const now = () => current;
+      let store = openStore(path);
+      let services = createServices({ store, now });
+      const schedule = await services.reminders.create({
+        ownerId: services.owner.id,
+        conversationId: services.conversation.id,
+        text: "drink water",
+        dueAt: new Date(current.getTime() + 60_000).toISOString(),
+        timezone: "Asia/Shanghai",
+      });
+      store.close();
+
+      current = new Date(current.getTime() + 61_000);
+      store = openStore(path);
+      services = createServices({ store, now });
+      const channel = new FakeChannel();
+      const dispatcher = new OutboxDispatcher({ store, channel, now });
+
+      await maintain(services, dispatcher);
+      assert.equal(
+        channel.sent.filter((request) => request.text === "drink water").length,
+        1,
+      );
+      assert.equal(services.schedules.get(schedule.id)?.status, "fired");
+
+      await maintain(services, dispatcher);
+      assert.equal(
+        channel.sent.filter((request) => request.text === "drink water").length,
+        1,
+      );
+      assert.equal(services.store.countOutbox("pending"), 0);
+      store.close();
+    });
+  });
+
   it("reconciles an action whose external write landed before the crash", async () => {
     await withDir(async (path) => {
       const now = () => new Date("2026-01-01T00:00:00.000Z");

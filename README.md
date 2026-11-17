@@ -64,7 +64,7 @@ npm start
 
 **2026-11-17 验证（PA-04 部分）：**
 
-- `npm run test:recovery`：6 个 file-backed SQLite 重启用例通过；覆盖 Inbox 路由前中断、Assignment 租约过期、Effect 租约过期、Task 创建后派工 effect 丢失、Action 外部已写但本地 unknown、`/status` 显示 needs_manual。
+- `npm run test:recovery`：7 个 file-backed SQLite 重启用例通过；覆盖 Inbox 路由前中断、Assignment 租约过期、Effect 租约过期、Task 创建后派工 effect 丢失、Action 外部已写但本地 unknown、Reminder 到期跨重启只外发一次、`/status` 显示 needs_manual。
 - `npm test`：135 个确定性测试通过（PA-04 时点）；`npm run typecheck`、`npm run deploy:dry-run` 通过。
 - 证据边界：E1（模拟进程重启）；真实 SIGKILL、Cloudflare DO 驱逐、真实渠道/Pi 会话恢复仍 pending。
 
@@ -93,7 +93,7 @@ npm start
 
 - `github.read` 只读连接器：仅 GET、Bearer token、拒绝重定向、repo 精确白名单、8s 超时、单次最多 20 项/200KB；支持 repo、commits、open issues、open pulls、PR 状态。
 - 错误区分 401/403/429（含 retry-after）/404/timeout；返回来源 URL；`github` Mandate resource 与工具名双重校验。
-- `npm test`：162 个确定性测试通过（当前）；token 缺失或白名单为空时工具不注册。
+- `npm test`：163 个确定性测试通过（当前）；token 缺失或白名单为空时工具不注册。
 - 证据边界：E1（fake GitHub API）；真实 token/仓库 G1、真实 Feishu 演示与只读自动审批策略 pending。
 
 ## 产品方向

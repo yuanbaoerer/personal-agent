@@ -24,7 +24,7 @@
 | Outbox traceId + `/诊断`/`/admin/diagnostics` 安全诊断（无正文/goal/args） | token/费用、预算、用量报表、真实 G2 链路 |
 | 模型解读记忆/提醒的确认项（最长 10 分钟，提醒以 dueAt 为上限；owner 校验、取消/过期不写入）；显式命令即时 | 项目范围隔离、Worker 记忆注入、真实误触发负例 |
 | GitHub 只读连接器：repo 白名单、GET-only、超时/大小/分页上限、资源 scope、来源 URL、可区分错误 | 真实 token/仓库 G1、只读自动审批策略 |
-| 162 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
+| 163 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
 
 ## 2. 下一步待办
 
@@ -108,10 +108,11 @@ npm run test:recovery   # apps/agent/test/recovery.test.ts
 | Effect 已领取、handler 未完成 | 手动 claim 后关闭，时钟推进超过租约 | 重启 `recoverExpired` 回收并执行，任务完成 |
 | Task 已创建、派工 effect 未入队 | 删除派工 effect 后关闭，重放同一 Router 决策 | `TaskService.create` 的幂等修复重新入队，任务不再永久 queued |
 | Action 外部写已生效、本地 unknown | mock 灯写状态后抛 `ToolUnknownError`，不处理 reconcile 即关闭 | 重启后 reconcile 依据持久灯状态判定 succeeded，证据含 `reconciled:true` |
+| Reminder 已创建、未到点即重启 | 关闭 SQLite，时钟推进超过 dueAt | 重启后只外发一次；再次维护不重复，schedule 为 fired |
 | needs_manual 不可见 | Outbox 进入 `needs_manual` | `/status` 显示“需人工 N 条” |
 | Outbox 平台已接受、本地未记 | 既有 `outbox.test.ts` 发送租约中断场景 | 有查询能力时按 businessKey 核对，不重复发送 |
 
-边界：以上均为 E1（file-backed SQLite + mock 灯 + 模拟进程重建）。未覆盖：真实 SIGKILL 时序、Cloudflare DO 驱逐、Pi 会话/提醒时钟跨重启、真实飞书回执与真实写工具。PA-04 保持 OPEN。
+边界：以上均为 E1（file-backed SQLite + mock 灯 + 模拟进程重建）。未覆盖：真实 SIGKILL 时序、Cloudflare DO 驱逐、Pi 会话跨重启、真实飞书回执与真实写工具。PA-04 保持 OPEN。
 
 ### 2.5 2026-11-17 实施进展（PA-05 非阻塞调度，E1 部分）
 
