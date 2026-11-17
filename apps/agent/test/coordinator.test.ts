@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { inbound } from "./helpers.ts";
+import { ASSIGNMENT_WAIT_SLICE_MS } from "../src/coordinator/tasks.ts";
 import { createServices, sendText } from "./services.ts";
 
 const READY_REPORT = {
@@ -169,7 +170,8 @@ describe("task and assignment coordination", () => {
 
     assert.equal(outcome.status, "retry");
     assert.equal(outcome.status === "retry" ? outcome.reason : "", "runtime still pending");
-    assert.equal(calls[0]?.timeoutMs, 20_000);
+    assert.equal(calls[0]?.timeoutMs, ASSIGNMENT_WAIT_SLICE_MS);
+    assert.equal(outcome.status === "retry" ? outcome.maxAttempts : 0, 1_000);
     assert.equal(services.tasks.get(task.id)?.status, "running");
   });
 

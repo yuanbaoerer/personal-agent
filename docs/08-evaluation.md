@@ -42,6 +42,8 @@ K13 与 K14 必须包含至少一个可控竞态复现测试；应用的锁、�
 
 **恢复证据（PA-04 部分，E1）**：`npm run test:recovery` 使用 file-backed SQLite 重建进程，覆盖 Inbox 已受理但未路由、Assignment/Effect 租约过期、Task 创建后派工 effect 丢失、Action 外部写已生效但本地 unknown 后 reconcile、`needs_manual` 在 `/status` 可见；Outbox 发送中断的 businessKey 核对由 `outbox.test.ts` 覆盖。真实 SIGKILL、DO 驱逐、Pi 会话与提醒时钟跨重启、真实飞书回执仍为 pending，不能据此宣称 E4 通过。
 
+**非阻塞调度（PA-05 部分，E1）**：Assignment 等待按 100ms 切片轮询，pending 使用 250ms–5s 退避；Router 等待按 250ms 切片轮询，pending 使用 250ms–2s 退避。两个 pending Worker 与普通 effect 同轮处理时普通 effect 不被饿死；一个 wait handler 被持有时 `/status`/`/cancel` 仍通过 ingress 受理（E1 smoke，不是 p95 证据）。真实模型长生成、平台延迟、慢工具超时/隔离和物理并发压测仍 pending，不能据此宣称 E3/E4。
+
 ## 3. 40 场景结构
 
 保留原有 40 场景的 8+10+10+8+4 分类：渠道/投递 8、任务协作 10、审批/权限 10、中断/恢复 8、记忆/提醒 4。**K13 和 K14 是这 40 场景之内的附加契约标签**，不要为了增项把总数改成 42，也不能通过删旧场景提成功率。

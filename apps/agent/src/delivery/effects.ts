@@ -7,7 +7,7 @@ export type EffectOutcome =
       status: "retry";
       at: string;
       reason: string;
-      /** Long waits (capacity, a running model) override the global cap. */
+      /** Long waits (capacity, model polls, transient infra errors) override the global cap. */
       maxAttempts?: number;
     }
   | { status: "failed"; reason: string };

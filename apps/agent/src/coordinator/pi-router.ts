@@ -5,6 +5,19 @@ import type { RouterModel } from "./router.ts";
 
 const ROUTER_SESSION_KEY = "router.session_id";
 
+/** One router poll slice; the durable submission is re-attached on retry. */
+export const ROUTER_WAIT_SLICE_MS = 250;
+export const ROUTER_RETRY_BASE_MS = 250;
+export const ROUTER_RETRY_MAX_MS = 2_000;
+export const ROUTER_MAX_ATTEMPTS = 1_000;
+
+export class RouterPendingError extends Error {
+  constructor() {
+    super("router model still pending");
+    this.name = "RouterPendingError";
+  }
+}
+
 const ALLOWED_RESOURCES: Record<string, true> = { chat: true, weather: true };
 const ALLOWED_TOOLS: Record<string, true> = { "lamp.set_brightness": true };
 
@@ -49,10 +62,10 @@ export class PiRouterModel implements RouterModel {
       operationId,
       "app.router",
     );
-    const answer = await this.#runtime.wait(sessionId, operationId, 20_000);
+    const answer = await this.#runtime.wait(sessionId, operationId, ROUTER_WAIT_SLICE_MS);
     if (answer.status === "pending") {
-      // The effect dispatcher will retry; the submission is already durable.
-      throw new Error("router model still pending");
+      // The effect retry re-attaches to the same durable submission.
+      throw new RouterPendingError();
     }
     if (answer.status === "unanswered") {
       console.warn("router_model_unanswered", { reason: answer.reason });

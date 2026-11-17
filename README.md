@@ -17,7 +17,7 @@
 | Inbox | `channel + account + message_id` 唯一，重复事件返回原受理 | 已接 Router；真实 p2p `/status` 已受理 |
 | Outbox | 业务键唯一、按 task 分组排序、租约、重试、unknown、崩溃后按业务键核对 | 真实平台已接受 `om_`；无查询接口时保持 unknown |
 | Router | 确定性命令优先；模型 JSON 决策；补充/回答、修改、提醒列表/取消、任务前缀解析 | 真实模型质量需重复评测 |
-| Task / Assignment | Task 状态机、Mandate、revision、租约、fencingToken、心跳、最多两个 Worker；不可变 TaskInput 序号，任何未覆盖新输入的旧 Worker 报告都不能推进任务 | 10 分钟 assignment lifetime；长任务跨轮恢复需真实部署验证；真实模型 G2 补充场景待验证 |
+| Task / Assignment | Task 状态机、Mandate、revision、租约、fencingToken、心跳、最多两个 Worker；不可变 TaskInput 序号，任何未覆盖新输入的旧 Worker 报告都不能推进任务；模型等待按 100ms 切片轮询，不长时间占用 Effect drain | 10 分钟 assignment lifetime；长任务跨轮恢复需真实部署验证；真实模型 G2 补充场景待验证 |
 | 审批 / 动作 | 参数绑定、nonce、一次性消费、原子审批、执行前重核 Task 状态/revision/Mandate、取消/修订后拒绝重试、unknown/reconcile、mock 灯 | mock 灯是程序化工具；MCP 桥接与真机未接；真实外部 API 未验证 |
 | 崩溃/重启恢复 | file-backed SQLite 重启脚本：Inbox 未路由、Assignment 租约过期、Action 外部已写未落库、needs_manual 可见；Effect/Outbox 租约回收 | E1 模拟重启；真实 SIGKILL、DO 驱逐、真实渠道恢复未验证 |
 | 提醒 / 记忆 | 一次性提醒、runKey、TTL、聊天取消/列表；显式记忆查改删 | 周期提醒与语义检索未做 |
@@ -63,8 +63,15 @@ npm start
 **2026-11-17 验证（PA-04 部分）：**
 
 - `npm run test:recovery`：6 个 file-backed SQLite 重启用例通过；覆盖 Inbox 路由前中断、Assignment 租约过期、Effect 租约过期、Task 创建后派工 effect 丢失、Action 外部已写但本地 unknown、`/status` 显示 needs_manual。
-- `npm test`：135 个确定性测试通过（当前）；`npm run typecheck`、`npm run deploy:dry-run` 通过。
+- `npm test`：135 个确定性测试通过（PA-04 时点）；`npm run typecheck`、`npm run deploy:dry-run` 通过。
 - 证据边界：E1（模拟进程重启）；真实 SIGKILL、Cloudflare DO 驱逐、真实渠道/Pi 会话恢复仍 pending。
+
+**2026-11-17 验证（PA-05 部分）：**
+
+- `npm test`：139 个确定性测试通过（当前）。两个 pending Worker 与一个普通 effect 同轮处理时，普通 effect 不被长等待饿死；两个 Worker 同时保持 active。
+- 一个 wait handler 被持有（drain 单并发）时，10 次 `/status` 与 1 次 `/cancel` 仍通过 ingress 受理；这是 E1 ingress smoke，不构成 p95 或真实平台延迟证据。
+- 模型等待改为 100ms 切片 + 250ms–5s 退避；Router 等待改为 250ms 切片 + 250ms–2s 退避，pending 映射为有界 retry。
+- 证据边界：fake slow runtime；真实模型长生成、真实飞书平台延迟与慢工具超时/隔离仍 pending。
 
 ## 产品方向
 

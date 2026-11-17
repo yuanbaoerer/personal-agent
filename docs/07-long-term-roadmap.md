@@ -152,7 +152,9 @@ ID 是工作流标识；GitHub Issue 编号以实际创建结果为准。实施�
 
 PA-03 的执行前授权重核已落地（E1）：claim 在同一事务内校验 Task 状态/revision/Mandate，旧审批撤销并消费，审批入口同样重核；真实写工具与平台审批点击仍未验证，PA-03 保持 OPEN。
 
-PA-04 的可重跑重启脚本已落地（E1）：覆盖 Inbox 路由前中断、Assignment 租约过期、Action 外部已写但本地 unknown、needs_manual 可见；真实 SIGKILL、DO 驱逐、Pi/提醒跨重启与真实渠道恢复仍 pending，PA-04 保持 OPEN。当前执行顺序：PA-05/06（可并行）→ PA-04 的 E4 与 PA-01 的 E3（环境/凭据就绪时）。详见 [06 · 待办 §2.4](06-next-steps-and-runbook.md)。
+PA-04 的可重跑重启脚本已落地（E1）：覆盖 Inbox 路由前中断、Assignment 租约过期、Action 外部已写但本地 unknown、needs_manual 可见；真实 SIGKILL、DO 驱逐、Pi/提醒跨重启与真实渠道恢复仍 pending，PA-04 保持 OPEN。
+
+PA-05 的非阻塞调度已落地 E1：Assignment 等待改为 100ms 切片 + 250ms–5s 退避，Router 等待改为 250ms 切片 + 250ms–2s 退避；两个 Worker 等待期间普通 effect 与 `/status`/`/cancel` 不再被长等待拖住。真实模型长生成、平台延迟与慢工具超时/隔离未测，PA-05 保持 OPEN；下一实施项为 PA-06。PA-04 的 E4 与 PA-01 的 E3 待环境/凭据就绪。详见 [06 · 待办 §2.5](06-next-steps-and-runbook.md)。
 
 ## 9. 风险、监控指标与停止规则
 

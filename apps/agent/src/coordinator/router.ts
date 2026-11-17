@@ -15,6 +15,12 @@ import type { ReminderService } from "../personal/reminders.ts";
 import type { EffectDispatcher, EffectOutcome } from "../delivery/effects.ts";
 import type { ActionService } from "../actions/service.ts";
 import type { TaskService } from "./tasks.ts";
+import {
+  RouterPendingError,
+  ROUTER_MAX_ATTEMPTS,
+  ROUTER_RETRY_BASE_MS,
+  ROUTER_RETRY_MAX_MS,
+} from "./pi-router.ts";
 import type { InboundHandler } from "./responder.ts";
 import type { WakeScheduler } from "../runtime/types.ts";
 
@@ -148,7 +154,9 @@ export class Router implements InboundHandler {
   }
 
   install(dispatcher: EffectDispatcher): void {
-    dispatcher.register("router.route", (effect) => this.handleRoute(effect.payload));
+    dispatcher.register("router.route", (effect) =>
+      this.handleRoute(effect.payload, effect.attempts),
+    );
   }
 
   async handle(event: InboxRecord, _store: Store): Promise<ReplyDraft[]> {
@@ -175,7 +183,10 @@ export class Router implements InboundHandler {
     return [{ purpose: "ack", text: "已收到。" }];
   }
 
-  async handleRoute(payload: Record<string, unknown>): Promise<EffectOutcome> {
+  async handleRoute(
+    payload: Record<string, unknown>,
+    attempts = 1,
+  ): Promise<EffectOutcome> {
     const ownerId = typeof payload.ownerId === "string" ? payload.ownerId : undefined;
     const conversationId =
       typeof payload.conversationId === "string" ? payload.conversationId : undefined;
@@ -194,10 +205,25 @@ export class Router implements InboundHandler {
         inboxId,
       });
     } catch (error) {
+      if (error instanceof RouterPendingError) {
+        // The model run is still durable; poll in the background instead of
+        // holding the shared effect drain for the whole generation.
+        const delay = Math.min(
+          ROUTER_RETRY_MAX_MS,
+          ROUTER_RETRY_BASE_MS * 2 ** Math.min(attempts - 1, 3),
+        );
+        return {
+          status: "retry",
+          at: new Date(this.#now().getTime() + delay).toISOString(),
+          reason: error.message,
+          maxAttempts: ROUTER_MAX_ATTEMPTS,
+        };
+      }
       return {
         status: "retry",
         at: new Date(this.#now().getTime() + 5_000).toISOString(),
         reason: `router model failed: ${error instanceof Error ? error.message : String(error)}`,
+        maxAttempts: ROUTER_MAX_ATTEMPTS,
       };
     }
 

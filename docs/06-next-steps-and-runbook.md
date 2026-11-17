@@ -20,7 +20,8 @@
 | 单一组合根 `apps/agent/src/app.ts`，Node 与 DO 只注入适配层 | — |
 | 不可变 TaskInput（`pa_task_inputs`，按 task 单调 seq，同一 inbox 幂等）与 Assignment 输入屏障；旧 Worker 报告不能绕过补充输入 | 真实模型 G2、SIGKILL 中断窗口 |
 | file-backed 重启脚本：Inbox 未路由、Assignment/Effect 租约过期、派工 effect 丢失、Action 外部已写但 unknown、needs_manual 可见 | 真实 SIGKILL、DO 驱逐、真实渠道/Pi 恢复 |
-| 135 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
+| 非阻塞调度：Assignment/Router 短切片轮询，两个 Worker 等待时普通 effect 与 status/cancel 不被长等待拖住 | 真实模型长生成、平台延迟、物理并发压测 |
+| 139 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
 
 ## 2. 下一步待办
 
@@ -108,6 +109,20 @@ npm run test:recovery   # apps/agent/test/recovery.test.ts
 | Outbox 平台已接受、本地未记 | 既有 `outbox.test.ts` 发送租约中断场景 | 有查询能力时按 businessKey 核对，不重复发送 |
 
 边界：以上均为 E1（file-backed SQLite + mock 灯 + 模拟进程重建）。未覆盖：真实 SIGKILL 时序、Cloudflare DO 驱逐、Pi 会话/提醒时钟跨重启、真实飞书回执与真实写工具。PA-04 保持 OPEN。
+
+### 2.5 2026-11-17 实施进展（PA-05 非阻塞调度，E1 部分）
+
+当前优先级：**PA-05（本轮完成 E1 调度切片）→ PA-06 可观测性 → PA-04 的 E4 / PA-01 的 E3（环境/凭据就绪时）**。
+
+| 内容 | 实现 | 证据 |
+| --- | --- | --- |
+| Assignment 等待切片 | `handleWait` 每次只等 100ms；pending 返回 retry，退避 250ms→5s，效果上限 1000，租约继续延长 | `coordinator.test.ts` 断言 timeout=100ms、maxAttempts=1000 |
+| Router 等待切片 | `PiRouterModel` 等待 250ms；pending 抛 `RouterPendingError`，Router 返回 250ms→2s 退避的有界 retry | `scheduling.test.ts` “passes the bounded slice...” 与 “turns a pending router model...” |
+| 双 Worker 并发 | 两个 Assignment 可同时 active；slow wait 不再阻塞同一 drain 中的普通 effect | “does not let two slow worker waits starve another effect” |
+| 人工指令响应 | 一个 wait handler 被持有（drain 单并发）时，`/status` 与 `/cancel` 仍走 ingress 持久受理 | E1 ingress smoke；不构成 p95 或并发阻塞证据 |
+| 并发上限 | Worker 名额与工具并发上限未改变；等待轮询不新增 Worker | 既有 K05/K06 测试 |
+
+边界：以上为 E1（fake slow runtime + 合成延迟）；真实模型长生成、真实飞书平台延迟、真实慢工具超时/隔离与物理并发压测仍 pending，PA-05 保持 OPEN。
 
 ## 3. 环境与密钥
 

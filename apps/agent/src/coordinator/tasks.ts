@@ -61,6 +61,11 @@ const DEFAULT_MANDATE = {
   tools: [],
 };
 
+/** One poll slice; a model wait must not hold the shared effect drain. */
+export const ASSIGNMENT_WAIT_SLICE_MS = 100;
+const WAIT_BACKOFF_BASE_MS = 250;
+const WAIT_BACKOFF_MAX_MS = 5_000;
+
 /**
  * Owns Task and Assignment state transitions. Worker reports are accepted
  * only when their assignment is still active and the fencing token and task
@@ -101,7 +106,9 @@ export class TaskService {
 
   install(dispatcher: EffectDispatcher): void {
     dispatcher.register("task.dispatch", (effect) => this.handleDispatch(effect.payload));
-    dispatcher.register("assignment.wait", (effect) => this.handleWait(effect.payload));
+    dispatcher.register("assignment.wait", (effect) =>
+      this.handleWait(effect.payload, effect.attempts),
+    );
     dispatcher.register("task.interrupt", (effect) => this.handleInterrupt(effect.payload));
   }
 
@@ -518,7 +525,10 @@ export class TaskService {
     }
   }
 
-  async handleWait(payload: Record<string, unknown>): Promise<EffectOutcome> {
+  async handleWait(
+    payload: Record<string, unknown>,
+    attempts = 1,
+  ): Promise<EffectOutcome> {
     const assignmentId =
       typeof payload.assignmentId === "string" ? payload.assignmentId : undefined;
     const sessionId = typeof payload.sessionId === "string" ? payload.sessionId : undefined;
@@ -535,7 +545,13 @@ export class TaskService {
 
     let answer;
     try {
-      answer = await this.#runtime.wait(sessionId, operationId, 20_000);
+      // Poll one short slice. The submission stays durable, so the next
+      // effect retry re-attaches without submitting the work again.
+      answer = await this.#runtime.wait(
+        sessionId,
+        operationId,
+        ASSIGNMENT_WAIT_SLICE_MS,
+      );
     } catch (error) {
       return {
         status: "retry",
@@ -563,9 +579,13 @@ export class TaskService {
         new Date(nowDate.getTime() + this.#leaseMs).toISOString(),
         nowDate.toISOString(),
       );
+      const delay = Math.min(
+        WAIT_BACKOFF_MAX_MS,
+        WAIT_BACKOFF_BASE_MS * 2 ** Math.min(attempts - 1, 5),
+      );
       return {
         status: "retry",
-        at: new Date(nowDate.getTime() + 1_000).toISOString(),
+        at: new Date(nowDate.getTime() + delay).toISOString(),
         reason: "runtime still pending",
         maxAttempts: 1_000,
       };
