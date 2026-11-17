@@ -20,6 +20,7 @@
 | Task / Assignment | Task 状态机、Mandate、revision、租约、fencingToken、心跳、最多两个 Worker；不可变 TaskInput 序号，任何未覆盖新输入的旧 Worker 报告都不能推进任务；模型等待按 100ms 切片轮询，不长时间占用 Effect drain | 10 分钟 assignment lifetime；长任务跨轮恢复需真实部署验证；真实模型 G2 补充场景待验证 |
 | 审批 / 动作 | 参数绑定、nonce、一次性消费、原子审批、执行前重核 Task 状态/revision/Mandate、取消/修订后拒绝重试、unknown/reconcile、mock 灯 | mock 灯是程序化工具；MCP 桥接与真机未接；真实外部 API 未验证 |
 | 崩溃/重启恢复 | file-backed SQLite 重启脚本：Inbox 未路由、Assignment 租约过期、Action 外部已写未落库、needs_manual 可见；Effect/Outbox 租约回收 | E1 模拟重启；真实 SIGKILL、DO 驱逐、真实渠道恢复未验证 |
+| 可观测/诊断 | Outbox traceId 贯通 inbox/task/schedule；`/诊断` 与 `/admin/diagnostics` 输出过期 Assignment、unknown Action、unknown/needs_manual 投递；诊断不返回消息正文、goal、Action args 或自由文本 lastError | token/费用、预算、用量报表未实现；真实 G2 链路追踪待验证 |
 | 提醒 / 记忆 | 一次性提醒、runKey、TTL、聊天取消/列表；显式记忆查改删 | 周期提醒与语义检索未做 |
 | 本地服务 | `POST /webhooks/feishu`、`GET /healthz`、Node SQLite + 进程内 pi-durable | 配置 `OPENCODE_API_KEY` 后本地执行模型任务；未配置时模型任务明确失败 |
 | Cloudflare DO | `Assistant` + PiHarness + Lifecycle、DO SQLite 中的 `pa_*`、webhook、jobs | 已真实部署；飞书回调入口超时待解；驱逐恢复未验证 |
@@ -68,10 +69,17 @@ npm start
 
 **2026-11-17 验证（PA-05 部分）：**
 
-- `npm test`：139 个确定性测试通过（当前）。两个 pending Worker 与一个普通 effect 同轮处理时，普通 effect 不被长等待饿死；两个 Worker 同时保持 active。
+- `npm test`：139 个确定性测试通过（PA-05 时点）。两个 pending Worker 与一个普通 effect 同轮处理时，普通 effect 不被长等待饿死；两个 Worker 同时保持 active。
 - 一个 wait handler 被持有（drain 单并发）时，10 次 `/status` 与 1 次 `/cancel` 仍通过 ingress 受理；这是 E1 ingress smoke，不构成 p95 或真实平台延迟证据。
 - 模型等待改为 100ms 切片 + 250ms–5s 退避；Router 等待改为 250ms 切片 + 250ms–2s 退避，pending 映射为有界 retry。
 - 证据边界：fake slow runtime；真实模型长生成、真实飞书平台延迟与慢工具超时/隔离仍 pending。
+
+**2026-11-17 验证（PA-06 部分）：**
+
+- Outbox 新增 `trace_id`（schema v6），Ingress/Router/Task/Action/Reminder 投递均带因果 trace；真实 DB 副本迁移冒烟通过。
+- `/诊断` 与 `GET /admin/diagnostics` 输出过期 Assignment、unknown Action、unknown/needs_manual/failed 投递；`/admin/recent` 不再返回消息正文、goal 或 result。
+- `npm test`：140 个确定性测试通过（当前）；新增测试断言诊断快照与格式化文本不包含私聊正文。
+- 证据边界：E1；token/费用、预算、用量报表与真实 G2 链路追踪未实现。
 
 ## 产品方向
 

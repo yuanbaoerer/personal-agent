@@ -679,6 +679,7 @@ export class ActionService {
       purpose,
       text,
       createdAt: now,
+      traceId: `task:${action.taskId}`,
     });
   }
 }

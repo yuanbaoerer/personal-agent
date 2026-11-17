@@ -262,6 +262,11 @@ const migrations: readonly (readonly string[])[] = [
      FROM pa_tasks
      WHERE owner_input IS NOT NULL AND length(owner_input) > 0`,
   ],
+  [
+    // Causal trace for delivery rows; payload text stays out of diagnostics.
+    `ALTER TABLE pa_outbox ADD COLUMN trace_id TEXT`,
+    `CREATE INDEX pa_outbox_trace_idx ON pa_outbox (trace_id)`,
+  ],
 ];
 
 const SCHEMA_VERSION_KEY = "schema_version";

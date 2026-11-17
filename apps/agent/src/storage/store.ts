@@ -45,6 +45,19 @@ export interface NewOutbox {
   text: string;
   createdAt: string;
   nextAttemptAt?: string;
+  traceId?: string;
+}
+
+export interface OutboxDiagnostic {
+  id: string;
+  businessKey: string;
+  ownerId: string;
+  purpose: OutboxPurpose;
+  status: OutboxStatus;
+  attempts: number;
+  traceId?: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface AuditEvent {
@@ -114,6 +127,7 @@ interface OutboxRow {
   attempts: number;
   next_attempt_at: string;
   lease_until: string | null;
+  trace_id: string | null;
   platform_message_id: string | null;
   last_error: string | null;
   created_at: string;
@@ -186,6 +200,7 @@ function mapOutbox(row: OutboxRow): OutboxRecord {
     attempts: row.attempts,
     nextAttemptAt: row.next_attempt_at,
     leaseUntil: row.lease_until ?? undefined,
+    traceId: row.trace_id ?? undefined,
     platformMessageId: row.platform_message_id ?? undefined,
     lastError: row.last_error ?? undefined,
     createdAt: row.created_at,
@@ -380,8 +395,8 @@ export class Store {
     const inserted = this.#db.all<OutboxRow>(
       `INSERT INTO pa_outbox
         (id, business_key, owner_id, channel, account_id, conversation_id, task_id,
-         purpose, text, status, attempts, next_attempt_at, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?)
+         purpose, text, status, attempts, next_attempt_at, trace_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?, ?)
        ON CONFLICT (business_key) DO NOTHING
        RETURNING *`,
       randomUUID(),
@@ -394,6 +409,7 @@ export class Store {
       input.purpose,
       input.text,
       input.nextAttemptAt ?? input.createdAt,
+      input.traceId ?? null,
       input.createdAt,
       input.createdAt,
     )[0];
@@ -566,6 +582,51 @@ export class Store {
         limit,
       )
       .map(mapOutbox);
+  }
+
+  /**
+   * Delivery rows needing attention, without message text. Diagnostics must
+   * never leak private conversation content.
+   */
+  listOutboxDiagnostics(
+    statuses: OutboxStatus[],
+    limit = 20,
+    ownerId?: string,
+  ): OutboxDiagnostic[] {
+    const placeholders = statuses.map(() => "?").join(", ");
+    const rows = this.#db.all<{
+      id: string;
+      business_key: string;
+      owner_id: string;
+      purpose: OutboxPurpose;
+      status: OutboxStatus;
+      attempts: number;
+      trace_id: string | null;
+      created_at: string;
+      updated_at: string;
+    }>(
+      `SELECT id, business_key, owner_id, purpose, status, attempts,
+              trace_id, created_at, updated_at
+       FROM pa_outbox
+       WHERE status IN (${placeholders}) AND (? IS NULL OR owner_id = ?)
+       ORDER BY updated_at DESC
+       LIMIT ?`,
+      ...statuses,
+      ownerId ?? null,
+      ownerId ?? null,
+      limit,
+    );
+    return rows.map((row) => ({
+      id: row.id,
+      businessKey: row.business_key,
+      ownerId: row.owner_id,
+      purpose: row.purpose,
+      status: row.status,
+      attempts: Number(row.attempts),
+      traceId: row.trace_id ?? undefined,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
   }
 
   nextOutboxDueAt(): string | undefined {

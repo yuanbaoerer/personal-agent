@@ -21,7 +21,8 @@
 | 不可变 TaskInput（`pa_task_inputs`，按 task 单调 seq，同一 inbox 幂等）与 Assignment 输入屏障；旧 Worker 报告不能绕过补充输入 | 真实模型 G2、SIGKILL 中断窗口 |
 | file-backed 重启脚本：Inbox 未路由、Assignment/Effect 租约过期、派工 effect 丢失、Action 外部已写但 unknown、needs_manual 可见 | 真实 SIGKILL、DO 驱逐、真实渠道/Pi 恢复 |
 | 非阻塞调度：Assignment/Router 短切片轮询，两个 Worker 等待时普通 effect 与 status/cancel 不被长等待拖住 | 真实模型长生成、平台延迟、物理并发压测 |
-| 139 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
+| Outbox traceId + `/诊断`/`/admin/diagnostics` 安全诊断（无正文/goal/args） | token/费用、预算、用量报表、真实 G2 链路 |
+| 140 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
 
 ## 2. 下一步待办
 
@@ -112,7 +113,7 @@ npm run test:recovery   # apps/agent/test/recovery.test.ts
 
 ### 2.5 2026-11-17 实施进展（PA-05 非阻塞调度，E1 部分）
 
-当前优先级：**PA-05（本轮完成 E1 调度切片）→ PA-06 可观测性 → PA-04 的 E4 / PA-01 的 E3（环境/凭据就绪时）**。
+当前优先级：**PA-06（可观测/诊断已落地 E1；剩余预算/用量）→ PA-07 → PA-04 的 E4 / PA-01 的 E3（环境/凭据就绪时）**。
 
 | 内容 | 实现 | 证据 |
 | --- | --- | --- |
@@ -123,6 +124,18 @@ npm run test:recovery   # apps/agent/test/recovery.test.ts
 | 并发上限 | Worker 名额与工具并发上限未改变；等待轮询不新增 Worker | 既有 K05/K06 测试 |
 
 边界：以上为 E1（fake slow runtime + 合成延迟）；真实模型长生成、真实飞书平台延迟、真实慢工具超时/隔离与物理并发压测仍 pending，PA-05 保持 OPEN。
+
+### 2.6 2026-11-17 实施进展（PA-06 可观测/诊断，E1 部分）
+
+| 内容 | 实现 | 证据 |
+| --- | --- | --- |
+| 投递 trace | `pa_outbox.trace_id`（schema v6）；Inbox/Router 用 `inbox:*`，Task/Action 用 `task:*`，Reminder 用 `schedule:*` | `observability.test.ts` 断言 ingress 回复 trace；真实库副本迁移 v6 |
+| 所有者诊断 | `/诊断` 输出过期 Assignment、unknown Action、unknown/needs_manual/failed 投递、Effect 计数与安全处理提示 | 同上；格式化文本不含私聊正文 |
+| 管理员诊断 | `GET /admin/diagnostics` 返回结构化快照；`/admin/recent` 移除 goal/text/result | `infra/src/worker.ts`；鉴权沿用 ADMIN_TOKEN |
+| 脱敏 | 诊断结构不含消息正文、goal、Action args 或自由文本 lastError；`listOutboxDiagnostics` 只查询安全列，`/admin/recent` 同样移除 lastError | 测试断言 SECRET 与工具错误文本不出现在 JSON/文本中 |
+| 待定 | token/费用采集、单 Task/每日硬预算、用量报表、日志全链路脱敏策略 | 需运行时 usage 接口与预算口径决策 |
+
+边界：E1；真实 G2 因果链、平台回执、token 用量与预算执行未验证。PA-06 保持 OPEN。
 
 ## 3. 环境与密钥
 
@@ -199,9 +212,10 @@ npm run dev:cloudflare
 curl -s http://127.0.0.1:8787/healthz
 curl -s -H "authorization: Bearer $ADMIN_TOKEN" http://127.0.0.1:8787/admin/status
 curl -s -H "authorization: Bearer $ADMIN_TOKEN" http://127.0.0.1:8787/admin/recent
+curl -s -H "authorization: Bearer $ADMIN_TOKEN" http://127.0.0.1:8787/admin/diagnostics
 ```
 
-`/ask`、`/admin/status`、`/admin/recent` 没有有效 `ADMIN_TOKEN` 时返回 401；未配置 token 时返回 503。`/webhooks/feishu` 在缺少飞书凭据时返回 503。不要把这些入口直接暴露到公网。
+`/ask`、`/admin/status`、`/admin/recent`、`/admin/diagnostics` 没有有效 `ADMIN_TOKEN` 时返回 401；未配置 token 时返回 503。`/webhooks/feishu` 在缺少飞书凭据时返回 503。不要把这些入口直接暴露到公网。
 
 ### 4.4 验证
 

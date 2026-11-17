@@ -14,6 +14,7 @@ import type { MemoryService } from "../personal/memory.ts";
 import type { ReminderService } from "../personal/reminders.ts";
 import type { EffectDispatcher, EffectOutcome } from "../delivery/effects.ts";
 import type { ActionService } from "../actions/service.ts";
+import { buildDiagnostics, formatDiagnostics } from "../observability/diagnostics.ts";
 import type { TaskService } from "./tasks.ts";
 import {
   RouterPendingError,
@@ -484,6 +485,20 @@ export class Router implements InboundHandler {
       return [{ purpose: "status", text: this.statusText(ownerId) }];
     }
 
+    if (text === "/诊断" || text === "诊断") {
+      const snapshot = buildDiagnostics(
+        {
+          store: this.#store,
+          tasks: this.#tasks,
+          actions: this.#actions,
+          effects: this.#effects,
+        },
+        now,
+        { ownerId, limit: 10 },
+      );
+      return [{ purpose: "status", text: formatDiagnostics(snapshot) }];
+    }
+
     if (text === "/tasks" || text === "任务") {
       const tasks = this.#tasks.listByOwner(ownerId);
       if (tasks.length === 0) {
@@ -653,6 +668,7 @@ export class Router implements InboundHandler {
           purpose: "failure",
           text: `无法创建提醒：${error instanceof Error ? error.message : String(error)}`,
           createdAt: now,
+          traceId: `inbox:${event.id}`,
         });
       }
       return [];
@@ -687,7 +703,7 @@ export class Router implements InboundHandler {
           purpose: "status",
           text: [
             "可用命令：",
-            "/status 状态；/tasks 任务；/cancel <taskId 或前缀>",
+            "/status 状态；/诊断 诊断；/tasks 任务；/cancel <taskId 或前缀>",
             "/补充 <taskId> <内容>；/回答 <taskId> <内容>",
             "/修改 <taskId> <新目标>；/修改 <taskId> 目标=... 完成条件=...",
             "/approve <actionId> <nonce> [argsHash revision]；/deny 同上",
@@ -719,6 +735,7 @@ export class Router implements InboundHandler {
       purpose,
       text,
       createdAt: this.#now().toISOString(),
+      traceId: `inbox:${context.inboxId}`,
     });
   }
 }

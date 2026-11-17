@@ -44,6 +44,8 @@ K13 与 K14 必须包含至少一个可控竞态复现测试；应用的锁、�
 
 **非阻塞调度（PA-05 部分，E1）**：Assignment 等待按 100ms 切片轮询，pending 使用 250ms–5s 退避；Router 等待按 250ms 切片轮询，pending 使用 250ms–2s 退避。两个 pending Worker 与普通 effect 同轮处理时普通 effect 不被饿死；一个 wait handler 被持有时 `/status`/`/cancel` 仍通过 ingress 受理（E1 smoke，不是 p95 证据）。真实模型长生成、平台延迟、慢工具超时/隔离和物理并发压测仍 pending，不能据此宣称 E3/E4。
 
+**可观测/诊断（PA-06 部分，E1）**：Outbox 增加 `trace_id`（schema v6），Inbox/Router/Task/Action/Reminder 投递带因果 trace；`/诊断` 与 `/admin/diagnostics` 列出过期 Assignment、unknown Action、unknown/needs_manual/failed 投递与 Effect 计数，不含消息正文、goal、Action args 或自由文本 lastError；`/admin/recent` 已移除正文与错误文本。token/费用、硬预算、用量报表、真实 G2 全链路仍未验证。
+
 ## 3. 40 场景结构
 
 保留原有 40 场景的 8+10+10+8+4 分类：渠道/投递 8、任务协作 10、审批/权限 10、中断/恢复 8、记忆/提醒 4。**K13 和 K14 是这 40 场景之内的附加契约标签**，不要为了增项把总数改成 42，也不能通过删旧场景提成功率。

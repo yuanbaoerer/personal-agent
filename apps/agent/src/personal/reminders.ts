@@ -145,6 +145,7 @@ export class ReminderService {
         purpose: "reminder",
         text: schedule.text,
         createdAt: now.toISOString(),
+        traceId: `schedule:${schedule.id}`,
       });
     }
     this.#store.recordAudit({
@@ -219,6 +220,7 @@ export class ReminderService {
       purpose,
       text,
       createdAt: this.#now().toISOString(),
+      traceId: `schedule:${schedule.id}`,
     });
   }
 }

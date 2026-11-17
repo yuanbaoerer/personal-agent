@@ -171,6 +171,7 @@ export class IngressService {
         purpose: reply.purpose,
         text: reply.text,
         createdAt: now,
+        traceId: `inbox:${inbox.id}`,
       });
     }
 

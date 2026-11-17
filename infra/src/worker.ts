@@ -15,6 +15,7 @@ import { decryptFeishuPayload } from "../../apps/agent/src/channels/feishu/crypt
 import { PiRouterModel } from "../../apps/agent/src/coordinator/pi-router.ts";
 import { OutboxDispatcher } from "../../apps/agent/src/delivery/outbox.ts";
 import { FeishuAuthError, FeishuRequestError } from "../../apps/agent/src/domain/errors.ts";
+import { buildDiagnostics } from "../../apps/agent/src/observability/diagnostics.ts";
 import type { ReminderTimer } from "../../apps/agent/src/personal/reminders.ts";
 import { PiRuntime } from "../../apps/agent/src/runtime/pi.ts";
 import type { WakeScheduler } from "../../apps/agent/src/runtime/types.ts";
@@ -236,18 +237,37 @@ export class Assistant extends DurableObject<Env> {
           id: task.id,
           status: task.status,
           revision: task.revision,
-          goal: task.goal,
-          resultRef: task.resultRef,
-          lastError: task.lastError,
+          attempts: task.attempts,
+          updatedAt: task.updatedAt,
         })),
         outbox: app.store.listRecentOutbox(20).map((row) => ({
           id: row.id,
+          businessKey: row.businessKey,
           purpose: row.purpose,
           status: row.status,
-          text: row.text,
-          lastError: row.lastError,
+          attempts: row.attempts,
+          traceId: row.traceId,
+          updatedAt: row.updatedAt,
         })),
       });
+    }
+
+    if (request.method === "GET" && url.pathname === "/admin/diagnostics") {
+      if (!this.#authorize(request)) {
+        return Response.json({ error: "unauthorized" }, { status: 401 });
+      }
+      return Response.json(
+        buildDiagnostics(
+          {
+            store: app.store,
+            tasks: app.tasks,
+            actions: app.actions,
+            effects: app.effects,
+          },
+          new Date().toISOString(),
+          { limit: 50 },
+        ),
+      );
     }
 
     return new Response("not found", { status: 404 });

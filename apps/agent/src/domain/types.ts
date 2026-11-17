@@ -92,6 +92,8 @@ export interface OutboxRecord {
   attempts: number;
   nextAttemptAt: string;
   leaseUntil?: string;
+  /** Inbox/task/action correlation id for the causal chain. */
+  traceId?: string;
   platformMessageId?: string;
   lastError?: string;
   createdAt: string;
