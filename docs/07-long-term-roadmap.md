@@ -154,7 +154,7 @@ PA-03 的执行前授权重核已落地（E1）：claim 在同一事务内校验
 
 PA-04 的可重跑重启脚本已落地（E1）：覆盖 Inbox 路由前中断、Assignment 租约过期、Action 外部已写但本地 unknown、Reminder 到期跨重启只外发一次、needs_manual 可见；真实 SIGKILL、DO 驱逐、Pi 跨重启与真实渠道恢复仍 pending，PA-04 保持 OPEN。
 
-PA-05 的非阻塞调度已落地 E1：Assignment 等待改为 100ms 切片 + 250ms–5s 退避，Router 等待改为 250ms 切片 + 250ms–2s 退避；两个 Worker 等待期间普通 effect 与 `/status`/`/cancel` 不再被长等待拖住。真实模型长生成、平台延迟与慢工具超时/隔离未测，PA-05 保持 OPEN。
+PA-05 的非阻塞调度已落地 E1：Assignment 等待改为 100ms 切片 + 250ms–5s 退避，Router 等待改为 250ms 切片 + 250ms–2s 退避；两个 Worker 等待期间普通 effect 与 `/status`/`/cancel` 不再被长等待拖住；工具调用默认 15s 超时（读失败/写 unknown）。真实模型长生成、平台延迟与慢工具隔离未测，PA-05 保持 OPEN。
 
 PA-06 的可观测/诊断已落地 E1：Outbox traceId 贯通 inbox/task/schedule，`/诊断` 与 `/admin/diagnostics` 提供过期 Assignment、unknown Action、needs_manual 投递和安全处理提示，诊断不返回消息正文/goal/Action args/lastError；token/费用、预算与用量报表 pending，PA-06 保持 OPEN。
 

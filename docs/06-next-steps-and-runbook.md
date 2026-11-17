@@ -24,7 +24,7 @@
 | Outbox traceId + `/诊断`/`/admin/diagnostics` 安全诊断（无正文/goal/args） | token/费用、预算、用量报表、真实 G2 链路 |
 | 模型解读记忆/提醒的确认项（最长 10 分钟，提醒以 dueAt 为上限；owner 校验、取消/过期不写入）；显式命令即时 | 项目范围隔离、Worker 记忆注入、真实误触发负例 |
 | GitHub 只读连接器：repo 白名单、GET-only、超时/大小/分页上限、资源 scope、来源 URL、可区分错误 | 真实 token/仓库 G1、只读自动审批策略 |
-| 163 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
+| 166 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
 
 ## 2. 下一步待办
 
@@ -125,6 +125,7 @@ npm run test:recovery   # apps/agent/test/recovery.test.ts
 | 双 Worker 并发 | 两个 Assignment 可同时 active；slow wait 不再阻塞同一 drain 中的普通 effect | “does not let two slow worker waits starve another effect” |
 | 人工指令响应 | 一个 wait handler 被持有（drain 单并发）时，`/status` 与 `/cancel` 仍走 ingress 持久受理 | E1 ingress smoke；不构成 p95 或并发阻塞证据 |
 | 并发上限 | Worker 名额与工具并发上限未改变；等待轮询不新增 Worker | 既有 K05/K06 测试 |
+| 慢工具上限 | 工具调用默认 15s 超时；只读超时按失败处理，写超时转 unknown + reconcile，避免无限占住 drain | `tool-timeout.test.ts` |
 
 边界：以上为 E1（fake slow runtime + 合成延迟）；真实模型长生成、真实飞书平台延迟、真实慢工具超时/隔离与物理并发压测仍 pending，PA-05 保持 OPEN。
 

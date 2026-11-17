@@ -59,6 +59,7 @@ export function createServices(options: {
   model?: StaticRouterModel;
   github?: GitHubReadConfig;
   reminderTimer?: ReminderTimer;
+  maxConcurrentTools?: number;
 } = {}): TestServices {
   const now = options.now ?? (() => new Date());
   const store = options.store ?? createStore();
@@ -110,6 +111,7 @@ export function createServices(options: {
     wake: noopWake,
     now,
     actionTtlMs: options.actionTtlMs,
+    maxConcurrentTools: options.maxConcurrentTools,
     tasks,
     onSettled: (taskId) => taskService.onActionSettled(taskId),
   });

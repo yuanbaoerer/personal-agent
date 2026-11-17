@@ -14,6 +14,7 @@ import type { TaskRepository } from "../storage/tasks.ts";
 import type { WakeScheduler } from "../runtime/types.ts";
 import {
   ToolRejectedError,
+  ToolTimeoutError,
   ToolUnknownError,
   hashArgs,
   type ActionTool,
@@ -520,8 +521,9 @@ export class ActionService {
       return { status: "done" };
     }
 
-    // An absolute set is idempotent: the mock has no delayed write that could
-    // land after this retry, so re-applying the same target is safe.
+    // Verify runs before this retry. A timed-out write may still land
+    // afterwards; re-applying is safe only because the current write tool is
+    // an idempotent absolute set.
     try {
       const result = await this.#runTool(tool, action.args);
       this.#actions.markSucceeded(
@@ -657,9 +659,27 @@ export class ActionService {
 
   async #runTool(tool: ActionTool, args: Record<string, unknown>) {
     await this.#acquireToolSlot();
+    const timeoutMs = tool.timeoutMs ?? 15_000;
+    const timeout = Promise.withResolvers<never>();
+    const timer = setTimeout(
+      () => timeout.reject(new ToolTimeoutError(`tool timed out after ${timeoutMs}ms`)),
+      timeoutMs,
+    );
     try {
-      return await tool.execute(args);
+      const running = tool.execute(args);
+      // If the timeout wins, the tool may still settle later; do not surface an
+      // unhandled rejection from the abandoned promise.
+      void running.catch(() => {});
+      return await Promise.race([running, timeout.promise]);
+    } catch (error) {
+      if (error instanceof ToolTimeoutError) {
+        throw tool.readOnly === true
+          ? new ToolRejectedError(error.message)
+          : new ToolUnknownError(`${error.message}; outcome unknown`);
+      }
+      throw error;
     } finally {
+      clearTimeout(timer);
       this.#releaseToolSlot();
     }
   }

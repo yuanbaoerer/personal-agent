@@ -18,6 +18,14 @@ export class ToolUnknownError extends Error {
   }
 }
 
+/** The dispatcher stopped waiting; a write may still complete externally. */
+export class ToolTimeoutError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ToolTimeoutError";
+  }
+}
+
 export interface ToolExecution {
   evidence: Record<string, unknown>;
   externalRef?: string;
@@ -32,6 +40,10 @@ export interface ActionTool {
   readonly name: string;
   /** Mandate resource required to use this tool, if any. */
   readonly resource?: string;
+  /** A timed-out read is safely retryable; a write may have landed. */
+  readonly readOnly?: boolean;
+  /** Bound on one tool call; defaults to 15s. */
+  readonly timeoutMs?: number;
   canonicalize(args: Record<string, unknown>): Record<string, unknown>;
   execute(args: Record<string, unknown>): Promise<ToolExecution>;
   verify(args: Record<string, unknown>): Promise<ToolVerification>;
@@ -87,6 +99,8 @@ const LAMP_STATE_KEY = "mock_lamp.state";
  */
 export class MockLampTool implements ActionTool {
   readonly name = "lamp.set_brightness";
+  readonly readOnly = false;
+  timeoutMs = 5_000;
   readonly #store: Store;
   readonly #now: () => Date;
 

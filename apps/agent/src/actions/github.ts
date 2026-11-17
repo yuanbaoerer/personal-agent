@@ -24,6 +24,8 @@ const REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 export class GitHubReadTool implements ActionTool {
   readonly name = "github.read";
   readonly resource = "github";
+  readonly readOnly = true;
+  readonly timeoutMs = 10_000;
   readonly #config: Required<Pick<GitHubReadConfig, "timeoutMs" | "maxBytes">> &
     GitHubReadConfig;
   readonly #allowed: Set<string>;
