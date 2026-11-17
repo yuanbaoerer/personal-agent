@@ -123,3 +123,9 @@ Cloudflare 是主选托管环境；单用户 DO 中承载多个独立会话是**
 - [dsh-superagent 执行设计](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/main/docs/003-execution.md)
 - [dsh-superagent 架构](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/main/docs/007-architecture.md)
 - [dsh-superagent 设计理念](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/main/docs/000-philosophy.md)
+
+## 9. 长期产品模式补充（2026-11-17，非 MVP）
+
+产品长期允许用户选择「通用 / 编程 / 智能组织」快捷模式，但内部统一建模为 **WorkProfile（General/Coding/Research）× ExecutionStrategy（Direct/Delegated/Organization）**。Coding 决定领域能力与工具；智能组织决定任务依赖、分工、验收和经验沉淀，并非两个互斥的 Agent 实例。
+
+全平台共享一个 Task/Approval/Memory Core；MVP 中单 Router、最多两个 Worker、禁止任意高权限操作的边界不变。详细类型、Coding 工作区隔离、Organization DAG、模式版本和分期实施见 [12 · Mode Architecture](12-mode-architecture.md)。原三条主流程仍是 v0.2 的验收范围，不能因规划扩展而视作已实现。
