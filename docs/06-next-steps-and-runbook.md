@@ -24,7 +24,7 @@
 | Outbox traceId + `/诊断`/`/admin/diagnostics` 安全诊断（无正文/goal/args） | token/费用、预算、用量报表、真实 G2 链路 |
 | 模型解读记忆/提醒的确认项（最长 10 分钟，提醒以 dueAt 为上限；owner 校验、取消/过期不写入）；显式命令即时 | 项目范围隔离、Worker 记忆注入、真实误触发负例 |
 | GitHub 只读连接器：repo 白名单、GET-only、超时/大小/分页上限、资源 scope、来源 URL、可区分错误 | 真实 token/仓库 G1、只读自动审批策略 |
-| 166 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
+| 168 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
 
 ## 2. 下一步待办
 
@@ -136,7 +136,7 @@ npm run test:recovery   # apps/agent/test/recovery.test.ts
 | 投递 trace | `pa_outbox.trace_id`（schema v6）；Inbox/Router 用 `inbox:*`，Task/Action 用 `task:*`，Reminder 用 `schedule:*` | `observability.test.ts` 断言 ingress 回复 trace；真实库副本迁移 v6 |
 | 所有者诊断 | `/诊断` 输出过期 Assignment、unknown Action、unknown/needs_manual/failed 投递、Effect 计数、待确认项计数与安全处理提示 | 同上；格式化文本不含私聊正文 |
 | 管理员诊断 | `GET /admin/diagnostics` 返回结构化快照；`/admin/recent` 移除 goal/text/result | `infra/src/worker.ts`；鉴权沿用 ADMIN_TOKEN |
-| 脱敏 | 诊断结构不含消息正文、goal、Action args 或自由文本 lastError；`listOutboxDiagnostics` 只查询安全列，`/admin/recent` 同样移除 lastError | 测试断言 SECRET 与工具错误文本不出现在 JSON/文本中 |
+| 脱敏 | 诊断结构不含消息正文、goal、Action args 或自由文本 lastError；`listOutboxDiagnostics` 只查询安全列，`/admin/recent` 同样移除 lastError；router 日志记录 action、长度与错误原因，不记录模型输出或 goal | 测试断言 SECRET 与工具错误文本不出现在 JSON/文本，日志捕获断言无线索 |
 | 待定 | token/费用采集、单 Task/每日硬预算、用量报表、日志全链路脱敏策略 | 需运行时 usage 接口与预算口径决策 |
 
 边界：E1；真实 G2 因果链、平台回执、token 用量与预算执行未验证。PA-06 保持 OPEN。

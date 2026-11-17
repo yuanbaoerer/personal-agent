@@ -82,7 +82,8 @@ export class PiRouterModel implements RouterModel {
     const decision = parseRouterDecision(answer.text);
     if (decision === undefined) {
       console.warn("router_decision_invalid", {
-        preview: answer.text.slice(0, 500),
+        // Never log model output: it can contain private chat or secrets.
+        outputLength: answer.text.length,
       });
       return {
         action: "reply",
@@ -91,7 +92,7 @@ export class PiRouterModel implements RouterModel {
     }
     console.info("router_decision", {
       action: decision.action,
-      goal: decision.task?.goal,
+      hasTask: decision.task !== undefined,
     });
     return decision;
   }

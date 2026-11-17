@@ -44,7 +44,7 @@ K13 与 K14 必须包含至少一个可控竞态复现测试；应用的锁、�
 
 **非阻塞调度（PA-05 部分，E1）**：Assignment 等待按 100ms 切片轮询，pending 使用 250ms–5s 退避；Router 等待按 250ms 切片轮询，pending 使用 250ms–2s 退避。两个 pending Worker 与普通 effect 同轮处理时普通 effect 不被饿死；一个 wait handler 被持有时 `/status`/`/cancel` 仍通过 ingress 受理（E1 smoke，不是 p95 证据）。工具调用默认 15s 超时：只读超时失败、写超时转 unknown/reconcile。真实模型长生成、平台延迟、真实慢工具隔离和物理并发压测仍 pending，不能据此宣称 E3/E4。
 
-**可观测/诊断（PA-06 部分，E1）**：Outbox 增加 `trace_id`（schema v6），Inbox/Router/Task/Action/Reminder 投递带因果 trace；`/诊断` 与 `/admin/diagnostics` 列出过期 Assignment、unknown Action、unknown/needs_manual/failed 投递与 Effect 计数，不含消息正文、goal、Action args 或自由文本 lastError；`/admin/recent` 已移除正文与错误文本。token/费用、硬预算、用量报表、真实 G2 全链路仍未验证。
+**可观测/诊断（PA-06 部分，E1）**：Outbox 增加 `trace_id`（schema v6），Inbox/Router/Task/Action/Reminder 投递带因果 trace；`/诊断` 与 `/admin/diagnostics` 列出过期 Assignment、unknown Action、unknown/needs_manual/failed 投递与 Effect 计数，不含消息正文、goal、Action args 或自由文本 lastError；`/admin/recent` 已移除正文与错误文本；router 日志记录 action、长度与错误原因，不记录模型输出或 goal。token/费用、硬预算、用量报表、真实 G2 全链路仍未验证。
 
 **确认与范围（PA-10 部分，E1）**：模型解读的 `save_memory`/`remind` 进入最长 10 分钟确认项（提醒以 dueAt 为上限；owner + source inbox 唯一），`/确认` 后应用；`/取消确认`、过期、跨 owner 均不写入；显式 `/remember`、`/remind` 保持即时；timer 注册失败会取消 schedule 并报错。项目范围隔离与 Worker 记忆注入仍 pending。
 
