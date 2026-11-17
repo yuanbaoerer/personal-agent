@@ -20,7 +20,7 @@
 | Task / Assignment | Task 状态机、Mandate、revision、租约、fencingToken、心跳、最多两个 Worker；不可变 TaskInput 序号，任何未覆盖新输入的旧 Worker 报告都不能推进任务；模型等待按 100ms 切片轮询，不长时间占用 Effect drain | 10 分钟 assignment lifetime；长任务跨轮恢复需真实部署验证；真实模型 G2 补充场景待验证 |
 | 审批 / 动作 | 参数绑定、nonce、一次性消费、原子审批、执行前重核 Task 状态/revision/Mandate、取消/修订后拒绝重试、unknown/reconcile、mock 灯；写工具须声明 `replayPolicy=verify` 才允许重试 | mock 灯是程序化工具；MCP 桥接与真机未接；真实外部 API 未验证 |
 | 崩溃/重启恢复 | file-backed SQLite 重启脚本：Inbox 未路由、Assignment 租约过期、Action 外部已写未落库、needs_manual 可见；Effect/Outbox 租约回收 | E1 模拟重启；真实 SIGKILL、DO 驱逐、真实渠道恢复未验证 |
-| 可观测/诊断 | Outbox traceId 贯通 inbox/task/schedule；`/诊断` 与 `/admin/diagnostics` 输出过期 Assignment、unknown Action、unknown/needs_manual 投递；诊断不返回消息正文、goal、Action args 或自由文本 lastError；router 日志不记录模型输出/goal | token/费用、预算、用量报表未实现；真实 G2 链路追踪待验证 |
+| 可观测/诊断 | Outbox traceId 贯通 inbox/task/schedule；`/诊断` 与 `/admin/diagnostics` 输出过期 Assignment、unknown Action、unknown/needs_manual 投递；`/usage` 与 `/admin/usage` 输出 Task/Action/Effect/Outbox/Tool 聚合，token/费用明确“未采集”；诊断不返回消息正文、goal、Action args 或自由文本 lastError；router 日志不记录模型输出/goal | token/费用采集、预算未实现；真实 G2 链路追踪待验证 |
 | GitHub 只读 | `github.read` GET-only 连接器：repo 白名单、Bearer token、8s 超时、单次 ≤20 项/≤200KB、重定向拒绝；repo/commits/open issues/open pulls/PR 状态 + 来源 URL；Mandate 需 `github` resource | 每次读取仍走 Action 审批；真实 token/仓库 G1 未验证；不支持写 Issue |
 | 提醒 / 记忆 | 一次性提醒、runKey、TTL、聊天取消/列表；显式记忆查改删；模型解读的记忆/提醒先进入最长 10 分钟确认（提醒以到期时间为上限），owner 校验，取消/过期不写入 | 项目范围隔离、Worker 记忆注入、周期提醒与语义检索未做 |
 | 备份/校验 | `npm run backup`：`VACUUM INTO` 复制 agent/pi SQLite，manifest SHA-256 + integrity_check，目录/文件 700/600；`--verify` 重新校验 | 恢复/升级自动化、加密与保留期策略未做 |
@@ -81,7 +81,7 @@ npm start
 - Outbox 新增 `trace_id`（schema v6），Ingress/Router/Task/Action/Reminder 投递均带因果 trace；真实 DB 副本迁移冒烟通过。
 - `/诊断` 与 `GET /admin/diagnostics` 输出过期 Assignment、unknown Action、unknown/needs_manual/failed 投递；`/admin/recent` 不再返回消息正文、goal 或 result。
 - `npm test`：140 个确定性测试通过（PA-06 时点）；新增测试断言诊断快照与格式化文本不包含私聊正文。
-- 证据边界：E1；token/费用、预算、用量报表与真实 G2 链路追踪未实现。
+- 证据边界：E1；token/费用采集、硬预算与 token 级报表、真实 G2 链路追踪未实现。
 
 **2026-11-18 验证（PA-10 部分）：**
 
@@ -102,7 +102,7 @@ npm start
 - `npm run backup -- --data ./data --out ./backups/<timestamp>`：`VACUUM INTO` 复制 `agent.sqlite`、可选 `pi.sqlite`；manifest 记录 SHA-256、字节数、schema_version；复制后跑 `PRAGMA integrity_check`；目录/文件权限 700/600。
 - `npm run backup -- --verify <dir>`：重新校验哈希与完整性；拒绝非空目标与非法 manifest 文件名。
 - `npm run backup -- --restore <dir> --target <emptyDir>`：校验后恢复 agent/pi 数据库到空目录；拒绝较新 schema、非空目标，恢复后重跑 integrity_check。
-- `npm test`：176 个确定性测试通过（当前）；CLI 创建/verify/restore 冒烟通过。
+- `npm test`：179 个确定性测试通过（当前）；CLI 创建/verify/restore 冒烟通过。
 - 证据边界：E1；恢复/升级自动化、加密与保留期未做。
 
 ## 产品方向

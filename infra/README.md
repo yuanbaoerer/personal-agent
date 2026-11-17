@@ -44,7 +44,7 @@ GET /admin/status (Bearer ADMIN_TOKEN) -> 200
 GET /ask?prompt=... (Bearer ADMIN_TOKEN) -> {"text":"DO_OK"}
 ```
 
-`/ask` 请求包含一次真实模型调用；没有 `ADMIN_TOKEN` 时返回 503，token 不匹配返回 401。`/admin/status`、`/admin/recent` 与 `/admin/diagnostics` 使用同一鉴权。
+`/ask` 请求包含一次真实模型调用；没有 `ADMIN_TOKEN` 时返回 503，token 不匹配返回 401。`/admin/status`、`/admin/recent`、`/admin/diagnostics` 与 `/admin/usage` 使用同一鉴权。
 
 部署后：
 
@@ -71,7 +71,7 @@ npx wrangler secret put GITHUB_ALLOWED_REPOS --config infra/wrangler.jsonc
 - **SQLite**：PiHarness 把 `pi_*` 表写入该对象的 SQLite；应用通过 `DoDb` 把 `pa_*` 表写入同一个数据库。Worker 代码不得导入 `node:sqlite`；本地 Node 入口在 `apps/agent/src/storage/node.ts`。
 - **模型认证**：`createModels({ authContext })` 从 `this.env.OPENCODE_API_KEY` 取 key，再注册 `opencodeGoProvider()`；不要依赖 Worker 里的 `process.env`。
 - **单 alarm**：Lifecycle 拥有对象唯一的 alarm。应用维护、提醒触发和 Pi 唤醒都通过 Lifecycle jobs 调度；不要另外调用 `ctx.storage.setAlarm()`。
-- **Webhook 与鉴权**：`/webhooks/feishu` 在 DO 内验签/解密并写 Inbox；URL challenge 由外层 Worker 先处理（含 Encrypt Key 加密的 challenge），避免冷启动 DO 拖过飞书 1 秒 deadline。`/ask`、`/admin/status`、`/admin/recent`、`/admin/diagnostics` 需要 `ADMIN_TOKEN`。未配置飞书凭据时 webhook 返回 503。
+- **Webhook 与鉴权**：`/webhooks/feishu` 在 DO 内验签/解密并写 Inbox；URL challenge 由外层 Worker 先处理（含 Encrypt Key 加密的 challenge），避免冷启动 DO 拖过飞书 1 秒 deadline。`/ask`、`/admin/status`、`/admin/recent`、`/admin/diagnostics`、`/admin/usage` 需要 `ADMIN_TOKEN`。未配置飞书凭据时 webhook 返回 503。
 - **RPC 启动**：RPC 方法不会经过 `fetch()`，所以 `ask()` 先 `await this.lifecycle.start()`，再使用 PiHarness。
 - **恢复**：对象被驱逐后，Lifecycle 从 SQLite 的 job 队列恢复；PiHarness 用 `wake()` 继续未完成工作。当前只验证了本地 workerd 的启动、webhook、真实模型任务和鉴权，未验证真实部署后的驱逐/恢复。
 

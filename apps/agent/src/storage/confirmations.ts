@@ -162,4 +162,11 @@ export class ConfirmationRepository {
     )[0];
     return Number(row?.count ?? 0);
   }
+
+  statusCounts(): Record<string, number> {
+    const rows = this.#db.all<{ status: string; count: number }>(
+      "SELECT status, COUNT(*) AS count FROM pa_confirmations GROUP BY status",
+    );
+    return Object.fromEntries(rows.map((row) => [row.status, Number(row.count)]));
+  }
 }

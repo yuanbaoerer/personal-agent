@@ -16,6 +16,7 @@ import { PiRouterModel } from "../../apps/agent/src/coordinator/pi-router.ts";
 import { OutboxDispatcher } from "../../apps/agent/src/delivery/outbox.ts";
 import { FeishuAuthError, FeishuRequestError } from "../../apps/agent/src/domain/errors.ts";
 import { buildDiagnostics } from "../../apps/agent/src/observability/diagnostics.ts";
+import { buildUsage } from "../../apps/agent/src/observability/usage.ts";
 import type { ReminderTimer } from "../../apps/agent/src/personal/reminders.ts";
 import { PiRuntime } from "../../apps/agent/src/runtime/pi.ts";
 import type { WakeScheduler } from "../../apps/agent/src/runtime/types.ts";
@@ -276,6 +277,24 @@ export class Assistant extends DurableObject<Env> {
           },
           new Date().toISOString(),
           { limit: 50 },
+        ),
+      );
+    }
+
+    if (request.method === "GET" && url.pathname === "/admin/usage") {
+      if (!this.#authorize(request)) {
+        return Response.json({ error: "unauthorized" }, { status: 401 });
+      }
+      return Response.json(
+        buildUsage(
+          {
+            store: app.store,
+            tasks: app.tasks,
+            actions: app.actions,
+            effects: app.effects,
+            confirmations: app.confirmation,
+          },
+          new Date().toISOString(),
         ),
       );
     }

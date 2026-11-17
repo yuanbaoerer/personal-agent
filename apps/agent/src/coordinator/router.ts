@@ -17,6 +17,7 @@ import type { ReminderService } from "../personal/reminders.ts";
 import type { EffectDispatcher, EffectOutcome } from "../delivery/effects.ts";
 import type { ActionService } from "../actions/service.ts";
 import { buildDiagnostics, formatDiagnostics } from "../observability/diagnostics.ts";
+import { buildUsage, formatUsage } from "../observability/usage.ts";
 import type { TaskService } from "./tasks.ts";
 import {
   RouterPendingError,
@@ -625,6 +626,20 @@ export class Router implements InboundHandler {
       return [{ purpose: "status", text: formatDiagnostics(snapshot) }];
     }
 
+    if (text === "/usage" || text === "用量") {
+      const snapshot = buildUsage(
+        {
+          store: this.#store,
+          tasks: this.#tasks,
+          actions: this.#actions,
+          effects: this.#effects,
+          confirmations: this.#confirmation,
+        },
+        now,
+      );
+      return [{ purpose: "status", text: formatUsage(snapshot) }];
+    }
+
     const confirm = /^\/(?:确认|confirm)\s+(\S+)$/.exec(text);
     if (confirm !== null) {
       const reply = await this.#confirmEntry(ownerId, confirm[1] as string);
@@ -840,7 +855,7 @@ export class Router implements InboundHandler {
           purpose: "status",
           text: [
             "可用命令：",
-            "/status 状态；/诊断 诊断；/tasks 任务；/cancel <taskId 或前缀>",
+            "/status 状态；/诊断 诊断；/usage 用量；/tasks 任务；/cancel <taskId 或前缀>",
             "/确认 <id>；/取消确认 <id>（模型发起的记忆/提醒）",
             "/补充 <taskId> <内容>；/回答 <taskId> <内容>",
             "/修改 <taskId> <新目标>；/修改 <taskId> 目标=... 完成条件=...",

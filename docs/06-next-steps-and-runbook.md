@@ -21,11 +21,11 @@
 | 不可变 TaskInput（`pa_task_inputs`，按 task 单调 seq，同一 inbox 幂等）与 Assignment 输入屏障；旧 Worker 报告不能绕过补充输入 | 真实模型 G2、SIGKILL 中断窗口 |
 | file-backed 重启脚本：Inbox 未路由、Assignment/Effect 租约过期、派工 effect 丢失、Action 外部已写但 unknown、needs_manual 可见 | 真实 SIGKILL、DO 驱逐、真实渠道/Pi 恢复 |
 | 非阻塞调度：Assignment/Router 短切片轮询，两个 Worker 等待时普通 effect 与 status/cancel 不被长等待拖住 | 真实模型长生成、平台延迟、物理并发压测 |
-| Outbox traceId + `/诊断`/`/admin/diagnostics` 安全诊断（无正文/goal/args） | token/费用、预算、用量报表、真实 G2 链路 |
+| Outbox traceId + `/诊断`/`/admin/diagnostics` 安全诊断（无正文/goal/args） | token/费用、预算、token 级报表、真实 G2 链路 |
 | 模型解读记忆/提醒的确认项（最长 10 分钟，提醒以 dueAt 为上限；owner 校验、取消/过期不写入）；显式命令即时 | 项目范围隔离、Worker 记忆注入、真实误触发负例 |
 | GitHub 只读连接器：repo 白名单、GET-only、超时/大小/分页上限、资源 scope、来源 URL、可区分错误 | 真实 token/仓库 G1、只读自动审批策略 |
 | SQLite 备份：VACUUM INTO、manifest SHA-256、integrity_check、600 权限、verify、恢复到空目录（拒绝较新 schema） | 恢复/升级自动化、加密、保留期 |
-| 176 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
+| 179 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
 
 ## 2. 下一步待办
 
@@ -136,10 +136,10 @@ npm run test:recovery   # apps/agent/test/recovery.test.ts
 | 内容 | 实现 | 证据 |
 | --- | --- | --- |
 | 投递 trace | `pa_outbox.trace_id`（schema v6）；Inbox/Router 用 `inbox:*`，Task/Action 用 `task:*`，Reminder 用 `schedule:*` | `observability.test.ts` 断言 ingress 回复 trace；真实库副本迁移 v6 |
-| 所有者诊断 | `/诊断` 输出过期 Assignment、unknown Action、unknown/needs_manual/failed 投递、Effect 计数、待确认项计数与安全处理提示 | 同上；格式化文本不含私聊正文 |
-| 管理员诊断 | `GET /admin/diagnostics` 返回结构化快照；`/admin/recent` 移除 goal/text/result | `infra/src/worker.ts`；鉴权沿用 ADMIN_TOKEN |
+| 所有者诊断 | `/诊断` 输出过期 Assignment、unknown Action、unknown/needs_manual/failed 投递、Effect 计数、待确认项计数与安全处理提示；`/usage` 输出 Task/Action/Effect/Outbox/Tool 聚合，token/费用标为未采集 | 同上；格式化文本不含私聊正文 |
+| 管理员诊断 | `GET /admin/diagnostics` 返回结构化快照；`GET /admin/usage` 返回聚合用量；`/admin/recent` 移除 goal/text/result | `infra/src/worker.ts`；鉴权沿用 ADMIN_TOKEN |
 | 脱敏 | 诊断结构不含消息正文、goal、Action args 或自由文本 lastError；`listOutboxDiagnostics` 只查询安全列，`/admin/recent` 同样移除 lastError；router 日志记录 action、长度与错误原因，不记录模型输出或 goal | 测试断言 SECRET 与工具错误文本不出现在 JSON/文本，日志捕获断言无线索 |
-| 待定 | token/费用采集、单 Task/每日硬预算、用量报表、日志全链路脱敏策略 | 需运行时 usage 接口与预算口径决策 |
+| 待定 | token/费用采集、单 Task/每日硬预算、token 级报表、日志全链路脱敏策略 | 需运行时 usage 接口与预算口径决策 |
 
 边界：E1；真实 G2 因果链、平台回执、token 用量与预算执行未验证。PA-06 保持 OPEN。
 
@@ -266,9 +266,10 @@ curl -s http://127.0.0.1:8787/healthz
 curl -s -H "authorization: Bearer $ADMIN_TOKEN" http://127.0.0.1:8787/admin/status
 curl -s -H "authorization: Bearer $ADMIN_TOKEN" http://127.0.0.1:8787/admin/recent
 curl -s -H "authorization: Bearer $ADMIN_TOKEN" http://127.0.0.1:8787/admin/diagnostics
+curl -s -H "authorization: Bearer $ADMIN_TOKEN" http://127.0.0.1:8787/admin/usage
 ```
 
-`/ask`、`/admin/status`、`/admin/recent`、`/admin/diagnostics` 没有有效 `ADMIN_TOKEN` 时返回 401；未配置 token 时返回 503。`/webhooks/feishu` 在缺少飞书凭据时返回 503。不要把这些入口直接暴露到公网。
+`/ask`、`/admin/status`、`/admin/recent`、`/admin/diagnostics`、`/admin/usage` 没有有效 `ADMIN_TOKEN` 时返回 401；未配置 token 时返回 503。`/webhooks/feishu` 在缺少飞书凭据时返回 503。不要把这些入口直接暴露到公网。
 
 ### 4.4 验证
 

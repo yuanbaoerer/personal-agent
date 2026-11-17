@@ -198,6 +198,23 @@ export class ActionRepository {
       .map(mapAction);
   }
 
+  /** Action counts grouped by status, for operator usage views. */
+  statusCounts(): Record<string, number> {
+    const rows = this.#db.all<{ status: string; count: number }>(
+      "SELECT status, COUNT(*) AS count FROM pa_actions GROUP BY status",
+    );
+    return Object.fromEntries(rows.map((row) => [row.status, Number(row.count)]));
+  }
+
+  countByTool(): { tool: string; count: number }[] {
+    return this.#db
+      .all<{ tool: string; count: number }>(
+        `SELECT tool, COUNT(*) AS count FROM pa_actions
+         GROUP BY tool ORDER BY count DESC, tool ASC`,
+      )
+      .map((row) => ({ tool: row.tool, count: Number(row.count) }));
+  }
+
   listExpiredExecuting(now: string, limit = 50): ActionRecord[] {
     return this.#db
       .all<ActionRow>(

@@ -120,6 +120,10 @@ export class ConfirmationService {
     return this.#confirmations.countPending(this.#now().toISOString(), ownerId);
   }
 
+  statusCounts(): Record<string, number> {
+    return this.#confirmations.statusCounts();
+  }
+
   cancel(
     ownerId: string,
     idOrPrefix: string,
