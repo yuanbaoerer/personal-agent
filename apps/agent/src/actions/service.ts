@@ -245,7 +245,6 @@ export class ActionService {
         `无法批准：${unauthorized}`,
         `approval_failed:${unauthorized}`,
       );
-      this.#onSettled(action.taskId);
       return { ok: false, reason: unauthorized };
     }
     const result = this.#actions.approve(
