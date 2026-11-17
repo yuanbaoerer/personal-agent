@@ -191,6 +191,6 @@ Desktop、CLI、TUI、Web、IM 均应作为统一 Agent Core 的独立客户端�
 
 现有的 SuperAgent-inspired Coordinator、Task、Assignment、Mandate、Action/Approval、持久化与恢复继续作为唯一共同基座。Organization 的子节点不得扩大 Parent Mandate；全实例并发上限保持 2，不能依靠模型自报完成或无限分解任务。Skill、WorkflowTemplate 与 Human Feedback 必须有可验证版本、来源和人工发布流程。
 
-**版本边界**：v0.2 不变，优先真实模型闭环和权限/恢复；v0.3 在 PA-03/07/09/13 等真实能力验证后尝试最小 General/Coding Profile 与 Direct/Delegated；Organization 在 v0.4 以后以**可选技术 Spike**验证 DAG、取消、恢复和对照收益，**不是 Public Alpha/v0.4 Open-source Ready 的前置要求**。经验沉淀与 Improvement Loop 后置。
+**版本边界**：v0.2 不变，优先真实模型闭环和权限/恢复；v0.3 依赖 PA-01/03/07/09/25 的必要安全与完成判据，先做最小 General/Coding Profile 与 Direct/Delegated 试验；PA-13/17/18 中所需接口可以提前抽取，但不要求完整 P2 适配器工作提前完成；Organization 在 v0.4 以后以**可选技术 Spike**验证 DAG、取消、恢复和对照收益，**不是 Public Alpha/v0.4 Open-source Ready 的前置要求**。经验沉淀与 Improvement Loop 后置。
 
 完整领域契约、候选 API、Coding 隔离与 MODE01–MODE10 评测见 [12 · Mode Architecture](12-mode-architecture.md)。本阶段工作包标识 MODE-01～MODE-05，仅为设计待办，未创建 GitHub Issues，不与已有 PA-01～PA-29 混淆。
