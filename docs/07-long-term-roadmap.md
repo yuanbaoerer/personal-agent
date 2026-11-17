@@ -164,7 +164,7 @@ PA-07 的只读 GitHub 连接器已落地 E1：`github.read` 仅 GET，repo 精�
 
 PA-14 的本地 SQLite 备份/校验/恢复已落地 E1：`npm run backup` 用 `VACUUM INTO` 复制 agent/pi 数据库，manifest 记录 SHA-256/字节/schema_version，复制后 `integrity_check`，目录/文件 700/600；`--verify` 重算，`--restore --target` 只恢复到一个空目录并拒绝较新 schema；恢复/升级自动化、加密与保留期 pending，PA-14 保持 OPEN。
 
-PA-13 的 ToolCapability 已部分落地 E1：工具声明 `resource`/`readOnly`/`timeoutMs`/`replayPolicy`；未知写只有 `replayPolicy="verify"` 且 verify 返回不满足时才重试，否则 needs_manual。Provider/Channel 扩展契约与样例文档 pending。详见 [06 · 待办 §2.5](06-next-steps-and-runbook.md)。
+PA-13 的 ToolCapability 已部分落地 E1：工具声明 `resource`/`readOnly`/`timeoutMs`/`replayPolicy`；`createApp({registerTools})` 提供独立注册 seam；只读样例见 [14 · ToolCapability](14-tool-capability.md)；未知写只有 `replayPolicy="verify"` 且 verify 返回不满足时才重试，否则 needs_manual。Provider/Channel 扩展契约仍 pending。详见 [06 · 待办 §2.5](06-next-steps-and-runbook.md)。
 
 ## 9. 风险、监控指标与停止规则
 

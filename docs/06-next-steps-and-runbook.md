@@ -25,7 +25,8 @@
 | 模型解读记忆/提醒的确认项（最长 10 分钟，提醒以 dueAt 为上限；owner 校验、取消/过期不写入）；显式命令即时 | 项目范围隔离、Worker 记忆注入、真实误触发负例 |
 | GitHub 只读连接器：repo 白名单、GET-only、超时/大小/分页上限、资源 scope、来源 URL、可区分错误 | 真实 token/仓库 G1、只读自动审批策略 |
 | SQLite 备份：VACUUM INTO、manifest SHA-256、integrity_check、600 权限、verify、恢复到空目录（拒绝较新 schema） | 恢复/升级自动化、加密、保留期 |
-| 179 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
+| 工具扩展 seam + 只读样例：`registerTools`、resource/readOnly/timeoutMs/replayPolicy 双重校验 | Provider/Channel 扩展契约、真实第三方工具 |
+| 181 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
 
 ## 2. 下一步待办
 
@@ -188,6 +189,19 @@ npm run backup -- --restore ./backups/<timestamp> --target ./restored-data
 恢复（人工，E1 未演练）：停服务 → 保留现有数据目录副本 → 将备份的 `agent.sqlite`/`pi.sqlite` 复制回 `DATABASE_PATH`/`PI_DATABASE_PATH` → 删除目标目录残留 `-wal`/`-shm` → 启动并检查 `/healthz` 与 `/status`。
 
 边界：E1；未在真实生产数据上演练恢复，PA-14 保持 OPEN。
+
+### 2.10 2026-11-18 实施进展（PA-13 工具扩展 seam，E1 部分）
+
+只读工具样例与字段契约见 [14 · ToolCapability](14-tool-capability.md)。
+
+| 内容 | 实现 | 证据 |
+| --- | --- | --- |
+| 独立注册 | `createApp({registerTools})` 注入 ToolRegistry，不改业务状态机 | `tool-capability.test.ts` |
+| 双层授权 | 工具名必须在 Mandate.tools；`resource` 必须在 Mandate.resources | 允许/拒绝两条路径 |
+| 只读契约 | `readOnly`、`replayPolicy`、`timeoutMs`、`verify` 由 ActionService 统一执行 | 样例 `time.now` 成功执行 |
+| 待定 | Provider/Channel 契约、真实第三方工具、只读自动预授权 | 需真实凭据/策略决策 |
+
+边界：E1；真实第三方工具与 Provider/Channel 兼容性未验证，PA-13 保持 OPEN。
 
 ## 3. 环境与密钥
 

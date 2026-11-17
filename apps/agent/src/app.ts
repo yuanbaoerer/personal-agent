@@ -1,5 +1,6 @@
 import { ActionService } from "./actions/service.ts";
 import { createDefaultToolRegistry } from "./actions/tools.ts";
+import type { ToolRegistry } from "./actions/tools.ts";
 import type { GitHubReadConfig } from "./actions/github.ts";
 import { IngressService } from "./coordinator/ingress.ts";
 import type { RouterModel } from "./coordinator/router.ts";
@@ -32,6 +33,8 @@ export interface AppDeps {
   reminderTimer?: ReminderTimer;
   /** Read-only GitHub connector; omitted means the tool is unavailable. */
   github?: GitHubReadConfig;
+  /** Host/extension seam for additional tools; keep writes in ActionService. */
+  registerTools?: (registry: ToolRegistry) => void;
   now?: () => Date;
   maxActiveWorkers?: number;
 }
@@ -67,6 +70,7 @@ export function createApp(deps: AppDeps): AppServices {
   const memories = new MemoryRepository(db);
   const confirmations = new ConfirmationRepository(db);
   const { registry } = createDefaultToolRegistry(store, deps.now, deps.github);
+  deps.registerTools?.(registry);
 
   const taskService = new TaskService({
     store,

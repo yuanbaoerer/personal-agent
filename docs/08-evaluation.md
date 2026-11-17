@@ -52,6 +52,8 @@ K13 与 K14 必须包含至少一个可控竞态复现测试；应用的锁、�
 
 **备份/校验（PA-14 部分，E1）**：`npm run backup` 使用 `VACUUM INTO` 复制 agent/pi SQLite；manifest 记录 SHA-256/字节/schema_version；复制后 `integrity_check`，目录/文件 700/600；`--verify` 重新校验并拒绝路径型文件名；`--restore --target` 先 verify，只恢复到空目录，拒绝高于当前 build 的 schema，恢复后重跑完整性检查。恢复/升级自动化、加密与保留期仍 pending。
 
+**工具扩展（PA-13 部分，E1）**：`ActionTool` 暴露 resource/readOnly/timeoutMs/replayPolicy；`createApp({registerTools})` 允许注册独立工具；样例 `time.now` 通过 Mandate resource + 工具名双重校验，并由 ActionService 审批/执行。Provider/Channel 兼容契约与真实第三方工具仍 pending。
+
 ## 3. 40 场景结构
 
 保留原有 40 场景的 8+10+10+8+4 分类：渠道/投递 8、任务协作 10、审批/权限 10、中断/恢复 8、记忆/提醒 4。**K13 和 K14 是这 40 场景之内的附加契约标签**，不要为了增项把总数改成 42，也不能通过删旧场景提成功率。
