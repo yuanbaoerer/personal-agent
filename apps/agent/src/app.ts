@@ -6,9 +6,11 @@ import { Router } from "./coordinator/router.ts";
 import { TaskService } from "./coordinator/tasks.ts";
 import { EffectDispatcher } from "./delivery/effects.ts";
 import { MemoryService } from "./personal/memory.ts";
+import { ConfirmationService } from "./personal/confirmations.ts";
 import { ReminderService, noopReminderTimer, type ReminderTimer } from "./personal/reminders.ts";
 import type { AgentRuntime, WakeScheduler } from "./runtime/types.ts";
 import { ActionRepository } from "./storage/actions.ts";
+import { ConfirmationRepository } from "./storage/confirmations.ts";
 import { EffectRepository } from "./storage/effects.ts";
 import { MemoryRepository, ScheduleRepository } from "./storage/personal.ts";
 import type { Store } from "./storage/store.ts";
@@ -37,10 +39,12 @@ export interface AppServices {
   effects: EffectRepository;
   schedules: ScheduleRepository;
   memories: MemoryRepository;
+  confirmations: ConfirmationRepository;
   taskService: TaskService;
   actionService: ActionService;
   reminders: ReminderService;
   memory: MemoryService;
+  confirmation: ConfirmationService;
   router: Router;
   ingress: IngressService;
   effectDispatcher: EffectDispatcher;
@@ -58,6 +62,7 @@ export function createApp(deps: AppDeps): AppServices {
   const effects = new EffectRepository(db);
   const schedules = new ScheduleRepository(db);
   const memories = new MemoryRepository(db);
+  const confirmations = new ConfirmationRepository(db);
   const { registry } = createDefaultToolRegistry(store);
 
   const taskService = new TaskService({
@@ -90,6 +95,11 @@ export function createApp(deps: AppDeps): AppServices {
     now: deps.now,
   });
   const memory = new MemoryService({ store, memories });
+  const confirmation = new ConfirmationService({
+    store,
+    confirmations,
+    now: deps.now,
+  });
 
   const router = new Router({
     store,
@@ -100,6 +110,7 @@ export function createApp(deps: AppDeps): AppServices {
     actionService,
     reminders,
     memory,
+    confirmation,
     model: deps.model,
     wake: deps.wake,
     now: deps.now,
@@ -118,10 +129,12 @@ export function createApp(deps: AppDeps): AppServices {
     effects,
     schedules,
     memories,
+    confirmations,
     taskService,
     actionService,
     reminders,
     memory,
+    confirmation,
     router,
     ingress,
     effectDispatcher,

@@ -77,9 +77,21 @@ describe("composition root", () => {
       dueAt: new Date(Date.now() + 3_600_000).toISOString(),
       timezone: "Asia/Shanghai",
     });
-    const { app } = build(model, timer);
+    const { app, owner } = build(model, timer);
 
     await app.ingress.accept(inbound({ text: "明天九点提醒我喝水", platformEventId: "evt_remind" }));
+    await app.effectDispatcher.drain(50);
+
+    assert.equal(scheduled.length, 0);
+    const pending = app.confirmations.listPending(owner.id);
+    assert.equal(pending.length, 1);
+
+    await app.ingress.accept(
+      inbound({
+        text: `/确认 ${pending[0]?.id.slice(0, 8)}`,
+        platformEventId: "evt_remind_confirm",
+      }),
+    );
     await app.effectDispatcher.drain(50);
 
     assert.equal(scheduled.length, 1);

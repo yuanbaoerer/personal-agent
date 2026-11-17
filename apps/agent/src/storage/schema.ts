@@ -267,6 +267,26 @@ const migrations: readonly (readonly string[])[] = [
     `ALTER TABLE pa_outbox ADD COLUMN trace_id TEXT`,
     `CREATE INDEX pa_outbox_trace_idx ON pa_outbox (trace_id)`,
   ],
+  [
+    // Model-interpreted memory/reminder changes wait for an explicit owner
+    // confirmation. Deterministic slash commands bypass this table.
+    `CREATE TABLE pa_confirmations (
+      id TEXT PRIMARY KEY,
+      owner_id TEXT NOT NULL,
+      conversation_id TEXT NOT NULL,
+      source_inbox_id TEXT NOT NULL,
+      kind TEXT NOT NULL CHECK (kind IN ('memory_save', 'reminder_create')),
+      payload_json TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (
+        status IN ('pending', 'confirmed', 'cancelled', 'expired')
+      ),
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE (owner_id, source_inbox_id, kind)
+    ) STRICT`,
+    `CREATE INDEX pa_confirmations_owner_idx ON pa_confirmations (owner_id, status)`,
+  ],
 ];
 
 const SCHEMA_VERSION_KEY = "schema_version";

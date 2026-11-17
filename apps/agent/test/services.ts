@@ -6,10 +6,12 @@ import { TaskService } from "../src/coordinator/tasks.ts";
 import { EffectDispatcher } from "../src/delivery/effects.ts";
 import type { ConversationRecord, OwnerIdentity } from "../src/domain/types.ts";
 import { MemoryService } from "../src/personal/memory.ts";
+import { ConfirmationService } from "../src/personal/confirmations.ts";
 import { ReminderService } from "../src/personal/reminders.ts";
 import { FakeRuntime } from "../src/runtime/fake.ts";
 import { noopWake } from "../src/runtime/types.ts";
 import { ActionRepository } from "../src/storage/actions.ts";
+import { ConfirmationRepository } from "../src/storage/confirmations.ts";
 import { EffectRepository } from "../src/storage/effects.ts";
 import { MemoryRepository, ScheduleRepository } from "../src/storage/personal.ts";
 import { TaskRepository } from "../src/storage/tasks.ts";
@@ -25,12 +27,14 @@ export interface TestServices {
   effects: EffectRepository;
   schedules: ScheduleRepository;
   memories: MemoryRepository;
+  confirmations: ConfirmationRepository;
   runtime: FakeRuntime;
   lamp: MockLampTool;
   taskService: TaskService;
   actionService: ActionService;
   reminders: ReminderService;
   memory: MemoryService;
+  confirmation: ConfirmationService;
   router: Router;
   ingress: IngressService;
   model: StaticRouterModel;
@@ -73,6 +77,7 @@ export function createServices(options: {
   const effects = new EffectRepository(db);
   const schedules = new ScheduleRepository(db);
   const memories = new MemoryRepository(db);
+  const confirmations = new ConfirmationRepository(db);
   const { registry, lamp } = createDefaultToolRegistry(store, now);
   const runtime = new FakeRuntime();
 
@@ -104,6 +109,7 @@ export function createServices(options: {
 
   const reminders = new ReminderService({ store, schedules, wake: noopWake, now });
   const memory = new MemoryService({ store, memories, now });
+  const confirmation = new ConfirmationService({ store, confirmations, now });
   const model = options.model ?? new StaticRouterModel();
   const router = new Router({
     store,
@@ -114,6 +120,7 @@ export function createServices(options: {
     actionService,
     reminders,
     memory,
+    confirmation,
     model,
     wake: noopWake,
     now,
@@ -135,12 +142,14 @@ export function createServices(options: {
     effects,
     schedules,
     memories,
+    confirmations,
     runtime,
     lamp,
     taskService,
     actionService,
     reminders,
     memory,
+    confirmation,
     router,
     ingress,
     model,

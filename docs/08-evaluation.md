@@ -46,6 +46,8 @@ K13 与 K14 必须包含至少一个可控竞态复现测试；应用的锁、�
 
 **可观测/诊断（PA-06 部分，E1）**：Outbox 增加 `trace_id`（schema v6），Inbox/Router/Task/Action/Reminder 投递带因果 trace；`/诊断` 与 `/admin/diagnostics` 列出过期 Assignment、unknown Action、unknown/needs_manual/failed 投递与 Effect 计数，不含消息正文、goal、Action args 或自由文本 lastError；`/admin/recent` 已移除正文与错误文本。token/费用、硬预算、用量报表、真实 G2 全链路仍未验证。
 
+**确认与范围（PA-10 部分，E1）**：模型解读的 `save_memory`/`remind` 进入最长 10 分钟确认项（提醒以 dueAt 为上限；owner + source inbox 唯一），`/确认` 后应用；`/取消确认`、过期、跨 owner 均不写入；显式 `/remember`、`/remind` 保持即时。项目范围隔离与 Worker 记忆注入仍 pending。
+
 ## 3. 40 场景结构
 
 保留原有 40 场景的 8+10+10+8+4 分类：渠道/投递 8、任务协作 10、审批/权限 10、中断/恢复 8、记忆/提醒 4。**K13 和 K14 是这 40 场景之内的附加契约标签**，不要为了增项把总数改成 42，也不能通过删旧场景提成功率。

@@ -11,6 +11,8 @@ import type { EffectRepository } from "../storage/effects.ts";
 import type { TaskRepository } from "../storage/tasks.ts";
 import type { Store } from "../storage/store.ts";
 import type { MemoryService } from "../personal/memory.ts";
+import type { ConfirmationService } from "../personal/confirmations.ts";
+import { assertTimezone, formatInTimezone } from "../personal/reminders.ts";
 import type { ReminderService } from "../personal/reminders.ts";
 import type { EffectDispatcher, EffectOutcome } from "../delivery/effects.ts";
 import type { ActionService } from "../actions/service.ts";
@@ -55,6 +57,7 @@ export interface RouterDeps {
   actionService: ActionService;
   reminders: ReminderService;
   memory: MemoryService;
+  confirmation: ConfirmationService;
   model: RouterModel;
   wake: WakeScheduler;
   now?: () => Date;
@@ -134,6 +137,7 @@ export class Router implements InboundHandler {
   readonly #actionService: ActionService;
   readonly #reminders: ReminderService;
   readonly #memory: MemoryService;
+  readonly #confirmation: ConfirmationService;
   readonly #model: RouterModel;
   readonly #wake: WakeScheduler;
   readonly #now: () => Date;
@@ -148,6 +152,7 @@ export class Router implements InboundHandler {
     this.#actionService = deps.actionService;
     this.#reminders = deps.reminders;
     this.#memory = deps.memory;
+    this.#confirmation = deps.confirmation;
     this.#model = deps.model;
     this.#wake = deps.wake;
     this.#now = deps.now ?? (() => new Date());
@@ -322,12 +327,28 @@ export class Router implements InboundHandler {
           return { status: "done" };
         }
         try {
-          this.#memory.save(context.ownerId, decision.key, decision.value, context.inboxId);
-          this.#reply(context, `已记住：${decision.key} = ${decision.value}`);
+          const { confirmation } = this.#confirmation.create({
+            ownerId: context.ownerId,
+            conversationId: context.conversationId,
+            sourceInboxId: context.inboxId,
+            kind: "memory_save",
+            payload: { key: decision.key, value: decision.value },
+          });
+          if (confirmation.status !== "pending") {
+            this.#reply(context, "该记忆确认已处理，无需重复确认。");
+            return { status: "done" };
+          }
+          this.#reply(
+            context,
+            `请确认是否记住：${decision.key} = ${decision.value}\n` +
+              `回复 /确认 ${confirmation.id.slice(0, 8)}（10 分钟内有效）；` +
+              `/取消确认 ${confirmation.id.slice(0, 8)} 可撤销。`,
+            "status",
+          );
         } catch (error) {
           this.#reply(
             context,
-            `无法保存记忆：${error instanceof Error ? error.message : String(error)}`,
+            `无法发起记忆确认：${error instanceof Error ? error.message : String(error)}`,
           );
         }
         return { status: "done" };
@@ -338,18 +359,49 @@ export class Router implements InboundHandler {
           return { status: "done" };
         }
         try {
-          await this.#reminders.create({
+          const timezone = decision.timezone ?? this.#timezone;
+          const parsed = new Date(decision.dueAt);
+          if (
+            Number.isNaN(parsed.getTime()) ||
+            parsed.getTime() <= this.#now().getTime()
+          ) {
+            this.#reply(context, "提醒时间无法解析或已经过去，请重新说明时间。");
+            return { status: "done" };
+          }
+          assertTimezone(timezone);
+          const minutes = Math.max(
+            1,
+            Math.min(10, Math.floor((parsed.getTime() - this.#now().getTime()) / 60_000)),
+          );
+          const { confirmation } = this.#confirmation.create({
             ownerId: context.ownerId,
             conversationId: context.conversationId,
-            text: decision.text,
-            dueAt: decision.dueAt,
-            timezone: decision.timezone ?? this.#timezone,
-            runKey: `inbox:${context.inboxId}:reminder`,
+            sourceInboxId: context.inboxId,
+            kind: "reminder_create",
+            payload: {
+              text: decision.text,
+              dueAt: parsed.toISOString(),
+              timezone,
+              runKey: `inbox:${context.inboxId}:reminder`,
+            },
+            expiresAt: parsed.toISOString(),
           });
+          if (confirmation.status !== "pending") {
+            this.#reply(context, "该提醒确认已处理，无需重复确认。");
+            return { status: "done" };
+          }
+          const when = `${formatInTimezone(parsed.toISOString(), timezone)}（${timezone}）`;
+          this.#reply(
+            context,
+            `请确认提醒：${when}\n${decision.text}\n` +
+              `回复 /确认 ${confirmation.id.slice(0, 8)}（${minutes} 分钟内有效）；` +
+              `/取消确认 ${confirmation.id.slice(0, 8)} 可撤销。`,
+            "status",
+          );
         } catch (error) {
           this.#reply(
             context,
-            `无法创建提醒：${error instanceof Error ? error.message : String(error)}`,
+            `无法发起提醒确认：${error instanceof Error ? error.message : String(error)}`,
           );
         }
         return { status: "done" };
@@ -408,6 +460,79 @@ export class Router implements InboundHandler {
     }
     // TaskService.revise enqueues the owner-facing status message.
     return { ok: true };
+  }
+
+  async #confirmEntry(
+    ownerId: string,
+    idOrPrefix: string,
+  ): Promise<ReplyDraft | undefined> {
+    const pending = this.#confirmation.resolvePending(ownerId, idOrPrefix);
+    if (pending.status === "failure") {
+      return { purpose: "failure", text: pending.reason };
+    }
+    const confirmation = pending.confirmation;
+    try {
+      if (confirmation.kind === "memory_save") {
+        const key = confirmation.payload.key;
+        const value = confirmation.payload.value;
+        if (typeof key !== "string" || typeof value !== "string") {
+          this.#confirmation.cancel(ownerId, confirmation.id);
+          return { purpose: "failure", text: "确认内容不完整，请重新发起。" };
+        }
+        const current = this.#memory.get(ownerId, key.trim());
+        if (current !== undefined && current.updatedAt > confirmation.createdAt) {
+          this.#confirmation.cancel(ownerId, confirmation.id);
+          return {
+            purpose: "status",
+            text: "该记忆在此确认之后已被修改或删除，本次确认已失效。",
+          };
+        }
+        this.#memory.save(ownerId, key, value, confirmation.sourceInboxId);
+        this.#confirmation.markConfirmed(confirmation);
+        return { purpose: "status", text: `已记住：${key} = ${value}` };
+      }
+
+      const text = confirmation.payload.text;
+      const dueAt = confirmation.payload.dueAt;
+      const timezone = confirmation.payload.timezone;
+      const runKey = confirmation.payload.runKey;
+      if (
+        typeof text !== "string" ||
+        typeof dueAt !== "string" ||
+        typeof timezone !== "string" ||
+        typeof runKey !== "string"
+      ) {
+        this.#confirmation.cancel(ownerId, confirmation.id);
+        return { purpose: "failure", text: "确认内容不完整，请重新发起。" };
+      }
+      await this.#reminders.create({
+        ownerId,
+        conversationId: confirmation.conversationId,
+        text,
+        dueAt,
+        timezone,
+        runKey,
+      });
+      this.#confirmation.markConfirmed(confirmation);
+      // ReminderService already produced the user-visible confirmation.
+      return undefined;
+    } catch (error) {
+      // A confirmation whose payload can never apply must not keep advertising
+      // itself as valid for the rest of the TTL.
+      this.#confirmation.cancel(ownerId, confirmation.id);
+      return {
+        purpose: "failure",
+        text: `确认失败：${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+  }
+
+  #cancelConfirmation(ownerId: string, idOrPrefix: string): ReplyDraft {
+    const result = this.#confirmation.cancel(ownerId, idOrPrefix);
+    if (result.status === "failure") {
+      return { purpose: "failure", text: result.reason };
+    }
+    return { purpose: "status", text: "已取消该待确认项。" };
   }
 
   #supplementTask(
@@ -497,6 +622,17 @@ export class Router implements InboundHandler {
         { ownerId, limit: 10 },
       );
       return [{ purpose: "status", text: formatDiagnostics(snapshot) }];
+    }
+
+    const confirm = /^\/(?:确认|confirm)\s+(\S+)$/.exec(text);
+    if (confirm !== null) {
+      const reply = await this.#confirmEntry(ownerId, confirm[1] as string);
+      return reply === undefined ? [] : [reply];
+    }
+
+    const cancelConfirm = /^\/(?:取消确认|cancel-confirm)\s+(\S+)$/.exec(text);
+    if (cancelConfirm !== null) {
+      return [this.#cancelConfirmation(ownerId, cancelConfirm[1] as string)];
     }
 
     if (text === "/tasks" || text === "任务") {
@@ -704,6 +840,7 @@ export class Router implements InboundHandler {
           text: [
             "可用命令：",
             "/status 状态；/诊断 诊断；/tasks 任务；/cancel <taskId 或前缀>",
+            "/确认 <id>；/取消确认 <id>（模型发起的记忆/提醒）",
             "/补充 <taskId> <内容>；/回答 <taskId> <内容>",
             "/修改 <taskId> <新目标>；/修改 <taskId> 目标=... 完成条件=...",
             "/approve <actionId> <nonce> [argsHash revision]；/deny 同上",

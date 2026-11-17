@@ -327,6 +327,23 @@ export interface MemoryRecord {
   updatedAt: string;
 }
 
+export type ConfirmationKind = "memory_save" | "reminder_create";
+export type ConfirmationStatus = "pending" | "confirmed" | "cancelled" | "expired";
+
+/** A model-interpreted write awaiting the owner's explicit confirmation. */
+export interface ConfirmationRecord {
+  id: string;
+  ownerId: string;
+  conversationId: string;
+  sourceInboxId: string;
+  kind: ConfirmationKind;
+  payload: Record<string, unknown>;
+  status: ConfirmationStatus;
+  expiresAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export type RouterAction =
   | "reply"
   | "create_task"

@@ -22,7 +22,8 @@
 | file-backed 重启脚本：Inbox 未路由、Assignment/Effect 租约过期、派工 effect 丢失、Action 外部已写但 unknown、needs_manual 可见 | 真实 SIGKILL、DO 驱逐、真实渠道/Pi 恢复 |
 | 非阻塞调度：Assignment/Router 短切片轮询，两个 Worker 等待时普通 effect 与 status/cancel 不被长等待拖住 | 真实模型长生成、平台延迟、物理并发压测 |
 | Outbox traceId + `/诊断`/`/admin/diagnostics` 安全诊断（无正文/goal/args） | token/费用、预算、用量报表、真实 G2 链路 |
-| 140 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
+| 模型解读记忆/提醒的确认项（最长 10 分钟，提醒以 dueAt 为上限；owner 校验、取消/过期不写入）；显式命令即时 | 项目范围隔离、Worker 记忆注入、真实误触发负例 |
+| 149 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
 
 ## 2. 下一步待办
 
@@ -136,6 +137,18 @@ npm run test:recovery   # apps/agent/test/recovery.test.ts
 | 待定 | token/费用采集、单 Task/每日硬预算、用量报表、日志全链路脱敏策略 | 需运行时 usage 接口与预算口径决策 |
 
 边界：E1；真实 G2 因果链、平台回执、token 用量与预算执行未验证。PA-06 保持 OPEN。
+
+### 2.7 2026-11-18 实施进展（PA-10 部分：确认与范围，E1）
+
+| 内容 | 实现 | 证据 |
+| --- | --- | --- |
+| 模型写入确认 | `save_memory`/`remind` 不再直接落库；生成 `pa_confirmations`（最长 10 分钟，提醒以 dueAt 为上限；owner/source inbox 唯一） | `confirmations.test.ts` 记忆/提醒确认 |
+| 确认与撤销 | `/确认 <id>` 应用；`/取消确认 <id>` 取消；显式 `/remember`、`/remind` 保持即时 | 取消不写入、显式命令即时 |
+| 过期与鉴权 | 过期确认懒清理；跨 owner 前缀查询拒绝；提醒 runKey/outbox 幂等保留 | 过期/跨 owner 测试 |
+| 审计 | `confirmation.created/confirmed/cancelled` | audit 事件 |
+| 待定 | memory `projectScope`、Worker 按 Mandate 注入记忆、自然语言提示注入负例 | 需项目标识与注入范围决策 |
+
+边界：E1；真实模型误触发、项目隔离和记忆注入未验证，PA-10 保持 OPEN。
 
 ## 3. 环境与密钥
 

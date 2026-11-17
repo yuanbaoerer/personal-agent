@@ -21,7 +21,7 @@
 | 审批 / 动作 | 参数绑定、nonce、一次性消费、原子审批、执行前重核 Task 状态/revision/Mandate、取消/修订后拒绝重试、unknown/reconcile、mock 灯 | mock 灯是程序化工具；MCP 桥接与真机未接；真实外部 API 未验证 |
 | 崩溃/重启恢复 | file-backed SQLite 重启脚本：Inbox 未路由、Assignment 租约过期、Action 外部已写未落库、needs_manual 可见；Effect/Outbox 租约回收 | E1 模拟重启；真实 SIGKILL、DO 驱逐、真实渠道恢复未验证 |
 | 可观测/诊断 | Outbox traceId 贯通 inbox/task/schedule；`/诊断` 与 `/admin/diagnostics` 输出过期 Assignment、unknown Action、unknown/needs_manual 投递；诊断不返回消息正文、goal、Action args 或自由文本 lastError | token/费用、预算、用量报表未实现；真实 G2 链路追踪待验证 |
-| 提醒 / 记忆 | 一次性提醒、runKey、TTL、聊天取消/列表；显式记忆查改删 | 周期提醒与语义检索未做 |
+| 提醒 / 记忆 | 一次性提醒、runKey、TTL、聊天取消/列表；显式记忆查改删；模型解读的记忆/提醒先进入最长 10 分钟确认（提醒以到期时间为上限），owner 校验，取消/过期不写入 | 项目范围隔离、Worker 记忆注入、周期提醒与语义检索未做 |
 | 本地服务 | `POST /webhooks/feishu`、`GET /healthz`、Node SQLite + 进程内 pi-durable | 配置 `OPENCODE_API_KEY` 后本地执行模型任务；未配置时模型任务明确失败 |
 | Cloudflare DO | `Assistant` + PiHarness + Lifecycle、DO SQLite 中的 `pa_*`、webhook、jobs | 已真实部署；飞书回调入口超时待解；驱逐恢复未验证 |
 | 本地真实模型 | `opencode-go/deepseek-v4.1-flash`，本地 key；`apps/agent/src/runtime/node-pi.ts` 是 Node 运行时 | spike 单会话/三会话并发通过；应用侧目前只有 faux provider 的确定性测试，真实模型端到端待验证 |
@@ -78,8 +78,15 @@ npm start
 
 - Outbox 新增 `trace_id`（schema v6），Ingress/Router/Task/Action/Reminder 投递均带因果 trace；真实 DB 副本迁移冒烟通过。
 - `/诊断` 与 `GET /admin/diagnostics` 输出过期 Assignment、unknown Action、unknown/needs_manual/failed 投递；`/admin/recent` 不再返回消息正文、goal 或 result。
-- `npm test`：140 个确定性测试通过（当前）；新增测试断言诊断快照与格式化文本不包含私聊正文。
+- `npm test`：140 个确定性测试通过（PA-06 时点）；新增测试断言诊断快照与格式化文本不包含私聊正文。
 - 证据边界：E1；token/费用、预算、用量报表与真实 G2 链路追踪未实现。
+
+**2026-11-18 验证（PA-10 部分）：**
+
+- 模型解读的 `save_memory` / `remind` 不再直接写入：生成最长 10 分钟的确认项（提醒以 dueAt 为上限），`/确认` 后才应用，`/取消确认`、过期、跨 owner 均不写入。
+- 显式 `/remember` 与 `/remind` 仍即时执行；提醒 runKey 与 outbox businessKey 保持幂等。
+- `npm test`：149 个确定性测试通过（当前）。
+- 证据边界：E1；项目范围隔离、Worker 记忆注入、真实模型误触发/提示注入负例仍 pending。
 
 ## 产品方向
 
