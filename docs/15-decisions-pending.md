@@ -10,6 +10,7 @@
 | PA-10 确认/项目记忆 | E1 | `e9aee02` + `4f9047a`；记忆 global/project 隔离、修订保留 project、Worker 注入 |
 | PA-11 固定 40 场景目录 + JSON/Markdown 报告 | E1 | `evals/scenarios.ts`、`scripts/eval-report.ts`；37/40 确定性执行通过，3 条真实 pending |
 | PA-11 真实模型 10×3、G1–G3 E3、7 天自用 | 未开始 | 需 D01–D04 决策与真实凭据 |
+| PA-12 Docker 自托管 | E1 | Dockerfile/Compose/preflight/健康检查；镜像未发布，E3/E4 pending |
 | PA-12/PA-13 部分 | E1/pending | 见路线图 |
 
 固定 40 场景分类为渠道 8、任务 10、权限 10、恢复 8、记忆 4。K01–K14 映射由 `evals/scenarios.ts` 维护；pending 不计入成功分母。报告命令：
@@ -66,6 +67,26 @@ npm run eval:report:critical  # CI 关键集
 
 - 需决定：是否确认“任何真实越权外部写或 K13/K14 关键恢复失败阻断 v0.3”为硬门槛。
 - 建议：确认阻断；pending 不能当通过；真实权限失败不得用 mock 成功抵消。
+- [ ] 已审核：________________
+
+### D07 标准飞书接入方式
+
+- 现状：Node 支持 webhook 与 long_connection；Docker 默认示例建议 long_connection。
+- 需决定：标准 Quickstart 是否只承诺 long_connection（无需公网入口），还是把 webhook + TLS 反向代理作为生产默认。
+- 建议：v0.3 先承诺 long_connection；webhook 作为需要自有 TLS 的可选部署，不宣称开箱即用。
+- [ ] 已审核：________________
+
+### D08 镜像发布与架构
+
+- 需决定：是否发布到 ghcr/Docker Hub、支持 linux/amd64 与 arm64 的优先级、镜像标签/保留策略。
+- 建议：先本地构建；amd64 取得 E3 证据后再发布，arm64 验证前不承诺。
+- [ ] 已审核：________________
+
+### D09 ADR-0001 是否定稿
+
+- 现状：Node + SQLite 为 provisional 默认；真实 E3/E4 未齐。
+- 需决定：是否在真实飞书 E3 与 SIGKILL/恢复证据前把 ADR 改为 Accepted，或继续保持 provisional。
+- 建议：保持 provisional，直到 D03 的真实 E3/E4 证据完成；Docker 启动成功不能替代。
 - [ ] 已审核：________________
 
 ## 3. 决策后的实施顺序

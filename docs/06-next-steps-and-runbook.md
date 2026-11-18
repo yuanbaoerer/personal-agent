@@ -30,7 +30,7 @@
 | Magpie 用量/预算：可选读取 quotas/usage/limit，OpenCode Go 窗口低于阈值或 key 限额时阻止新模型请求，`/usage` 附带订阅窗口 | 当前 Magpie 工作区无 OpenCode Go 卡；真实配额/重置未验证 |
 | 周期计划：草稿→确认、daily/weekdays、IANA 时区/DST、确定性 runKey、暂停/恢复/取消/修改、计划级 repo 只读授权、DO wake | 真实 Feishu/GitHub G3、生产 alarm 观察 |
 | 完成验证器：GitHub Action 回执/来源 URL、Action receipt、结构校验；needs_review 终态 + `/ack` | 真实 G1/G3 外部判据、文本人审质量 |
-| 230 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
+| 232 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
 
 ## 2. 下一步待办
 
@@ -305,6 +305,26 @@ npm run eval:report:critical  # 仅 critical，CI 关键集
 | 待决策 | 真实模型 Provider/预算、10 任务、E3 凭据、rubric、报告保留、发布阻断 | [15 · 待决策](15-decisions-pending.md) |
 
 边界：E1；40 场景是确定性契约覆盖，不等于 G1–G3 E3 或真实模型成功率。PA-11 保持 OPEN。
+
+### 2.16 2026-11-18 实施进展（PA-12 自托管 Docker，E1）
+
+```bash
+cp .env.example .env
+npm run preflight
+docker compose build && docker compose up -d
+curl -fsS http://127.0.0.1:8787/healthz
+docker compose exec agent node scripts/backup.ts --data /data --out /data/backups
+```
+
+| 内容 | 实现 | 证据 |
+| --- | --- | --- |
+| 镜像 | Node 26 slim、`npm ci --omit=dev`、非 root、只读根、HEALTHCHECK、exec 保留 SIGTERM；本地拉取阻塞，CI 构建验证构建配置 | Dockerfile / CI |
+| Compose | 持久卷、restart、init、tmpfs、cap_drop、no-new-privileges、30s grace | compose.yaml / `docker compose config` |
+| 预检 | Feishu 必填、owner、数据目录可写；失败不监听、不泄漏 secrets | `preflight.test.ts` |
+| 文档 | 启动、TLS/webhook 差异、日志、备份、诊断、未完成边界 | docs/16 |
+| 待定 | registry/架构、webhook vs 长连接、ADR 定稿、定期备份/加密 | D07–D09 |
+
+边界：E1；镜像构建/容器启动/重启持久化需实际命令证据；真实飞书 E3/E4 未通过，Cloudflare 仍为可选实验路径。
 
 ## 3. 环境与密钥
 

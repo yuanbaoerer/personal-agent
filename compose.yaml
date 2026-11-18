@@ -1,0 +1,39 @@
+services:
+  agent:
+    build:
+      context: .
+    image: personal-agent:local
+    env_file:
+      - .env
+    environment:
+      DATABASE_PATH: /data/agent.sqlite
+      PI_DATABASE_PATH: /data/pi.sqlite
+    ports:
+      - "127.0.0.1:${PORT:-8787}:${PORT:-8787}"
+    volumes:
+      - agent-data:/data
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 30s
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:'+(process.env.PORT||8787)+'/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  agent-data:

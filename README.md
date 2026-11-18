@@ -44,6 +44,16 @@ npm start
 
 默认数据库为 `./data/agent.sqlite`（`pa_*` 应用状态）与 `./data/pi.sqlite`（`pi_*` Pi 会话），两者都要备份；`OWNER_FEISHU_OPEN_ID` 是显式操作员绑定，不从昵称或消息正文推断。宿主方向见 [ADR-0001](docs/adr/0001-runtime-hosting.md)。
 
+**Docker 自托管（E1）**：
+
+```bash
+cp .env.example .env   # 必填飞书凭据、OWNER_FEISHU_OPEN_ID；首次建议 long_connection
+docker compose build && docker compose up -d
+curl -fsS http://127.0.0.1:8787/healthz
+```
+
+容器以非 root、只读根文件系统运行，命名卷 `agent-data` 持久化两份 SQLite；preflight 缺配置直接退出。详见 [16 · 自托管部署](docs/16-self-hosting.md)。镜像未发布 registry，arm64、真实 E3/E4 和定期备份仍 pending。
+
 **2026-11-09 验证：**
 
 - **真实飞书 p2p**：入站 `message_id=om_x100b603e0219c0a0b1e2434fa552a87` 受理；回调 `POST /webhooks/feishu` 200，约 13ms；主人 `ou_48fabf7749a25c7ef394de573e94d8cf` 绑定；出站 `platform_message_id=om_x100b603e03ccbca4c1ec6d3785d2599` 被平台接受，端到端约 2s。当前走本地 Node 长连接（`FEISHU_EVENT_MODE=long_connection`），无需 Tunnel；长连接事件日志为 `feishu_ws_event`，出站 `om_x100b60141b58d0a0ddb7d24898d4134`。
@@ -94,7 +104,7 @@ npm start
 - `pa_memories` 增加 `project` 作用域（空为全局）；`/remember [--project=名称] key=value`、`/memory [--project=名称]`、`/forget [--project=名称] key`；同一 key 可在不同项目并存。
 - Worker prompt 只注入全局 + 当前 Task `mandate.project` 的记忆，最多 20 条/每条 1000 字符，不注入其他项目；Router 不注入记忆。项目名只允许 1–64 位字母/数字/点/下划线/连字符。
 - 模型 `save_memory` 可带 project，确认卡显示项目后再写入；`/confirm` 仍按项目隔离复核。
-- `npm test`：230 个确定性测试通过（当前）。
+- `npm test`：232 个确定性测试通过（当前）。
 - 证据边界：E1；真实模型误触发/提示注入负例、语义检索与项目权限模型仍 pending。
 
 **2026-11-18 验证（PA-07 部分）：**
@@ -108,7 +118,7 @@ npm start
 
 - `/allow-read owner/repo` 授予 24h、可撤销的只读预授权；只对 `github.read` 且 args.repo 命中时自动批准，不发送审批卡；report 事务提交后再批准，重复 report 不重复批准。
 - `/revoke-read`、过期、未授权 repo、connector 白名单外 repo 均不会自动执行；已自动批准但未执行的 Action 在 claim 时失效；跨 owner 不命中。
-- `npm test`：230 个确定性测试通过（当前）；fake GitHub 执行 1 次，无审批卡，`action.auto_approved` 审计存在。
+- `npm test`：当时 226 个确定性测试通过；fake GitHub 执行 1 次，无审批卡，`action.auto_approved` 审计存在。
 - 崩溃窗口：report 已提交但 post-commit 自动批准丢失时，重放会 finalize 仍为 proposed 的预授权 Action。
 - 证据边界：E1；真实 token/仓库 G1、计划/周期触发与真实 Go 配额仍未验证。
 
@@ -140,6 +150,13 @@ npm start
 - `/status`、`/usage` 显示待核对任务数；`/admin/status` 复用同一文本。`needs_review` 在 SQLite 中以 `waiting_user + needs_review=1` 存储，领域状态保持终态语义。
 - `npm test`：当时 226 个确定性测试通过。
 - 证据边界：E1；真实 G1/G3 外部判据、文本任务人审质量和真实模型虚假来源仍未验证。
+
+**2026-11-18 验证（PA-12 自托管 Docker，E1）：**
+
+- 新增 `Dockerfile`（Node 26 slim、非 root、`HEALTHCHECK`、SIGTERM exec）、`compose.yaml`（持久卷 `./data:/data`、只读根、tmpfs、cap_drop、restart）、`.dockerignore` 和 `scripts/preflight.ts`。
+- `npm run preflight` 校验 Feishu 必填项、owner、两份 SQLite 目录可写；失败在监听前退出，日志不打印 secrets。
+- `docker compose config` 通过；本地 Docker build 因镜像拉取阻塞未完成，容器健康与重启持久化证据待补。CI 增加 `docker build`，镜像未发布 registry。
+- 文档：[16 · 自托管部署](docs/16-self-hosting.md)；待决策 D07–D09。
 
 **2026-11-18 验证（PA-11 确定性部分）：**
 

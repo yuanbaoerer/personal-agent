@@ -26,3 +26,4 @@ jobs:
           name: eval-report
           path: evals/reports/
       - run: npm run deploy:dry-run
+      - run: docker build -t personal-agent:ci .
