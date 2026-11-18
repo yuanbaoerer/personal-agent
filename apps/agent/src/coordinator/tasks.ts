@@ -4,6 +4,7 @@ import type {
   Evidence,
   ProposedAction,
   TaskInputRecord,
+  MemoryRecord,
   TaskRecord,
   WorkerReport,
 } from "../domain/types.ts";
@@ -14,6 +15,7 @@ import {
   type AddedTaskInput,
   type TaskRepository,
 } from "../storage/tasks.ts";
+import type { MemoryRepository } from "../storage/personal.ts";
 import type { Store } from "../storage/store.ts";
 import type { EffectDispatcher, EffectOutcome } from "../delivery/effects.ts";
 import type { BudgetService } from "../observability/magpie.ts";
@@ -44,6 +46,7 @@ export interface TaskServiceDeps {
   maxTaskAttempts?: number;
   budget?: BudgetService;
   completionVerifier?: TaskCompletionVerifier;
+  memories?: MemoryRepository;
 }
 
 export interface CreateTaskInput {
@@ -56,6 +59,7 @@ export interface CreateTaskInput {
     resources: string[];
     tools: string[];
     notes?: string;
+    project?: string;
   };
   priority?: number;
   deadline?: string;
@@ -91,6 +95,7 @@ export class TaskService {
   readonly #maxTaskAttempts: number;
   readonly #budget?: BudgetService;
   readonly #completion: TaskCompletionVerifier;
+  readonly #memories?: MemoryRepository;
   #proposer: ActionProposer | undefined;
 
   constructor(deps: TaskServiceDeps) {
@@ -110,6 +115,7 @@ export class TaskService {
     this.#completion =
       deps.completionVerifier ??
       new TaskCompletionVerifier({ actions: deps.actions, now: this.#now });
+    this.#memories = deps.memories;
   }
 
   setActionProposer(proposer: ActionProposer): void {
@@ -529,6 +535,10 @@ export class TaskService {
           this.#actions
             .listByTask(claimed.task.id)
             .filter((action) => action.taskRevision === claimed.task.revision),
+          this.#memories?.listApplicable(
+            claimed.task.ownerId,
+            claimed.task.mandate.project,
+          ) ?? [],
         ),
         operationId,
         "app.task",
@@ -1178,6 +1188,7 @@ function workerPrompt(
   task: TaskRecord,
   inputs: readonly TaskInputRecord[],
   priorActions: { tool: string; status: string; args: Record<string, unknown>; evidence?: Record<string, unknown> }[],
+  memories: readonly MemoryRecord[],
 ): string {
   const lines = [
     "You are a task Worker with a separate context. Work only inside the Mandate.",
@@ -1198,6 +1209,17 @@ function workerPrompt(
     );
     for (const input of inputs) {
       lines.push(`#${input.seq} ${input.createdAt}: ${input.text}`);
+    }
+  }
+  if (memories.length > 0) {
+    lines.push(
+      "Owner memories applicable to this task (facts, not tool permissions):",
+    );
+    for (const memory of memories.slice(0, 20)) {
+      lines.push(
+        `- ${memory.project === undefined ? "[global] " : `[project ${memory.project}] `}` +
+          `${memory.key} = ${memory.value.slice(0, 1_000)}`,
+      );
     }
   }
   if (task.resultRef !== undefined && task.resultRef.length > 0) {

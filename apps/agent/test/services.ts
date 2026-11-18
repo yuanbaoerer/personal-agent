@@ -120,6 +120,7 @@ export function createServices(options: {
     assignmentLeaseMs: options.assignmentLeaseMs,
     assignmentMaxLifetimeMs: options.assignmentMaxLifetimeMs,
     maxTaskAttempts: options.maxTaskAttempts,
+    memories,
   });
   const preauthorization = new PreauthorizationService({
     store,

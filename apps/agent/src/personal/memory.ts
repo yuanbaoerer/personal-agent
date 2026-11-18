@@ -12,6 +12,22 @@ export interface MemoryServiceDeps {
  * Explicit memory only. A third-party document or a Worker's inference never
  * writes here; the owner's request and the displayed value do.
  */
+const PROJECT_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
+
+function normalizeProject(project: string | undefined): string | undefined {
+  if (project === undefined) {
+    return undefined;
+  }
+  const value = project.trim();
+  if (value.length === 0) {
+    return undefined;
+  }
+  if (!PROJECT_PATTERN.test(value)) {
+    throw new Error("project must be 1-64 letters, digits, dot, underscore or dash");
+  }
+  return value;
+}
+
 export class MemoryService {
   readonly #store: Store;
   readonly #memories: MemoryRepository;
@@ -28,6 +44,7 @@ export class MemoryService {
     key: string,
     value: string,
     sourceEventId?: string,
+    project?: string,
   ): MemoryRecord {
     const normalizedKey = key.trim();
     const normalizedValue = value.trim();
@@ -39,8 +56,10 @@ export class MemoryService {
     }
 
     const now = this.#now().toISOString();
+    const normalizedProject = normalizeProject(project);
     const memory = this.#memories.upsert({
       ownerId,
+      project: normalizedProject,
       key: normalizedKey,
       value: normalizedValue,
       sourceEventId,
@@ -50,30 +69,44 @@ export class MemoryService {
       event: "memory.saved",
       subjectType: "memory",
       subjectId: memory.id,
-      after: { key: memory.key, version: memory.version },
+      after: {
+        key: memory.key,
+        project: memory.project,
+        version: memory.version,
+      },
       traceId: `memory:${memory.id}`,
       occurredAt: now,
     });
     return memory;
   }
 
-  list(ownerId: string): MemoryRecord[] {
-    return this.#memories.listActive(ownerId);
+  list(ownerId: string, project?: string): MemoryRecord[] {
+    return this.#memories.listActive(ownerId, normalizeProject(project));
   }
 
-  get(ownerId: string, key: string): MemoryRecord | undefined {
-    return this.#memories.get(ownerId, key);
+  /** Global plus one project's memories, used only for Worker prompts. */
+  listApplicable(ownerId: string, project?: string): MemoryRecord[] {
+    return this.#memories.listApplicable(ownerId, normalizeProject(project));
   }
 
-  forget(ownerId: string, key: string): MemoryRecord | undefined {
+  get(ownerId: string, key: string, project?: string): MemoryRecord | undefined {
+    return this.#memories.get(ownerId, key, normalizeProject(project));
+  }
+
+  forget(ownerId: string, key: string, project?: string): MemoryRecord | undefined {
     const now = this.#now().toISOString();
-    const memory = this.#memories.softDelete(ownerId, key, now);
+    const normalizedProject = normalizeProject(project);
+    const memory = this.#memories.softDelete(ownerId, key, normalizedProject, now);
     if (memory !== undefined) {
       this.#store.recordAudit({
         event: "memory.forgotten",
         subjectType: "memory",
         subjectId: memory.id,
-        after: { key: memory.key, version: memory.version },
+        after: {
+        key: memory.key,
+        project: memory.project,
+        version: memory.version,
+      },
         traceId: `memory:${memory.id}`,
         occurredAt: now,
       });

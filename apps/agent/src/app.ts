@@ -98,6 +98,7 @@ export function createApp(deps: AppDeps): AppServices {
     now: deps.now,
     maxActiveWorkers: deps.maxActiveWorkers,
     budget,
+    memories,
   });
   const preauthorization = new PreauthorizationService({
     store,

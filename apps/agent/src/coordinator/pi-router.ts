@@ -122,7 +122,7 @@ export function routerPrompt(input: RouterInput): string {
     '- {"action":"revise_task","taskId":"...","changes":{"goal":"...","completionCriteria":"..."}} when the owner explicitly changes an existing task.',
     '- {"action":"cancel_task","taskId":"..."}',
     '- {"action":"query_status"}',
-    '- {"action":"save_memory","key":"...","value":"..."}',
+    '- {"action":"save_memory","key":"...","value":"...","project":"optional-project"}',
     '- {"action":"remind","dueAt":"ISO-8601","timezone":"Asia/Shanghai","text":"..."}',
     "Rules:",
     "- Do not approve or execute actions; the owner does that explicitly.",
@@ -130,6 +130,7 @@ export function routerPrompt(input: RouterInput): string {
     "- Use a task when the request needs sustained work; use reply for chat.",
     "- Use revise_task only when the owner explicitly asks to change an existing task's goal, completion criteria, mandate, or priority.",
     "- Use save_memory only when the owner explicitly asks you to remember something.",
+    "- Set save_memory/task mandate project only when the owner explicitly names a project (or uses --project=name); otherwise omit it. Project memories must not be mixed.",
     "- Use remind only when the owner explicitly asks for a reminder.",
     "- For read-only GitHub requests, set mandate.resources to include \"github\" and mandate.tools to [\"github.read\"]; do not promise write access.",
     "- For github.read tasks, completionCriteria must be JSON with repo set to the exact owner/name requested (for example {\"repo\":\"owner/name\",\"requiredEvidenceKinds\":[\"github\"]}); never omit repo.",
@@ -206,6 +207,12 @@ export function parseRouterDecision(text: string): RouterDecision | undefined {
   if (typeof record.value === "string") {
     decision.value = record.value;
   }
+  if (
+    typeof record.project === "string" &&
+    /^[A-Za-z0-9._-]{1,64}$/.test(record.project)
+  ) {
+    decision.project = record.project;
+  }
   if (typeof record.dueAt === "string") {
     decision.dueAt = record.dueAt;
   }
@@ -251,5 +258,10 @@ function sanitizeMandate(value: unknown): Mandate {
     resources: resources.length > 0 ? resources : ["chat"],
     tools,
     notes: typeof record.notes === "string" ? record.notes : undefined,
+    project:
+      typeof record.project === "string" &&
+      /^[A-Za-z0-9._-]{1,64}$/.test(record.project)
+        ? record.project
+        : undefined,
   };
 }

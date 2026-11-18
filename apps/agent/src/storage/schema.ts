@@ -354,6 +354,32 @@ const migrations: readonly (readonly string[])[] = [
     // as waiting_user + this terminal flag and mapped to the domain status.
     `ALTER TABLE pa_tasks ADD COLUMN needs_review INTEGER NOT NULL DEFAULT 0`,
   ],
+  [
+    // Project-scoped memories. Existing rows are global; a rebuild is needed
+    // because SQLite cannot widen the old UNIQUE(owner_id, key) constraint.
+    `ALTER TABLE pa_memories RENAME TO pa_memories_old`,
+    `CREATE TABLE pa_memories (
+      id TEXT PRIMARY KEY,
+      owner_id TEXT NOT NULL,
+      project TEXT NOT NULL DEFAULT '',
+      key TEXT NOT NULL,
+      value TEXT NOT NULL,
+      source_event_id TEXT,
+      version INTEGER NOT NULL DEFAULT 1,
+      status TEXT NOT NULL CHECK (status IN ('active', 'deleted')),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE (owner_id, project, key)
+    ) STRICT`,
+    `INSERT INTO pa_memories
+       (id, owner_id, project, key, value, source_event_id, version, status,
+        created_at, updated_at)
+     SELECT id, owner_id, '', key, value, source_event_id, version, status,
+            created_at, updated_at
+     FROM pa_memories_old`,
+    `DROP TABLE pa_memories_old`,
+    `CREATE INDEX pa_memories_scope_idx ON pa_memories (owner_id, project, status)`,
+  ],
 ];
 
 /** Highest schema version this build can read/migrate. */

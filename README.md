@@ -25,7 +25,7 @@
 | Magpie 用量/预算 | 可选读取本地 Magpie `/v1/magpie/quotas`、`/usage`、`/limit`；OpenCode Go 订阅窗口低于阈值或 key 限额耗尽时阻止新的 Router/Worker 模型请求；`/usage` 附带订阅窗口 | 当前 Magpie 工作区未见 OpenCode Go 卡；真实 Go 配额/重置未验证 |
 | GitHub 只读 | `github.read` GET-only 连接器：repo 白名单、Bearer token、8s 超时、单次 ≤20 项/≤200KB、重定向拒绝；repo/commits/open issues/open pulls/PR 状态 + 来源 URL；Mandate 需 `github` resource | 未预授权时仍逐次审批；真实 token/仓库 G1 未验证；不支持写 Issue |
 | 只读预授权 | `/allow-read owner/repo`（24h、可撤销、repo 白名单内）；仅 `github.read` + 该 repo 自动批准、无审批卡；`/revoke-read`、`/preauth`；过期/撤销即恢复逐次审批 | 真实 token G1 未验证；只覆盖 README 中声明的 repo |
-| 提醒 / 记忆 | 一次性提醒、runKey、TTL、聊天取消/列表；显式记忆查改删；模型解读的记忆/提醒先进入最长 10 分钟确认（提醒以到期时间为上限），owner 校验，取消/过期不写入 | 项目范围隔离、Worker 记忆注入、周期提醒与语义检索未做 |
+| 提醒 / 记忆 | 一次性提醒、runKey、TTL、聊天取消/列表；显式记忆查改删；project 作用域（全局/项目）与 Worker 按 Mandate.project 注入；模型解读的记忆/提醒先进入最长 10 分钟确认（提醒以到期时间为上限），owner 校验，取消/过期不写入 | 真实模型误触发/提示注入负例、语义检索与周期提醒未做 |
 | 备份/校验 | `npm run backup`：`VACUUM INTO` 复制 agent/pi SQLite，manifest SHA-256 + integrity_check，目录/文件 700/600；`--verify` 重新校验 | 恢复/升级自动化、加密与保留期策略未做 |
 | 本地服务 | `POST /webhooks/feishu`、`GET /healthz`、Node SQLite + 进程内 pi-durable | 配置 `OPENCODE_API_KEY` 后本地执行模型任务；未配置时模型任务明确失败 |
 | Cloudflare DO | `Assistant` + PiHarness + Lifecycle、DO SQLite 中的 `pa_*`、webhook、jobs | 已真实部署；飞书回调入口超时待解；驱逐恢复未验证 |
@@ -91,7 +91,11 @@ npm start
 - 模型解读的 `save_memory` / `remind` 不再直接写入：生成最长 10 分钟的确认项（提醒以 dueAt 为上限），`/确认` 后才应用，`/取消确认`、过期、跨 owner 均不写入。
 - 显式 `/remember` 与 `/remind` 仍即时执行；提醒 runKey 与 outbox businessKey 保持幂等。
 - `npm test`：149 个确定性测试通过（PA-10 时点）。
-- 证据边界：E1；项目范围隔离、Worker 记忆注入、真实模型误触发/提示注入负例仍 pending。
+- `pa_memories` 增加 `project` 作用域（空为全局）；`/remember [--project=名称] key=value`、`/memory [--project=名称]`、`/forget [--project=名称] key`；同一 key 可在不同项目并存。
+- Worker prompt 只注入全局 + 当前 Task `mandate.project` 的记忆，最多 20 条/每条 1000 字符，不注入其他项目；Router 不注入记忆。项目名只允许 1–64 位字母/数字/点/下划线/连字符。
+- 模型 `save_memory` 可带 project，确认卡显示项目后再写入；`/confirm` 仍按项目隔离复核。
+- `npm test`：230 个确定性测试通过（当前）。
+- 证据边界：E1；真实模型误触发/提示注入负例、语义检索与项目权限模型仍 pending。
 
 **2026-11-18 验证（PA-07 部分）：**
 
@@ -104,7 +108,7 @@ npm start
 
 - `/allow-read owner/repo` 授予 24h、可撤销的只读预授权；只对 `github.read` 且 args.repo 命中时自动批准，不发送审批卡；report 事务提交后再批准，重复 report 不重复批准。
 - `/revoke-read`、过期、未授权 repo、connector 白名单外 repo 均不会自动执行；已自动批准但未执行的 Action 在 claim 时失效；跨 owner 不命中。
-- `npm test`：226 个确定性测试通过（当前）；fake GitHub 执行 1 次，无审批卡，`action.auto_approved` 审计存在。
+- `npm test`：230 个确定性测试通过（当前）；fake GitHub 执行 1 次，无审批卡，`action.auto_approved` 审计存在。
 - 崩溃窗口：report 已提交但 post-commit 自动批准丢失时，重放会 finalize 仍为 proposed 的预授权 Action。
 - 证据边界：E1；真实 token/仓库 G1、计划/周期触发与真实 Go 配额仍未验证。
 
@@ -114,7 +118,7 @@ npm start
 - 仅匹配 OpenCode Go 卡；`remaining <= 5%`、窗口 `limited` 或 gateway key `limited` 时阻止新的 Router/Worker 模型请求；Magpie 不可达时 fail-open 并标记 degraded；单个无 “go” 标签的 OpenCode 卡按 Go 处理；多个 OpenCode 卡时仅显式 “go” 标签生效。
 - `/usage` 附带订阅窗口与今日 calls/tokens/cost（gateway-wide，所有 Provider）；有 Magpie 数据时移除本地“token/费用未采集”行；不显示其他 Provider 卡片或账号。
 - 本地 Magpie 0.1.3792 只读探测返回 quotas/usage/limit 形状，但当前工作区没有 OpenCode Go 卡（只有 Codex/Copilot），因此真实 Go 配额仍未验证。
-- `npm test`：当时 200 pass / 0 fail（当前 226）。
+- `npm test`：当时 200 pass / 0 fail（当前 230）。
 - 证据边界：E1（fake Magpie HTTP + 本地只读探测）；真实 Go 订阅窗口、重置与 429 未验证。
 
 **2026-11-18 验证（周期计划 SchedulePolicy，PA-08 部分）：**
@@ -134,7 +138,7 @@ npm start
 - 有 executor tool 的 mandate 至少走 `action-receipt`，无 Action 不得成功；混合 mandate 运行 GitHub 检查与各非 GitHub 工具回执。`text-review` 与未知 verifier → `needs_review`；无工具旧任务仍走结构 verifier，但只声明结构通过、不声明外部事实已验证。模型不能通过 completion criteria 或修订缩小 mandate 来降级验证。
 - `needs_review` 是终态：不再派工；只能 `/ack <taskId> [备注]` 转 succeeded，写入 `acknowledged_at/by` 与 `task.acknowledged` 审计；其他状态 `/ack` 拒绝。
 - `/status`、`/usage` 显示待核对任务数；`/admin/status` 复用同一文本。`needs_review` 在 SQLite 中以 `waiting_user + needs_review=1` 存储，领域状态保持终态语义。
-- `npm test`：226 个确定性测试通过。
+- `npm test`：当时 226 个确定性测试通过。
 - 证据边界：E1；真实 G1/G3 外部判据、文本任务人审质量和真实模型虚假来源仍未验证。
 
 **2026-11-18 验证（PA-14 部分）：**

@@ -21,6 +21,7 @@ interface ScheduleRow {
 interface MemoryRow {
   id: string;
   owner_id: string;
+  project: string;
   key: string;
   value: string;
   source_event_id: string | null;
@@ -51,6 +52,7 @@ function mapMemory(row: MemoryRow): MemoryRecord {
   return {
     id: row.id,
     ownerId: row.owner_id,
+    project: row.project.length === 0 ? undefined : row.project,
     key: row.key,
     value: row.value,
     sourceEventId: row.source_event_id ?? undefined,
@@ -203,6 +205,7 @@ export class MemoryRepository {
 
   upsert(input: {
     ownerId: string;
+    project?: string;
     key: string;
     value: string;
     sourceEventId?: string;
@@ -210,9 +213,10 @@ export class MemoryRepository {
   }): MemoryRecord {
     const row = this.#db.all<MemoryRow>(
       `INSERT INTO pa_memories
-        (id, owner_id, key, value, source_event_id, version, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 1, 'active', ?, ?)
-       ON CONFLICT (owner_id, key) DO UPDATE SET
+        (id, owner_id, project, key, value, source_event_id, version, status,
+         created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, 1, 'active', ?, ?)
+       ON CONFLICT (owner_id, project, key) DO UPDATE SET
          value = excluded.value,
          source_event_id = excluded.source_event_id,
          version = pa_memories.version + 1,
@@ -221,6 +225,7 @@ export class MemoryRepository {
        RETURNING *`,
       randomUUID(),
       input.ownerId,
+      input.project ?? "",
       input.key,
       input.value,
       input.sourceEventId ?? null,
@@ -231,35 +236,58 @@ export class MemoryRepository {
     return mapMemory(row as MemoryRow);
   }
 
-  get(ownerId: string, key: string): MemoryRecord | undefined {
+  get(ownerId: string, key: string, project?: string): MemoryRecord | undefined {
     const row = this.#db.all<MemoryRow>(
-      "SELECT * FROM pa_memories WHERE owner_id = ? AND key = ?",
+      "SELECT * FROM pa_memories WHERE owner_id = ? AND project = ? AND key = ?",
       ownerId,
+      project ?? "",
       key,
     )[0];
     return row === undefined ? undefined : mapMemory(row);
   }
 
-  listActive(ownerId: string): MemoryRecord[] {
+  listActive(ownerId: string, project?: string): MemoryRecord[] {
     return this.#db
       .all<MemoryRow>(
         `SELECT * FROM pa_memories
-         WHERE owner_id = ? AND status = 'active'
-         ORDER BY updated_at DESC, key ASC`,
+         WHERE owner_id = ? AND status = 'active' AND (? IS NULL OR project = ?)
+         ORDER BY project ASC, updated_at DESC, key ASC`,
         ownerId,
+        project ?? null,
+        project ?? "",
       )
       .map(mapMemory);
   }
 
-  softDelete(ownerId: string, key: string, now: string): MemoryRecord | undefined {
+  /** Global memories plus the task's project; never another project. */
+  listApplicable(ownerId: string, project?: string): MemoryRecord[] {
+    return this.#db
+      .all<MemoryRow>(
+        `SELECT * FROM pa_memories
+         WHERE owner_id = ? AND status = 'active'
+           AND (project = '' OR project = ?)
+         ORDER BY project ASC, updated_at DESC, key ASC`,
+        ownerId,
+        project ?? "",
+      )
+      .map(mapMemory);
+  }
+
+  softDelete(
+    ownerId: string,
+    key: string,
+    project: string | undefined,
+    now: string,
+  ): MemoryRecord | undefined {
     this.#db.run(
       `UPDATE pa_memories
        SET status = 'deleted', version = version + 1, updated_at = ?
-       WHERE owner_id = ? AND key = ? AND status = 'active'`,
+       WHERE owner_id = ? AND project = ? AND key = ? AND status = 'active'`,
       now,
       ownerId,
+      project ?? "",
       key,
     );
-    return this.get(ownerId, key);
+    return this.get(ownerId, key, project);
   }
 }

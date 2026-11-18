@@ -136,6 +136,11 @@ function extractGithubRepo(text: string): string | undefined {
     : undefined;
 }
 
+export function extractProjectFlag(text: string): string | undefined {
+  const match = /(?:^|\s)--project=([A-Za-z0-9._-]{1,64})(?=$|\s)/.exec(text);
+  return match?.[1];
+}
+
 export function normalizeGithubCriteria(
   criteria: string,
   goal: string,
@@ -408,6 +413,11 @@ export class Router implements InboundHandler {
           this.#reply(context, "请补充任务目标和完成条件。");
           return { status: "done" };
         }
+        const ownerProject = extractProjectFlag(context.text);
+        const mandate = {
+          ...(decision.task.mandate ?? { resources: ["chat"], tools: [] }),
+          project: ownerProject ?? decision.task.mandate?.project,
+        };
         const task = this.#taskService.create({
           ownerId: context.ownerId,
           conversationId: context.conversationId,
@@ -417,9 +427,9 @@ export class Router implements InboundHandler {
             decision.task.completionCriteria || "提供可核对的结果和证据",
             decision.task.goal,
             context.text,
-            decision.task.mandate?.tools ?? [],
+            mandate.tools,
           ),
-          mandate: decision.task.mandate,
+          mandate,
           priority: decision.task.priority,
         });
         const ack =
@@ -483,12 +493,13 @@ export class Router implements InboundHandler {
           return { status: "done" };
         }
         try {
+          const project = extractProjectFlag(context.text) ?? decision.project;
           const { confirmation } = this.#confirmation.create({
             ownerId: context.ownerId,
             conversationId: context.conversationId,
             sourceInboxId: context.inboxId,
             kind: "memory_save",
-            payload: { key: decision.key, value: decision.value },
+            payload: { key: decision.key, value: decision.value, project },
           });
           if (confirmation.status !== "pending") {
             this.#reply(context, "该记忆确认已处理，无需重复确认。");
@@ -496,7 +507,7 @@ export class Router implements InboundHandler {
           }
           this.#reply(
             context,
-            `请确认是否记住：${decision.key} = ${decision.value}\n` +
+            `请确认是否记住：${project === undefined ? "" : `[项目 ${project}] `}${decision.key} = ${decision.value}\n` +
               `回复 /确认 ${confirmation.id.slice(0, 8)}（10 分钟内有效）；` +
               `/取消确认 ${confirmation.id.slice(0, 8)} 可撤销。`,
             "status",
@@ -656,7 +667,11 @@ export class Router implements InboundHandler {
           this.#confirmation.cancel(ownerId, confirmation.id);
           return { purpose: "failure", text: "确认内容不完整，请重新发起。" };
         }
-        const current = this.#memory.get(ownerId, key.trim());
+        const project =
+          typeof confirmation.payload.project === "string"
+            ? confirmation.payload.project
+            : undefined;
+        const current = this.#memory.get(ownerId, key.trim(), project);
         if (current !== undefined && current.updatedAt > confirmation.createdAt) {
           this.#confirmation.cancel(ownerId, confirmation.id);
           return {
@@ -664,9 +679,12 @@ export class Router implements InboundHandler {
             text: "该记忆在此确认之后已被修改或删除，本次确认已失效。",
           };
         }
-        this.#memory.save(ownerId, key, value, confirmation.sourceInboxId);
+        this.#memory.save(ownerId, key, value, confirmation.sourceInboxId, project);
         this.#confirmation.markConfirmed(confirmation);
-        return { purpose: "status", text: `已记住：${key} = ${value}` };
+        return {
+          purpose: "status",
+          text: `已记住：${project === undefined ? "" : `[项目 ${project}] `}${key} = ${value}`,
+        };
       }
 
       const text = confirmation.payload.text;
@@ -1173,24 +1191,51 @@ export class Router implements InboundHandler {
       return [];
     }
 
-    if (text === "/memory" || text === "记忆") {
-      const memories = this.#memory.list(ownerId);
+    if (text === "/memory" || text === "记忆" || text.startsWith("/memory --project=")) {
+      const project = extractProjectFlag(text);
+      const memories =
+        project === undefined
+          ? this.#memory.list(ownerId)
+          : this.#memory.listApplicable(ownerId, project);
       if (memories.length === 0) {
         return [{ purpose: "status", text: "当前没有保存的记忆。" }];
       }
       return [
         {
           purpose: "status",
-          text: memories.map((memory) => `- ${memory.key} = ${memory.value}`).join("\n"),
+          text: memories
+            .map(
+              (memory) =>
+                `- ${memory.project === undefined ? "[全局] " : `[项目 ${memory.project}] `}` +
+                `${memory.key} = ${memory.value}`,
+            )
+            .join("\n"),
         },
       ];
     }
 
-    const remember = /^\/(?:remember|记住)\s+([^=\s]+)\s*=\s*(.+)$/.exec(text);
+    const remember =
+      /^\/(?:remember|记住)\s+(?:--project=(\S+)\s+)?([^=\s]+)\s*=\s*(.+)$/.exec(
+        text,
+      );
     if (remember !== null) {
+      const project = remember[1] ?? extractProjectFlag(text);
       try {
-        this.#memory.save(ownerId, remember[1] as string, remember[2] as string, event.id);
-        return [{ purpose: "status", text: `已记住：${remember[1]} = ${remember[2]}` }];
+        this.#memory.save(
+          ownerId,
+          remember[2] as string,
+          remember[3] as string,
+          event.id,
+          project,
+        );
+        return [
+          {
+            purpose: "status",
+            text:
+              `已记住：${project === undefined ? "" : `[项目 ${project}] `}` +
+              `${remember[2]} = ${remember[3]}`,
+          },
+        ];
       } catch (error) {
         return [
           {
@@ -1201,13 +1246,20 @@ export class Router implements InboundHandler {
       }
     }
 
-    const forget = /^\/(?:forget|忘记)\s+(\S+)$/.exec(text);
+    const forget =
+      /^\/(?:forget|忘记)\s+(?:--project=(\S+)\s+)?(\S+)$/.exec(text);
     if (forget !== null) {
-      const memory = this.#memory.forget(ownerId, forget[1] as string);
+      const project = forget[1] ?? extractProjectFlag(text);
+      const memory = this.#memory.forget(ownerId, forget[2] as string, project);
       return [
         memory === undefined
           ? { purpose: "failure", text: "没有找到这条记忆。" }
-          : { purpose: "status", text: `已忘记：${forget[1]}` },
+          : {
+              purpose: "status",
+              text:
+                `已忘记：${project === undefined ? "" : `[项目 ${project}] `}` +
+                `${forget[2]}`,
+            },
       ];
     }
 
@@ -1273,7 +1325,7 @@ export class Router implements InboundHandler {
             "/补充 <taskId> <内容>；/回答 <taskId> <内容>",
             "/修改 <taskId> <新目标>；/修改 <taskId> 目标=... 完成条件=...",
             "/approve <actionId> <nonce> [argsHash revision]；/deny 同上",
-            "/memory 记忆；/remember key=value；/forget key",
+            "/memory [--project=名称]；/remember [--project=名称] key=value；/forget [--project=名称] key",
             "/remind <ISO时间> <内容>；/reminders 提醒列表；/cancel-reminder <id>",
           ].join("\n"),
         },

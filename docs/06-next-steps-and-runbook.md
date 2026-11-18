@@ -30,7 +30,7 @@
 | Magpie 用量/预算：可选读取 quotas/usage/limit，OpenCode Go 窗口低于阈值或 key 限额时阻止新模型请求，`/usage` 附带订阅窗口 | 当前 Magpie 工作区无 OpenCode Go 卡；真实配额/重置未验证 |
 | 周期计划：草稿→确认、daily/weekdays、IANA 时区/DST、确定性 runKey、暂停/恢复/取消/修改、计划级 repo 只读授权、DO wake | 真实 Feishu/GitHub G3、生产 alarm 观察 |
 | 完成验证器：GitHub Action 回执/来源 URL、Action receipt、结构校验；needs_review 终态 + `/ack` | 真实 G1/G3 外部判据、文本人审质量 |
-| 226 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
+| 230 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
 
 ## 2. 下一步待办
 
@@ -156,10 +156,13 @@ npm run test:recovery   # apps/agent/test/recovery.test.ts
 | 模型写入确认 | `save_memory`/`remind` 不再直接落库；生成 `pa_confirmations`（最长 10 分钟，提醒以 dueAt 为上限；owner/source inbox 唯一） | `confirmations.test.ts` 记忆/提醒确认 |
 | 确认与撤销 | `/确认 <id>` 应用；`/取消确认 <id>` 取消；显式 `/remember`、`/remind` 保持即时 | 取消不写入、显式命令即时 |
 | 过期与鉴权 | 过期确认在维护 tick 清理并计数；跨 owner 前缀查询拒绝；提醒 runKey/outbox 幂等保留；timer 注册失败时取消 schedule 并报错 | 过期/跨 owner/ timer 失败测试 |
-| 审计 | `confirmation.created/confirmed/cancelled` | audit 事件 |
-| 待定 | memory `projectScope`、Worker 按 Mandate 注入记忆、自然语言提示注入负例 | 需项目标识与注入范围决策 |
+| 项目作用域 | `pa_memories.project`（空=global）；`/remember --project=`、`/memory --project=`、`/forget --project=`；同 key 跨项目独立；`UNIQUE(owner_id, project, key)` | `memory-scope.test.ts` |
+| Worker 注入 | Worker prompt 只加入 global + Task `mandate.project` 的记忆，最多 20 条；Router 不注入；其他项目不出现 | prompt 隔离测试 |
+| 模型项目写入 | `save_memory.project` 进入确认 payload，确认卡显示项目；确认后按项目写入 | 项目确认测试 |
+| 审计 | `confirmation.created/confirmed/cancelled`；memory audit 带 project | audit 事件 |
+| 待定 | 真实模型误触发/提示注入负例、语义检索、项目权限模型 | 需真实模型评测 |
 
-边界：E1；真实模型误触发、项目隔离和记忆注入未验证，PA-10 保持 OPEN。
+边界：E1；项目隔离与注入已实现并测试，但真实模型误触发/提示注入负例、语义检索与项目权限模型未验证，PA-10 保持 OPEN。
 
 ### 2.8 2026-11-18 实施进展（PA-07 只读 GitHub，E1 部分）
 

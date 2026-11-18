@@ -158,7 +158,7 @@ PA-05 的非阻塞调度已落地 E1：Assignment 等待改为 100ms 切片 + 25
 
 PA-06 的可观测/诊断已落地 E1：Outbox traceId 贯通 inbox/task/schedule，`/诊断` 与 `/admin/diagnostics` 提供过期 Assignment、unknown Action、needs_manual 投递和安全处理提示，`/usage` 与 `/admin/usage` 提供 Task/Action/Effect/Outbox/Tool 聚合，并新增可选 Magpie `/v1/magpie/quotas`、`/usage`、`/limit` 读取：OpenCode Go 窗口低于阈值或 gateway key 限额耗尽时阻止新的 Router/Worker 模型请求；Magpie 不可达时 fail-open。真实 token/费用、真实 Go 窗口与硬预算仍 pending，PA-06 保持 OPEN。
 
-PA-10 的确认与范围已落地 E1：模型解读的 `save_memory`/`remind` 先生成 10 分钟确认项，`/确认` 后应用，`/取消确认`、过期、跨 owner 均不写入；显式命令保持即时。项目范围隔离与 Worker 记忆注入 pending，PA-10 保持 OPEN。
+PA-10 的确认与范围已落地 E1：模型解读的 `save_memory`/`remind` 先生成 10 分钟确认项，`/确认` 后应用，`/取消确认`、过期、跨 owner 均不写入；显式命令保持即时。记忆增加 global/project 作用域，Worker 只注入全局 + 当前 `Mandate.project`（最多 20 条），Router 不注入；项目名校验、同 key 跨项目独立、确认卡显示项目。真实提示注入负例与语义检索仍 pending，PA-10 保持 OPEN。
 
 PA-07 的只读 GitHub 连接器已落地 E1，并新增可撤销的只读预授权：`/allow-read owner/repo` 24h 内仅对该 repo 的 `github.read` 自动批准，撤销/过期即恢复逐次审批；真实 token/仓库 G1 仍 pending，PA-07 保持 OPEN。
 

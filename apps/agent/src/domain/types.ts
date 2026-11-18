@@ -141,6 +141,8 @@ export interface Mandate {
   /** Tools the task may use, such as "weather.get". */
   tools: string[];
   notes?: string;
+  /** Optional project scope for project memories; absent means global. */
+  project?: string;
 }
 
 export interface TaskRecord {
@@ -394,6 +396,7 @@ export interface SchedulePolicyRunRecord {
 export interface MemoryRecord {
   id: string;
   ownerId: string;
+  project?: string;
   key: string;
   value: string;
   sourceEventId?: string;
@@ -461,6 +464,8 @@ export interface RouterDecision {
   };
   key?: string;
   value?: string;
+  /** Optional project scope for save_memory; owner-visible at confirmation. */
+  project?: string;
   dueAt?: string;
   timezone?: string;
 }
