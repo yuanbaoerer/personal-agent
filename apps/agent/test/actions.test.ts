@@ -457,8 +457,8 @@ describe("proposal source keys", () => {
       { tool: TOOL, args: { brightness: 10 } },
     ]);
 
-    assert.equal(first, 2);
-    assert.equal(second, 2);
+    assert.equal(first.count, 2);
+    assert.equal(second.count, 0);
     const rows = services.actions.listByTask(task.id);
     assert.equal(rows.length, 2);
     assert.deepEqual(

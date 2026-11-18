@@ -27,6 +27,8 @@ interface ActionRow {
   external_ref: string | null;
   evidence_json: string | null;
   last_error: string | null;
+  preauthorization_id: string | null;
+  source_key: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -68,6 +70,7 @@ function mapAction(row: ActionRow): ActionRecord {
         ? undefined
         : (JSON.parse(row.evidence_json) as Record<string, unknown>),
     lastError: row.last_error ?? undefined,
+    preauthorizationId: row.preauthorization_id ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -100,6 +103,7 @@ export interface NewActionInput {
   expiresAt: string;
   nonce: string;
   sourceKey?: string;
+  preauthorizationId?: string;
   createdAt: string;
 }
 
@@ -124,15 +128,15 @@ export class ActionRepository {
     this.#db = db;
   }
 
-  insert(input: NewActionInput): ActionRecord {
+  insert(input: NewActionInput): { action: ActionRecord; created: boolean } {
     const row = this.#db.all<ActionRow>(
       `INSERT INTO pa_actions
         (id, owner_id, conversation_id, task_id, task_revision, fencing_token,
          tool, args_json, args_hash, status, expires_at, nonce, approved_at,
          approved_by, execution_attempts, lease_until, external_ref, evidence_json,
-         last_error, source_key, created_at, updated_at)
+         last_error, preauthorization_id, source_key, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'proposed', ?, ?, NULL, NULL, 0,
-               NULL, NULL, NULL, NULL, ?, ?, ?)
+               NULL, NULL, NULL, NULL, ?, ?, ?, ?)
        ON CONFLICT (source_key) DO NOTHING
        RETURNING *`,
       randomUUID(),
@@ -146,13 +150,14 @@ export class ActionRepository {
       input.argsHash,
       input.expiresAt,
       input.nonce,
+      input.preauthorizationId ?? null,
       input.sourceKey ?? null,
       input.createdAt,
       input.createdAt,
     )[0];
 
     if (row !== undefined) {
-      return mapAction(row);
+      return { action: mapAction(row), created: true };
     }
 
     const existing = this.#db.all<ActionRow>(
@@ -162,7 +167,7 @@ export class ActionRepository {
     if (existing === undefined) {
       throw new Error(`action source key ${input.sourceKey ?? ""} conflicted without a row`);
     }
-    return mapAction(existing);
+    return { action: mapAction(existing), created: false };
   }
 
   get(id: string): ActionRecord | undefined {

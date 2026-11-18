@@ -160,6 +160,7 @@ describe("non-blocking scheduling", () => {
       reminders: services.reminders,
       memory: services.memory,
       confirmation: services.confirmation,
+      preauthorization: services.preauthorization,
       model: {
         async decide() {
           throw new RouterPendingError();
@@ -210,6 +211,7 @@ describe("non-blocking scheduling", () => {
       reminders: services.reminders,
       memory: services.memory,
       confirmation: services.confirmation,
+      preauthorization: services.preauthorization,
       model: {
         async decide() {
           throw new Error("harness closed");

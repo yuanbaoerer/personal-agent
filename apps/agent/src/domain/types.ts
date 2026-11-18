@@ -265,6 +265,7 @@ export interface ActionRecord {
   externalRef?: string;
   evidence?: Record<string, unknown>;
   lastError?: string;
+  preauthorizationId?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -329,6 +330,18 @@ export interface MemoryRecord {
 
 export type ConfirmationKind = "memory_save" | "reminder_create";
 export type ConfirmationStatus = "pending" | "confirmed" | "cancelled" | "expired";
+
+/** A revocable owner grant for a bounded read-only tool scope. */
+export interface PreauthorizationRecord {
+  id: string;
+  ownerId: string;
+  tool: string;
+  repo: string;
+  status: "active" | "revoked" | "expired";
+  expiresAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
 
 /** A model-interpreted write awaiting the owner's explicit confirmation. */
 export interface ConfirmationRecord {

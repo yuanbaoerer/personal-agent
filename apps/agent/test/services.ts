@@ -12,11 +12,13 @@ import { EffectDispatcher } from "../src/delivery/effects.ts";
 import type { ConversationRecord, OwnerIdentity } from "../src/domain/types.ts";
 import { MemoryService } from "../src/personal/memory.ts";
 import { ConfirmationService } from "../src/personal/confirmations.ts";
+import { PreauthorizationService } from "../src/personal/preauthorizations.ts";
 import { ReminderService, type ReminderTimer } from "../src/personal/reminders.ts";
 import { FakeRuntime } from "../src/runtime/fake.ts";
 import { noopWake } from "../src/runtime/types.ts";
 import { ActionRepository } from "../src/storage/actions.ts";
 import { ConfirmationRepository } from "../src/storage/confirmations.ts";
+import { PreauthorizationRepository } from "../src/storage/preauthorizations.ts";
 import { EffectRepository } from "../src/storage/effects.ts";
 import { MemoryRepository, ScheduleRepository } from "../src/storage/personal.ts";
 import { TaskRepository } from "../src/storage/tasks.ts";
@@ -33,6 +35,7 @@ export interface TestServices {
   schedules: ScheduleRepository;
   memories: MemoryRepository;
   confirmations: ConfirmationRepository;
+  preauthorizations: PreauthorizationRepository;
   runtime: FakeRuntime;
   lamp: MockLampTool;
   tools: ToolRegistry;
@@ -41,6 +44,7 @@ export interface TestServices {
   reminders: ReminderService;
   memory: MemoryService;
   confirmation: ConfirmationService;
+  preauthorization: PreauthorizationService;
   router: Router;
   ingress: IngressService;
   model: StaticRouterModel;
@@ -87,6 +91,7 @@ export function createServices(options: {
   const schedules = new ScheduleRepository(db);
   const memories = new MemoryRepository(db);
   const confirmations = new ConfirmationRepository(db);
+  const preauthorizations = new PreauthorizationRepository(db);
   const { registry, lamp } = createDefaultToolRegistry(store, now, options.github);
   const runtime = new FakeRuntime();
 
@@ -103,6 +108,12 @@ export function createServices(options: {
     assignmentMaxLifetimeMs: options.assignmentMaxLifetimeMs,
     maxTaskAttempts: options.maxTaskAttempts,
   });
+  const preauthorization = new PreauthorizationService({
+    store,
+    preauthorizations,
+    allowedRepos: options.github?.allowedRepos ?? [],
+    now,
+  });
   const actionService = new ActionService({
     store,
     actions,
@@ -113,6 +124,7 @@ export function createServices(options: {
     actionTtlMs: options.actionTtlMs,
     maxConcurrentTools: options.maxConcurrentTools,
     tasks,
+    preauthorizations: preauthorization,
     onSettled: (taskId) => taskService.onActionSettled(taskId),
   });
   taskService.setActionProposer(actionService);
@@ -137,6 +149,7 @@ export function createServices(options: {
     reminders,
     memory,
     confirmation,
+    preauthorization,
     model,
     wake: noopWake,
     now,
@@ -159,6 +172,7 @@ export function createServices(options: {
     schedules,
     memories,
     confirmations,
+    preauthorizations,
     runtime,
     lamp,
     tools: registry,
@@ -167,6 +181,7 @@ export function createServices(options: {
     reminders,
     memory,
     confirmation,
+    preauthorization,
     router,
     ingress,
     model,

@@ -287,6 +287,27 @@ const migrations: readonly (readonly string[])[] = [
     ) STRICT`,
     `CREATE INDEX pa_confirmations_owner_idx ON pa_confirmations (owner_id, status)`,
   ],
+  [
+    // Owner-granted, revocable permission for bounded read-only actions.
+    `CREATE TABLE pa_preauthorizations (
+      id TEXT PRIMARY KEY,
+      owner_id TEXT NOT NULL,
+      tool TEXT NOT NULL,
+      repo TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('active', 'revoked', 'expired')),
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE (owner_id, tool, repo)
+    ) STRICT`,
+    `CREATE INDEX pa_preauthorizations_owner_idx
+       ON pa_preauthorizations (owner_id, tool, repo, status)`,
+  ],
+  [
+    // Provenance for actions approved by a read-only preauthorization, so a
+    // revoked grant can stop work that has not executed yet.
+    `ALTER TABLE pa_actions ADD COLUMN preauthorization_id TEXT`,
+  ],
 ];
 
 /** Highest schema version this build can read/migrate. */

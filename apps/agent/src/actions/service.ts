@@ -12,6 +12,7 @@ import type { ActionRepository } from "../storage/actions.ts";
 import type { Store } from "../storage/store.ts";
 import type { TaskRepository } from "../storage/tasks.ts";
 import type { WakeScheduler } from "../runtime/types.ts";
+import type { PreauthorizationService } from "../personal/preauthorizations.ts";
 import {
   ToolRejectedError,
   ToolTimeoutError,
@@ -34,6 +35,7 @@ export interface ActionServiceDeps {
   /** Bounds concurrent external writes from a single agent instance. */
   maxConcurrentTools?: number;
   tasks?: TaskRepository;
+  preauthorizations?: PreauthorizationService;
   onSettled?: (taskId: string) => void;
 }
 
@@ -64,6 +66,7 @@ export class ActionService {
   readonly #maxAttempts: number;
   readonly #maxConcurrentTools: number;
   readonly #tasks?: TaskRepository;
+  readonly #preauthorizations?: PreauthorizationService;
   readonly #onSettled: (taskId: string) => void;
   #activeTools = 0;
   readonly #toolWaiters: (() => void)[] = [];
@@ -80,6 +83,7 @@ export class ActionService {
     this.#maxAttempts = deps.maxExecutionAttempts ?? 3;
     this.#maxConcurrentTools = Math.max(1, deps.maxConcurrentTools ?? 2);
     this.#tasks = deps.tasks;
+    this.#preauthorizations = deps.preauthorizations;
     this.#onSettled = deps.onSettled ?? (() => {});
   }
 
@@ -90,13 +94,13 @@ export class ActionService {
     );
   }
 
-  /** Returns the number of valid proposed actions that were persisted. */
   proposeForReport(
     task: TaskRecord,
     assignment: AssignmentRecord,
     proposed: ProposedAction[],
-  ): number {
+  ): { count: number; autoApprove: string[] } {
     let count = 0;
+    const autoApprove: string[] = [];
     for (const item of proposed) {
       const canonical = this.#canonicalProposal(task, item);
       if (canonical === undefined) {
@@ -106,10 +110,52 @@ export class ActionService {
       // when the Worker reorders its proposals. Assignment scope keeps two
       // tasks (and two revisions) from sharing an action row.
       const sourceKey = `${assignment.id}:proposal:${hashArgs(canonical.tool.name, canonical.args)}`;
-      this.#insertProposal(task, assignment, canonical.tool, canonical.args, sourceKey);
-      count += 1;
+      const inserted = this.#insertProposal(
+        task,
+        assignment,
+        canonical.tool,
+        canonical.args,
+        sourceKey,
+        true,
+      );
+      if (inserted.created) {
+        count += 1;
+        if (inserted.autoApprove) {
+          autoApprove.push(inserted.action.id);
+        }
+      }
     }
-    return count;
+    return { count, autoApprove };
+  }
+
+  /**
+   * Called after the report transaction commits. Approving inside the report
+   * transaction would nest BEGIN statements, so auto-approved reads are
+   * finalized here; failures fall back to a normal approval card.
+   */
+  finalizeReportedActions(actionIds: readonly string[]): void {
+    for (const id of actionIds) {
+      const action = this.#actions.get(id);
+      if (action === undefined || action.status !== "proposed") {
+        continue;
+      }
+      if (this.#autoApproveReadOnly(action)) {
+        continue;
+      }
+      if (
+        action.preauthorizationId !== undefined &&
+        this.#preauthorizations?.isGrantActive(action.preauthorizationId) === false
+      ) {
+        this.#actions.supersede(action.id, "preauthorization_revoked", this.#now().toISOString());
+        this.#auditAction(action, "action.superseded", {
+          reason: "preauthorization_revoked",
+        });
+        this.#reply(action, "failure", "只读预授权已撤销或过期，未执行。", "superseded");
+        this.#onSettled(action.taskId);
+        continue;
+      }
+      this.#sendApprovalCard(action);
+    }
   }
 
   propose(
@@ -122,7 +168,14 @@ export class ActionService {
     if (canonical === undefined) {
       return undefined;
     }
-    return this.#insertProposal(task, assignment, canonical.tool, canonical.args, sourceKey);
+    return this.#insertProposal(
+      task,
+      assignment,
+      canonical.tool,
+      canonical.args,
+      sourceKey,
+      false,
+    ).action;
   }
 
   #canonicalProposal(
@@ -197,9 +250,11 @@ export class ActionService {
     tool: ActionTool,
     args: Record<string, unknown>,
     sourceKey: string | undefined,
-  ): ActionRecord {
+    deferAutoApprove: boolean,
+  ): { action: ActionRecord; autoApprove: boolean; created: boolean } {
     const now = this.#now().toISOString();
-    const action = this.#actions.insert({
+    const preauthorization = this.#findPreauthorization(task, tool, args);
+    const { action, created } = this.#actions.insert({
       ownerId: task.ownerId,
       conversationId: task.conversationId,
       taskId: task.id,
@@ -211,8 +266,14 @@ export class ActionService {
       expiresAt: new Date(this.#now().getTime() + this.#ttlMs).toISOString(),
       nonce: randomUUID(),
       sourceKey,
+      preauthorizationId: preauthorization?.id,
       createdAt: now,
     });
+
+    if (!created) {
+      // A replayed report must not re-approve or re-card an existing row.
+      return { action, autoApprove: false, created: false };
+    }
 
     this.#store.recordAudit({
       event: "action.proposed",
@@ -223,6 +284,37 @@ export class ActionService {
       occurredAt: now,
     });
 
+    if (preauthorization !== undefined) {
+      if (deferAutoApprove) {
+        return { action, autoApprove: true, created: true };
+      }
+      if (this.#autoApproveReadOnly(action)) {
+        return { action, autoApprove: true, created: true };
+      }
+    }
+
+    this.#sendApprovalCard(action);
+    return { action, autoApprove: false, created: true };
+  }
+
+  #findPreauthorization(
+    task: TaskRecord,
+    tool: ActionTool,
+    args: Record<string, unknown>,
+  ): { id: string } | undefined {
+    if (
+      this.#preauthorizations === undefined ||
+      tool.name !== "github.read" ||
+      tool.readOnly !== true ||
+      typeof args.repo !== "string"
+    ) {
+      return undefined;
+    }
+    const grant = this.#preauthorizations.findActive(task.ownerId, tool.name, args.repo);
+    return grant === undefined ? undefined : { id: grant.id };
+  }
+
+  #sendApprovalCard(action: ActionRecord): void {
     this.#reply(
       action,
       "approval",
@@ -236,7 +328,6 @@ export class ActionService {
       ].join("\n"),
       "approval",
     );
-    return action;
   }
 
   approve(input: ApprovalInput): { ok: boolean; reason?: string; action?: ActionRecord } {
@@ -711,6 +802,12 @@ export class ActionService {
     ) {
       return "resource_outside_mandate";
     }
+    if (
+      action.preauthorizationId !== undefined &&
+      this.#preauthorizations?.isGrantActive(action.preauthorizationId) !== true
+    ) {
+      return "preauthorization_revoked";
+    }
     return undefined;
   }
 
@@ -783,6 +880,57 @@ export class ActionService {
       traceId: `action:${action.id}`,
       occurredAt: this.#now().toISOString(),
     });
+  }
+
+  #autoApproveReadOnly(action: ActionRecord): boolean {
+    if (
+      this.#preauthorizations === undefined ||
+      action.preauthorizationId === undefined ||
+      action.tool !== "github.read" ||
+      typeof action.args.repo !== "string"
+    ) {
+      return false;
+    }
+    const tool = this.#tools.get(action.tool);
+    if (tool?.readOnly !== true) {
+      return false;
+    }
+    const grant = this.#preauthorizations.findActiveById(action.preauthorizationId);
+    if (
+      grant === undefined ||
+      grant.ownerId !== action.ownerId ||
+      grant.tool !== action.tool ||
+      grant.repo !== action.args.repo.trim().toLowerCase()
+    ) {
+      return false;
+    }
+
+    const result = this.approve({
+      actionId: action.id,
+      nonce: action.nonce,
+      approverId: action.ownerId,
+      conversationId: action.conversationId,
+      expectedArgsHash: action.argsHash,
+      expectedTaskRevision: action.taskRevision,
+    });
+    if (!result.ok) {
+      return false;
+    }
+    this.#store.recordAudit({
+      event: "action.auto_approved",
+      subjectType: "action",
+      subjectId: action.id,
+      after: { tool: action.tool, repo: action.args.repo },
+      traceId: `action:${action.id}`,
+      occurredAt: this.#now().toISOString(),
+    });
+    this.#reply(
+      action,
+      "status",
+      `已按只读预授权执行 ${action.tool}（${action.args.repo}）。`,
+      "auto_approved",
+    );
+    return true;
   }
 
   #reply(

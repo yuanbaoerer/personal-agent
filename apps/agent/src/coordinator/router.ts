@@ -12,6 +12,7 @@ import type { TaskRepository } from "../storage/tasks.ts";
 import type { Store } from "../storage/store.ts";
 import type { MemoryService } from "../personal/memory.ts";
 import type { ConfirmationService } from "../personal/confirmations.ts";
+import type { PreauthorizationService } from "../personal/preauthorizations.ts";
 import { assertTimezone, formatInTimezone } from "../personal/reminders.ts";
 import type { ReminderService } from "../personal/reminders.ts";
 import type { EffectDispatcher, EffectOutcome } from "../delivery/effects.ts";
@@ -59,6 +60,7 @@ export interface RouterDeps {
   reminders: ReminderService;
   memory: MemoryService;
   confirmation: ConfirmationService;
+  preauthorization: PreauthorizationService;
   model: RouterModel;
   wake: WakeScheduler;
   now?: () => Date;
@@ -139,6 +141,7 @@ export class Router implements InboundHandler {
   readonly #reminders: ReminderService;
   readonly #memory: MemoryService;
   readonly #confirmation: ConfirmationService;
+  readonly #preauthorization: PreauthorizationService;
   readonly #model: RouterModel;
   readonly #wake: WakeScheduler;
   readonly #now: () => Date;
@@ -154,6 +157,7 @@ export class Router implements InboundHandler {
     this.#reminders = deps.reminders;
     this.#memory = deps.memory;
     this.#confirmation = deps.confirmation;
+    this.#preauthorization = deps.preauthorization;
     this.#model = deps.model;
     this.#wake = deps.wake;
     this.#now = deps.now ?? (() => new Date());
@@ -640,6 +644,52 @@ export class Router implements InboundHandler {
       return [{ purpose: "status", text: formatUsage(snapshot) }];
     }
 
+    const allowRead = /^\/(?:allow-read|预授权)\s+(\S+)\s*$/i.exec(text);
+    if (allowRead !== null) {
+      const result = this.#preauthorization.grant(ownerId, allowRead[1] as string);
+      return [
+        result.ok
+          ? {
+              purpose: "status",
+              text:
+                `已允许只读查询 ${result.grant.repo}（github.read，至 ${result.grant.expiresAt}）。\n` +
+                `撤销：/revoke-read ${result.grant.repo}`,
+            }
+          : { purpose: "failure", text: result.reason },
+      ];
+    }
+
+    const revokeRead = /^\/(?:revoke-read|撤销预授权)\s+(\S+)\s*$/i.exec(text);
+    if (revokeRead !== null) {
+      const result = this.#preauthorization.revoke(ownerId, revokeRead[1] as string);
+      return [
+        {
+          purpose: result.ok ? "status" : "failure",
+          text: result.ok
+            ? `已撤销 ${result.repo} 的只读预授权。`
+            : `没有找到 ${result.repo} 的有效预授权。`,
+        },
+      ];
+    }
+
+    if (text === "/preauth" || text === "预授权列表") {
+      const grants = this.#preauthorization.list(ownerId);
+      return [
+        {
+          purpose: "status",
+          text:
+            grants.length === 0
+              ? "当前没有只读预授权。"
+              : grants
+                  .map(
+                    (grant) =>
+                      `- ${grant.repo} ${grant.tool} ${grant.status} 至 ${grant.expiresAt}`,
+                  )
+                  .join("\n"),
+        },
+      ];
+    }
+
     const confirm = /^\/(?:确认|confirm)\s+(\S+)$/.exec(text);
     if (confirm !== null) {
       const reply = await this.#confirmEntry(ownerId, confirm[1] as string);
@@ -857,6 +907,7 @@ export class Router implements InboundHandler {
             "可用命令：",
             "/status 状态；/诊断 诊断；/usage 用量；/tasks 任务；/cancel <taskId 或前缀>",
             "/确认 <id>；/取消确认 <id>（模型发起的记忆/提醒）",
+            "/allow-read <owner/repo>；/revoke-read <owner/repo>；/preauth",
             "/补充 <taskId> <内容>；/回答 <taskId> <内容>",
             "/修改 <taskId> <新目标>；/修改 <taskId> 目标=... 完成条件=...",
             "/approve <actionId> <nonce> [argsHash revision]；/deny 同上",

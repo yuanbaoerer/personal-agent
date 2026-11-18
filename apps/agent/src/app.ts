@@ -9,10 +9,12 @@ import { TaskService } from "./coordinator/tasks.ts";
 import { EffectDispatcher } from "./delivery/effects.ts";
 import { MemoryService } from "./personal/memory.ts";
 import { ConfirmationService } from "./personal/confirmations.ts";
+import { PreauthorizationService } from "./personal/preauthorizations.ts";
 import { ReminderService, noopReminderTimer, type ReminderTimer } from "./personal/reminders.ts";
 import type { AgentRuntime, WakeScheduler } from "./runtime/types.ts";
 import { ActionRepository } from "./storage/actions.ts";
 import { ConfirmationRepository } from "./storage/confirmations.ts";
+import { PreauthorizationRepository } from "./storage/preauthorizations.ts";
 import { EffectRepository } from "./storage/effects.ts";
 import { MemoryRepository, ScheduleRepository } from "./storage/personal.ts";
 import type { Store } from "./storage/store.ts";
@@ -46,11 +48,13 @@ export interface AppServices {
   schedules: ScheduleRepository;
   memories: MemoryRepository;
   confirmations: ConfirmationRepository;
+  preauthorizations: PreauthorizationRepository;
   taskService: TaskService;
   actionService: ActionService;
   reminders: ReminderService;
   memory: MemoryService;
   confirmation: ConfirmationService;
+  preauthorization: PreauthorizationService;
   router: Router;
   ingress: IngressService;
   effectDispatcher: EffectDispatcher;
@@ -69,6 +73,7 @@ export function createApp(deps: AppDeps): AppServices {
   const schedules = new ScheduleRepository(db);
   const memories = new MemoryRepository(db);
   const confirmations = new ConfirmationRepository(db);
+  const preauthorizations = new PreauthorizationRepository(db);
   const { registry } = createDefaultToolRegistry(store, deps.now, deps.github);
   deps.registerTools?.(registry);
 
@@ -82,6 +87,12 @@ export function createApp(deps: AppDeps): AppServices {
     now: deps.now,
     maxActiveWorkers: deps.maxActiveWorkers,
   });
+  const preauthorization = new PreauthorizationService({
+    store,
+    preauthorizations,
+    allowedRepos: deps.github?.allowedRepos ?? [],
+    now: deps.now,
+  });
   const actionService = new ActionService({
     store,
     actions,
@@ -90,6 +101,7 @@ export function createApp(deps: AppDeps): AppServices {
     wake: deps.wake,
     now: deps.now,
     tasks,
+    preauthorizations: preauthorization,
     onSettled: (taskId) => taskService.onActionSettled(taskId),
   });
   taskService.setActionProposer(actionService);
@@ -118,6 +130,7 @@ export function createApp(deps: AppDeps): AppServices {
     reminders,
     memory,
     confirmation,
+    preauthorization,
     model: deps.model,
     wake: deps.wake,
     now: deps.now,
@@ -137,11 +150,13 @@ export function createApp(deps: AppDeps): AppServices {
     schedules,
     memories,
     confirmations,
+    preauthorizations,
     taskService,
     actionService,
     reminders,
     memory,
     confirmation,
+    preauthorization,
     router,
     ingress,
     effectDispatcher,

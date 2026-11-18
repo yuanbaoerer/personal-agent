@@ -19,12 +19,12 @@ import type { EffectDispatcher, EffectOutcome } from "../delivery/effects.ts";
 import type { AgentRuntime, WakeScheduler } from "../runtime/types.ts";
 
 export interface ActionProposer {
-  /** Returns the number of valid actions that were persisted. */
   proposeForReport(
     task: TaskRecord,
     assignment: AssignmentRecord,
     proposed: ProposedAction[],
-  ): number;
+  ): { count: number; autoApprove: string[] };
+  finalizeReportedActions?(actionIds: readonly string[]): void;
 }
 
 export interface TaskServiceDeps {
@@ -670,6 +670,12 @@ export class TaskService {
       // or otherwise advance it.
       return { status: "done" };
     }
+    if (reported === undefined && task.status !== "running") {
+      // A replayed report may only persist actions while the task is still
+      // running (the crash window between markReported and the proposal
+      // transaction). Once it moved on, replay must not fail or re-approve it.
+      return { status: "done" };
+    }
 
     const pendingInputs = this.#tasks.listInputsAfter(
       task.id,
@@ -744,24 +750,37 @@ export class TaskService {
       // Persist the actions and the task transition atomically so a crash
       // cannot leave approved work without a waiting task (or vice versa).
       const result = this.#store.db.transaction(() => {
-        const persisted = this.#proposer?.proposeForReport(task, assignment, proposed) ?? 0;
+        const persisted = this.#proposer?.proposeForReport(task, assignment, proposed) ?? {
+          count: 0,
+          autoApprove: [],
+        };
         const updated = this.#tasks.updateTask(task.id, task.revision, {
-          status: persisted > 0 ? "waiting_external" : "failed",
-          resultRef: persisted > 0 ? report.summary : undefined,
-          lastError: persisted > 0 ? undefined : "worker proposed no valid action",
+          status: persisted.count > 0 ? "waiting_external" : "failed",
+          resultRef: persisted.count > 0 ? report.summary : undefined,
+          lastError: persisted.count > 0 ? undefined : "worker proposed no valid action",
           updatedAt: now,
         });
-        return { persisted, updated };
+        return { persisted: persisted.count, autoApprove: persisted.autoApprove, updated };
       });
       if (result.updated === undefined) {
         return { status: "done" };
       }
+      if (result.autoApprove.length > 0) {
+        // Approving inside the report transaction would nest BEGIN; finalize
+        // only after the task transition has committed.
+        this.#proposer?.finalizeReportedActions?.(result.autoApprove);
+      }
       if (result.persisted > 0) {
+        const remainingApprovals = result.persisted - result.autoApprove.length;
         this.#reply(
           task,
-          "clarify",
-          `任务需要主人批准 ${result.persisted} 个动作后继续。`,
-          `approval-needed:${assignment.id}`,
+          remainingApprovals > 0 ? "clarify" : "status",
+          remainingApprovals > 0
+            ? `任务需要主人批准 ${remainingApprovals} 个动作后继续。`
+            : `任务已按只读预授权执行 ${result.autoApprove.length} 个动作，等待结果。`,
+          remainingApprovals > 0
+            ? `approval-needed:${assignment.id}`
+            : `preauthorized:${assignment.id}`,
         );
         void this.#wake.wake();
       } else {

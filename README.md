@@ -22,7 +22,8 @@
 | 工具扩展 | `createApp({registerTools})` seam（不可覆盖 built-in）；只读工具样例见 `docs/14-tool-capability.md`；工具名必检，声明了 `resource` 的工具还须满足 Mandate.resources | Provider/Channel 扩展契约与真实第三方工具未验证 |
 | 崩溃/重启恢复 | file-backed SQLite 重启脚本：Inbox 未路由、Assignment 租约过期、Action 外部已写未落库、needs_manual 可见；Effect/Outbox 租约回收 | E1 模拟重启；真实 SIGKILL、DO 驱逐、真实渠道恢复未验证 |
 | 可观测/诊断 | Outbox traceId 贯通 inbox/task/schedule；`/诊断` 与 `/admin/diagnostics` 输出过期 Assignment、unknown Action、unknown/needs_manual 投递；`/usage` 与 `/admin/usage` 输出 Task/Action/Effect/Outbox/Tool 聚合，token/费用明确“未采集”；诊断不返回消息正文、goal、Action args 或自由文本 lastError；router 日志不记录模型输出/goal | token/费用采集、预算未实现；真实 G2 链路追踪待验证 |
-| GitHub 只读 | `github.read` GET-only 连接器：repo 白名单、Bearer token、8s 超时、单次 ≤20 项/≤200KB、重定向拒绝；repo/commits/open issues/open pulls/PR 状态 + 来源 URL；Mandate 需 `github` resource | 每次读取仍走 Action 审批；真实 token/仓库 G1 未验证；不支持写 Issue |
+| GitHub 只读 | `github.read` GET-only 连接器：repo 白名单、Bearer token、8s 超时、单次 ≤20 项/≤200KB、重定向拒绝；repo/commits/open issues/open pulls/PR 状态 + 来源 URL；Mandate 需 `github` resource | 未预授权时仍逐次审批；真实 token/仓库 G1 未验证；不支持写 Issue |
+| 只读预授权 | `/allow-read owner/repo`（24h、可撤销、repo 白名单内）；仅 `github.read` + 该 repo 自动批准、无审批卡；`/revoke-read`、`/preauth`；过期/撤销即恢复逐次审批 | 真实 token G1 未验证；只覆盖 README 中声明的 repo |
 | 提醒 / 记忆 | 一次性提醒、runKey、TTL、聊天取消/列表；显式记忆查改删；模型解读的记忆/提醒先进入最长 10 分钟确认（提醒以到期时间为上限），owner 校验，取消/过期不写入 | 项目范围隔离、Worker 记忆注入、周期提醒与语义检索未做 |
 | 备份/校验 | `npm run backup`：`VACUUM INTO` 复制 agent/pi SQLite，manifest SHA-256 + integrity_check，目录/文件 700/600；`--verify` 重新校验 | 恢复/升级自动化、加密与保留期策略未做 |
 | 本地服务 | `POST /webhooks/feishu`、`GET /healthz`、Node SQLite + 进程内 pi-durable | 配置 `OPENCODE_API_KEY` 后本地执行模型任务；未配置时模型任务明确失败 |
@@ -98,12 +99,19 @@ npm start
 - `npm test`：168 个确定性测试通过（PA-07 时点）；token 缺失或白名单为空时工具不注册。
 - 证据边界：E1（fake GitHub API）；真实 token/仓库 G1、真实 Feishu 演示与只读自动审批策略 pending。
 
+**2026-11-18 验证（只读预授权，PA-08 前置）：**
+
+- `/allow-read owner/repo` 授予 24h、可撤销的只读预授权；只对 `github.read` 且 args.repo 命中时自动批准，不发送审批卡；report 事务提交后再批准，重复 report 不重复批准。
+- `/revoke-read`、过期、未授权 repo、connector 白名单外 repo 均不会自动执行；已自动批准但未执行的 Action 在 claim 时失效；跨 owner 不命中。
+- `npm test`：192 个确定性测试通过（当前）；fake GitHub 执行 1 次，无审批卡，`action.auto_approved` 审计存在。
+- 证据边界：E1；真实 token/仓库 G1、计划/周期触发与预算仍未验证。
+
 **2026-11-18 验证（PA-14 部分）：**
 
 - `npm run backup -- --data ./data --out ./backups/<timestamp>`：`VACUUM INTO` 复制 `agent.sqlite`、可选 `pi.sqlite`；manifest 记录 SHA-256、字节数、schema_version；复制后跑 `PRAGMA integrity_check`；目录/文件权限 700/600。
 - `npm run backup -- --verify <dir>`：重新校验哈希与完整性；拒绝非空目标与非法 manifest 文件名。
 - `npm run backup -- --restore <dir> --target <emptyDir>`：校验后恢复 agent/pi 数据库到空目录；拒绝较新 schema、非空目标，恢复后重跑 integrity_check。
-- `npm test`：184 个确定性测试通过（当前）；CLI 创建/verify/restore 冒烟通过。
+- `npm test`：184 个确定性测试通过（PA-14 时点）；CLI 创建/verify/restore 冒烟通过。
 - 证据边界：E1；恢复/升级自动化、加密与保留期未做。
 
 ## 产品方向
