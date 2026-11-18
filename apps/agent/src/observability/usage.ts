@@ -10,6 +10,8 @@ import type { EffectRepository } from "../storage/effects.ts";
 import type { Store } from "../storage/store.ts";
 import type { TaskRepository } from "../storage/tasks.ts";
 
+export const TOKEN_COST_LINE_PREFIX = "token/费用：";
+
 export interface UsageDeps {
   store: Store;
   tasks: TaskRepository;
@@ -107,7 +109,7 @@ export function formatUsage(snapshot: UsageSnapshot): string {
       `failed ${snapshot.effects.failed}。`,
     `Outbox：pending ${snapshot.outbox.pending}，accepted ${snapshot.outbox.accepted}，` +
       `unknown ${snapshot.outbox.unknown}，needs_manual ${snapshot.outbox.needs_manual}。`,
-    `token/费用：未采集（不展示估算金额）。`,
+    `${TOKEN_COST_LINE_PREFIX}未采集（不展示估算金额）。`,
   ];
   if (snapshot.actionsByTool.length > 0) {
     lines.push("按工具：");

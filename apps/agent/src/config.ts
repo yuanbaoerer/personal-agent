@@ -20,6 +20,11 @@ export interface AppConfig {
     token?: string;
     allowedRepos: string[];
   };
+  magpie: {
+    baseUrl?: string;
+    gatewayKey?: string;
+    minRemainingPercent: number;
+  };
   ownerOpenId?: string;
   eventMode: FeishuEventMode;
   feishu: FeishuConfig;
@@ -70,6 +75,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
         .split(",")
         .map((repo) => repo.trim())
         .filter((repo) => repo.length > 0),
+    },
+    magpie: {
+      baseUrl: read("MAGPIE_URL"),
+      gatewayKey: read("MAGPIE_GATEWAY_KEY"),
+      minRemainingPercent: parseInteger(
+        read("MAGPIE_MIN_REMAINING_PERCENT") ?? "5",
+        "MAGPIE_MIN_REMAINING_PERCENT",
+        0,
+        100,
+      ),
     },
     ownerOpenId: read("OWNER_FEISHU_OPEN_ID"),
     eventMode: eventModeRaw,

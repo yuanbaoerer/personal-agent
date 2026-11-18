@@ -18,7 +18,12 @@ import type { ReminderService } from "../personal/reminders.ts";
 import type { EffectDispatcher, EffectOutcome } from "../delivery/effects.ts";
 import type { ActionService } from "../actions/service.ts";
 import { buildDiagnostics, formatDiagnostics } from "../observability/diagnostics.ts";
-import { buildUsage, formatUsage } from "../observability/usage.ts";
+import {
+  TOKEN_COST_LINE_PREFIX,
+  buildUsage,
+  formatUsage,
+} from "../observability/usage.ts";
+import type { BudgetService } from "../observability/magpie.ts";
 import type { TaskService } from "./tasks.ts";
 import {
   RouterPendingError,
@@ -61,6 +66,7 @@ export interface RouterDeps {
   memory: MemoryService;
   confirmation: ConfirmationService;
   preauthorization: PreauthorizationService;
+  budget?: BudgetService;
   model: RouterModel;
   wake: WakeScheduler;
   now?: () => Date;
@@ -142,6 +148,7 @@ export class Router implements InboundHandler {
   readonly #memory: MemoryService;
   readonly #confirmation: ConfirmationService;
   readonly #preauthorization: PreauthorizationService;
+  readonly #budget?: BudgetService;
   readonly #model: RouterModel;
   readonly #wake: WakeScheduler;
   readonly #now: () => Date;
@@ -158,6 +165,7 @@ export class Router implements InboundHandler {
     this.#memory = deps.memory;
     this.#confirmation = deps.confirmation;
     this.#preauthorization = deps.preauthorization;
+    this.#budget = deps.budget;
     this.#model = deps.model;
     this.#wake = deps.wake;
     this.#now = deps.now ?? (() => new Date());
@@ -205,6 +213,17 @@ export class Router implements InboundHandler {
     const inboxId = typeof payload.inboxId === "string" ? payload.inboxId : "unknown";
     if (ownerId === undefined || conversationId === undefined) {
       return { status: "failed", reason: "router.route payload is incomplete" };
+    }
+    // Re-attaching to a run that already consumed budget must not be aborted
+    // just because the window crossed the threshold while it was in flight.
+    const budget = attempts <= 1 ? await this.#budget?.check() : undefined;
+    if (budget !== undefined && !budget.ok) {
+      this.#reply(
+        { ownerId, conversationId, inboxId },
+        `模型请求已暂停：${budget.reason ?? "订阅额度不足"}。`,
+        "status",
+      );
+      return { status: "done" };
     }
 
     let decision: RouterDecision;
@@ -641,7 +660,23 @@ export class Router implements InboundHandler {
         },
         now,
       );
-      return [{ purpose: "status", text: formatUsage(snapshot) }];
+      const magpie = await this.#budget?.summaryText();
+      const local = formatUsage(snapshot);
+      const hasMagpieData = magpie !== undefined && !magpie.startsWith("Magpie：不可用");
+      return [
+        {
+          purpose: "status",
+          text:
+            magpie === undefined
+              ? local
+              : `${(hasMagpieData
+                  ? local
+                      .split("\n")
+                      .filter((line) => !line.startsWith(TOKEN_COST_LINE_PREFIX))
+                      .join("\n")
+                  : local)}\n\n${magpie}`,
+        },
+      ];
     }
 
     const allowRead = /^\/(?:allow-read|预授权)\s+(\S+)\s*$/i.exec(text);

@@ -10,6 +10,7 @@ import { EffectDispatcher } from "./delivery/effects.ts";
 import { MemoryService } from "./personal/memory.ts";
 import { ConfirmationService } from "./personal/confirmations.ts";
 import { PreauthorizationService } from "./personal/preauthorizations.ts";
+import { MagpieBudget, type MagpieConfig } from "./observability/magpie.ts";
 import { ReminderService, noopReminderTimer, type ReminderTimer } from "./personal/reminders.ts";
 import type { AgentRuntime, WakeScheduler } from "./runtime/types.ts";
 import { ActionRepository } from "./storage/actions.ts";
@@ -35,6 +36,8 @@ export interface AppDeps {
   reminderTimer?: ReminderTimer;
   /** Read-only GitHub connector; omitted means the tool is unavailable. */
   github?: GitHubReadConfig;
+  /** Optional Magpie usage/quotas adapter; omitted means local-only reporting. */
+  magpie?: MagpieConfig;
   /** Host/extension seam for additional tools; keep writes in ActionService. */
   registerTools?: (registry: ToolRegistry) => void;
   now?: () => Date;
@@ -55,6 +58,7 @@ export interface AppServices {
   memory: MemoryService;
   confirmation: ConfirmationService;
   preauthorization: PreauthorizationService;
+  budget?: MagpieBudget;
   router: Router;
   ingress: IngressService;
   effectDispatcher: EffectDispatcher;
@@ -67,6 +71,8 @@ export interface AppServices {
 export function createApp(deps: AppDeps): AppServices {
   const { store } = deps;
   const db = store.db;
+  const budget =
+    deps.magpie?.baseUrl === undefined ? undefined : new MagpieBudget(deps.magpie);
   const tasks = new TaskRepository(db);
   const actions = new ActionRepository(db);
   const effects = new EffectRepository(db);
@@ -86,6 +92,7 @@ export function createApp(deps: AppDeps): AppServices {
     wake: deps.wake,
     now: deps.now,
     maxActiveWorkers: deps.maxActiveWorkers,
+    budget,
   });
   const preauthorization = new PreauthorizationService({
     store,
@@ -131,6 +138,7 @@ export function createApp(deps: AppDeps): AppServices {
     memory,
     confirmation,
     preauthorization,
+    budget,
     model: deps.model,
     wake: deps.wake,
     now: deps.now,
@@ -157,6 +165,7 @@ export function createApp(deps: AppDeps): AppServices {
     memory,
     confirmation,
     preauthorization,
+    budget,
     router,
     ingress,
     effectDispatcher,

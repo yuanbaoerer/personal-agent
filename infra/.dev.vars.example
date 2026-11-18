@@ -18,3 +18,8 @@ ADMIN_TOKEN=
 # registered; repos are comma-separated owner/name entries.
 GITHUB_TOKEN=
 GITHUB_ALLOWED_REPOS=
+
+# Optional Magpie usage/quotas adapter.
+MAGPIE_URL=
+MAGPIE_GATEWAY_KEY=magpie-personal-agent
+MAGPIE_MIN_REMAINING_PERCENT=5

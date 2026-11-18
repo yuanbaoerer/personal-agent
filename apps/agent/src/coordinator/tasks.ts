@@ -16,6 +16,7 @@ import {
 } from "../storage/tasks.ts";
 import type { Store } from "../storage/store.ts";
 import type { EffectDispatcher, EffectOutcome } from "../delivery/effects.ts";
+import type { BudgetService } from "../observability/magpie.ts";
 import type { AgentRuntime, WakeScheduler } from "../runtime/types.ts";
 
 export interface ActionProposer {
@@ -40,6 +41,7 @@ export interface TaskServiceDeps {
   /** A live Worker heartbeat may hold a slot for at most this long. */
   assignmentMaxLifetimeMs?: number;
   maxTaskAttempts?: number;
+  budget?: BudgetService;
 }
 
 export interface CreateTaskInput {
@@ -84,6 +86,7 @@ export class TaskService {
   readonly #leaseMs: number;
   readonly #maxAssignmentLifetimeMs: number;
   readonly #maxTaskAttempts: number;
+  readonly #budget?: BudgetService;
   #proposer: ActionProposer | undefined;
 
   constructor(deps: TaskServiceDeps) {
@@ -99,6 +102,7 @@ export class TaskService {
     this.#maxAssignmentLifetimeMs =
       deps.assignmentMaxLifetimeMs ?? 10 * 60_000;
     this.#maxTaskAttempts = deps.maxTaskAttempts ?? 3;
+    this.#budget = deps.budget;
   }
 
   setActionProposer(proposer: ActionProposer): void {
@@ -426,6 +430,21 @@ export class TaskService {
       }
       if (this.#isPastDeadline(task, now)) {
         return this.#failForDeadline(task, now);
+      }
+      const budget = await this.#budget?.check();
+      if (budget !== undefined && !budget.ok) {
+        this.#reply(
+          task,
+          "status",
+          `订阅额度不足，任务已暂停：${budget.reason ?? "未知原因"}。额度恢复后会自动继续。`,
+          `budget-paused:${task.id}`,
+        );
+        return {
+          status: "retry",
+          at: new Date(now.getTime() + 60_000).toISOString(),
+          reason: `subscription budget: ${budget.reason ?? "unavailable"}`,
+          maxAttempts: 30 * 24 * 60,
+        };
       }
     }
 

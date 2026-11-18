@@ -13,6 +13,7 @@ import type { ConversationRecord, OwnerIdentity } from "../src/domain/types.ts";
 import { MemoryService } from "../src/personal/memory.ts";
 import { ConfirmationService } from "../src/personal/confirmations.ts";
 import { PreauthorizationService } from "../src/personal/preauthorizations.ts";
+import { MagpieBudget, type BudgetService, type MagpieConfig } from "../src/observability/magpie.ts";
 import { ReminderService, type ReminderTimer } from "../src/personal/reminders.ts";
 import { FakeRuntime } from "../src/runtime/fake.ts";
 import { noopWake } from "../src/runtime/types.ts";
@@ -45,6 +46,7 @@ export interface TestServices {
   memory: MemoryService;
   confirmation: ConfirmationService;
   preauthorization: PreauthorizationService;
+  budget?: BudgetService;
   router: Router;
   ingress: IngressService;
   model: StaticRouterModel;
@@ -64,6 +66,8 @@ export function createServices(options: {
   github?: GitHubReadConfig;
   reminderTimer?: ReminderTimer;
   maxConcurrentTools?: number;
+  budget?: BudgetService;
+  magpie?: MagpieConfig;
 } = {}): TestServices {
   const now = options.now ?? (() => new Date());
   const store = options.store ?? createStore();
@@ -95,6 +99,7 @@ export function createServices(options: {
   const { registry, lamp } = createDefaultToolRegistry(store, now, options.github);
   const runtime = new FakeRuntime();
 
+  const budget = options.budget ?? (options.magpie === undefined ? undefined : new MagpieBudget(options.magpie));
   const taskService = new TaskService({
     store,
     tasks,
@@ -103,6 +108,7 @@ export function createServices(options: {
     runtime,
     wake: noopWake,
     now,
+    budget,
     maxActiveWorkers: options.maxActiveWorkers ?? 2,
     assignmentLeaseMs: options.assignmentLeaseMs,
     assignmentMaxLifetimeMs: options.assignmentMaxLifetimeMs,
@@ -150,6 +156,7 @@ export function createServices(options: {
     memory,
     confirmation,
     preauthorization,
+    budget,
     model,
     wake: noopWake,
     now,
@@ -182,6 +189,7 @@ export function createServices(options: {
     memory,
     confirmation,
     preauthorization,
+    budget,
     router,
     ingress,
     model,

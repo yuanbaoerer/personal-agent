@@ -27,7 +27,8 @@
 | 只读预授权：24h、可撤销、repo 作用域、仅 github.read、自动批准无审批卡 | 真实 G1、周期计划、预算 |
 | SQLite 备份：VACUUM INTO、manifest SHA-256、integrity_check、600 权限、verify、恢复到空目录（拒绝较新 schema） | 恢复/升级自动化、加密、保留期 |
 | 工具扩展 seam + 只读样例：`registerTools`、resource/readOnly/timeoutMs/replayPolicy 双重校验 | Provider/Channel 扩展契约、真实第三方工具 |
-| 193 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
+| Magpie 用量/预算：可选读取 quotas/usage/limit，OpenCode Go 窗口低于阈值或 key 限额时阻止新模型请求，`/usage` 附带订阅窗口 | 当前 Magpie 工作区无 OpenCode Go 卡；真实配额/重置未验证 |
+| 200 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
 
 ## 2. 下一步待办
 
@@ -224,6 +225,25 @@ npm run backup -- --restore ./backups/<timestamp> --target ./restored-data
 
 边界：E1；PA-08 的 SchedulePolicy/预算仍未实现，PA-07/PA-08 保持 OPEN。
 
+### 2.12 2026-11-18 实施进展（Magpie 用量/预算，PA-06/PA-08 部分）
+
+```bash
+MAGPIE_URL=http://127.0.0.1:3425
+MAGPIE_GATEWAY_KEY=magpie-personal-agent
+MAGPIE_MIN_REMAINING_PERCENT=5
+```
+
+| 内容 | 实现 | 证据 |
+| --- | --- | --- |
+| 订阅额度 | 读取 Magpie `/v1/magpie/quotas`；仅匹配 OpenCode Go 卡（单个无 go 标签的 OpenCode 卡按 Go 处理；多个 OpenCode 卡时仅显式 go 生效），读取 windows 的 used/remaining/resetsAt/limited | `magpie.test.ts` |
+| 用量摘要 | 读取 `/v1/magpie/usage?period=today` 与 `/v1/magpie/limit`；`/usage` 附加 calls/tokens/cost/窗口（gateway-wide，所有 Provider）；有 Magpie 数据时移除本地“未采集”行 | 摘要测试；本地只读探测 |
+| 预算门禁 | OpenCode Go 窗口 remaining ≤5%、window limited 或 gateway key limited 时阻止新的 Router/Worker 模型请求；Router 只拦新请求，pending 重连不中断；任务 dispatch 60s retry（30 天上限） | gate/limit/窗口测试 |
+| 失败策略 | Magpie 不可达或可选端点失败时 fail-open + degraded，Direct Provider 不受影响；配额端点失败才视为不可用 | 不可达测试 |
+| 当前环境 | 本地 Magpie 0.1.3792 可读 quotas/usage/limit，但工作区没有 OpenCode Go 卡（仅 Codex/Copilot），因此真实 Go 窗口未验证 | 只读探测 |
+| 待定 | 在 Magpie 中添加 OpenCode Go 订阅并验证 5h/7d 窗口、重置与 429；SchedulePolicy 触发 | 需真实订阅连接 |
+
+边界：E1；真实 Go 订阅额度、重置与 429 未验证，PA-06/PA-08 保持 OPEN。
+
 ## 3. 环境与密钥
 
 ```bash
@@ -243,6 +263,7 @@ cp infra/.dev.vars.example infra/.dev.vars  # 本地 workerd
 | `OPENCODE_API_KEY` | 本地模型；未设置时模型任务显式失败。DO 部署时用 Worker secret |
 | `OPENCODE_MODEL` | 本地模型 id，默认 `deepseek-v4.1-flash`；provider 固定 `opencode-go` |
 | `GITHUB_TOKEN` / `GITHUB_ALLOWED_REPOS` | 只读 GitHub 连接器；两者都需配置，仓库为逗号分隔 `owner/name` 精确白名单；不配置则不注册工具 |
+| `MAGPIE_URL` / `MAGPIE_GATEWAY_KEY` / `MAGPIE_MIN_REMAINING_PERCENT` | 可选 Magpie 用量/预算；URL 例 `http://127.0.0.1:3425`；默认 key `magpie-personal-agent`；窗口剩余低于百分比（默认 5）时暂停新模型请求 |
 | `DATABASE_PATH` | 本地 Node SQLite（`pa_*` 应用状态），默认 `./data/agent.sqlite` |
 | `PI_DATABASE_PATH` | Pi 会话库（`pi_*`），默认 `./data/pi.sqlite`；与上一项成对备份 |
 | `OUTBOX_*` | 租约、重试次数、退避 |

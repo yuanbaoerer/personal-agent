@@ -28,6 +28,9 @@ interface Env {
   ADMIN_TOKEN?: string;
   GITHUB_TOKEN?: string;
   GITHUB_ALLOWED_REPOS?: string;
+  MAGPIE_URL?: string;
+  MAGPIE_GATEWAY_KEY?: string;
+  MAGPIE_MIN_REMAINING_PERCENT?: string;
   FEISHU_APP_ID?: string;
   FEISHU_APP_SECRET?: string;
   FEISHU_VERIFICATION_TOKEN?: string;
@@ -173,6 +176,13 @@ export class Assistant extends DurableObject<Env> {
           .split(",")
           .map((repo) => repo.trim())
           .filter((repo) => repo.length > 0),
+      },
+      magpie: {
+        baseUrl: this.env.MAGPIE_URL?.trim() || undefined,
+        gatewayKey: this.env.MAGPIE_GATEWAY_KEY?.trim() || undefined,
+        minRemainingPercent: clampPercent(
+          this.env.MAGPIE_MIN_REMAINING_PERCENT,
+        ),
       },
       model: new PiRouterModel(store, runtime),
     });
@@ -587,4 +597,15 @@ function headerRecord(request: Request): Record<string, string | string[] | unde
     headers[name] = value;
   }
   return headers;
+}
+
+function clampPercent(raw: string | undefined): number {
+  if (raw === undefined || raw.trim().length === 0) {
+    return 5;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed)) {
+    return 5;
+  }
+  return Math.min(100, Math.max(0, parsed));
 }

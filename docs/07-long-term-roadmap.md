@@ -156,7 +156,7 @@ PA-04 的可重跑重启脚本已落地（E1）：覆盖 Inbox 路由前中断�
 
 PA-05 的非阻塞调度已落地 E1：Assignment 等待改为 100ms 切片 + 250ms–5s 退避，Router 等待改为 250ms 切片 + 250ms–2s 退避；两个 Worker 等待期间普通 effect 与 `/status`/`/cancel` 不再被长等待拖住；工具调用默认 15s 超时（读失败/写 unknown）。真实模型长生成、平台延迟与慢工具隔离未测，PA-05 保持 OPEN。
 
-PA-06 的可观测/诊断已落地 E1：Outbox traceId 贯通 inbox/task/schedule，`/诊断` 与 `/admin/diagnostics` 提供过期 Assignment、unknown Action、needs_manual 投递和安全处理提示，`/usage` 与 `/admin/usage` 提供 Task/Action/Effect/Outbox/Tool 聚合（token/费用明确未采集），诊断不返回消息正文/goal/Action args/lastError；真实 token/费用、硬预算与真实 G2 链路 pending，PA-06 保持 OPEN。
+PA-06 的可观测/诊断已落地 E1：Outbox traceId 贯通 inbox/task/schedule，`/诊断` 与 `/admin/diagnostics` 提供过期 Assignment、unknown Action、needs_manual 投递和安全处理提示，`/usage` 与 `/admin/usage` 提供 Task/Action/Effect/Outbox/Tool 聚合，并新增可选 Magpie `/v1/magpie/quotas`、`/usage`、`/limit` 读取：OpenCode Go 窗口低于阈值或 gateway key 限额耗尽时阻止新的 Router/Worker 模型请求；Magpie 不可达时 fail-open。真实 token/费用、真实 Go 窗口与硬预算仍 pending，PA-06 保持 OPEN。
 
 PA-10 的确认与范围已落地 E1：模型解读的 `save_memory`/`remind` 先生成 10 分钟确认项，`/确认` 后应用，`/取消确认`、过期、跨 owner 均不写入；显式命令保持即时。项目范围隔离与 Worker 记忆注入 pending，PA-10 保持 OPEN。
 

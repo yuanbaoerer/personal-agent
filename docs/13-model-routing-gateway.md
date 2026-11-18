@@ -198,6 +198,8 @@ Magpie 可将不同 Provider、账户/密钥及 routing group 作为统一模型
 
 这部分与 [PA-06 可观测性/预算](https://github.com/yuanbaoerer/personal-agent/issues/7) 一体建设，不能另造第二套成本审计表而缺少端到端 trace。
 
+**2026-11-18 实现（E1）**：可选 `MAGPIE_URL` / `MAGPIE_GATEWAY_KEY` / `MAGPIE_MIN_REMAINING_PERCENT`；读取 Magpie `/v1/magpie/quotas`、`/usage`、`/limit`，仅用 OpenCode Go 卡窗口做门禁，低于阈值或 key 限额时阻止新的 Router/Worker 模型请求；Magpie 不可达 fail-open。当前本地 Magpie 工作区没有 OpenCode Go 卡（只有 Codex/Copilot），真实 Go 订阅窗口与重置仍未验证。
+
 ## 7. 与 Mode Architecture 的集成
 
 ```text

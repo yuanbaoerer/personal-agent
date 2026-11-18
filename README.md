@@ -21,7 +21,8 @@
 | 审批 / 动作 | 参数绑定、nonce、一次性消费、原子审批、执行前重核 Task 状态/revision/Mandate、取消/修订后拒绝重试、unknown/reconcile、mock 灯；写工具须声明 `replayPolicy=verify` 才允许重试；succeeded/failed/unknown/expired/reconciled/needs_manual/superseded 均写审计（含 task cancel/revise 批量 supersede） | mock 灯是程序化工具；MCP 桥接与真机未接；真实外部 API 未验证 |
 | 工具扩展 | `createApp({registerTools})` seam（不可覆盖 built-in）；只读工具样例见 `docs/14-tool-capability.md`；工具名必检，声明了 `resource` 的工具还须满足 Mandate.resources | Provider/Channel 扩展契约与真实第三方工具未验证 |
 | 崩溃/重启恢复 | file-backed SQLite 重启脚本：Inbox 未路由、Assignment 租约过期、Action 外部已写未落库、needs_manual 可见；Effect/Outbox 租约回收 | E1 模拟重启；真实 SIGKILL、DO 驱逐、真实渠道恢复未验证 |
-| 可观测/诊断 | Outbox traceId 贯通 inbox/task/schedule；`/诊断` 与 `/admin/diagnostics` 输出过期 Assignment、unknown Action、unknown/needs_manual 投递；`/usage` 与 `/admin/usage` 输出 Task/Action/Effect/Outbox/Tool 聚合，token/费用明确“未采集”；诊断不返回消息正文、goal、Action args 或自由文本 lastError；router 日志不记录模型输出/goal | token/费用采集、预算未实现；真实 G2 链路追踪待验证 |
+| 可观测/诊断 | Outbox traceId 贯通 inbox/task/schedule；`/诊断` 与 `/admin/diagnostics` 输出过期 Assignment、unknown Action、unknown/needs_manual 投递；`/usage` 与 `/admin/usage` 输出 Task/Action/Effect/Outbox/Tool 聚合；router 日志不记录模型输出/goal；诊断不返回消息正文、goal、Action args 或 lastError | 本地 action 聚合可用；真实 G2 链路追踪待验证 |
+| Magpie 用量/预算 | 可选读取本地 Magpie `/v1/magpie/quotas`、`/usage`、`/limit`；OpenCode Go 订阅窗口低于阈值或 key 限额耗尽时阻止新的 Router/Worker 模型请求；`/usage` 附带订阅窗口 | 当前 Magpie 工作区未见 OpenCode Go 卡；真实 Go 配额/重置未验证 |
 | GitHub 只读 | `github.read` GET-only 连接器：repo 白名单、Bearer token、8s 超时、单次 ≤20 项/≤200KB、重定向拒绝；repo/commits/open issues/open pulls/PR 状态 + 来源 URL；Mandate 需 `github` resource | 未预授权时仍逐次审批；真实 token/仓库 G1 未验证；不支持写 Issue |
 | 只读预授权 | `/allow-read owner/repo`（24h、可撤销、repo 白名单内）；仅 `github.read` + 该 repo 自动批准、无审批卡；`/revoke-read`、`/preauth`；过期/撤销即恢复逐次审批 | 真实 token G1 未验证；只覆盖 README 中声明的 repo |
 | 提醒 / 记忆 | 一次性提醒、runKey、TTL、聊天取消/列表；显式记忆查改删；模型解读的记忆/提醒先进入最长 10 分钟确认（提醒以到期时间为上限），owner 校验，取消/过期不写入 | 项目范围隔离、Worker 记忆注入、周期提醒与语义检索未做 |
@@ -103,9 +104,18 @@ npm start
 
 - `/allow-read owner/repo` 授予 24h、可撤销的只读预授权；只对 `github.read` 且 args.repo 命中时自动批准，不发送审批卡；report 事务提交后再批准，重复 report 不重复批准。
 - `/revoke-read`、过期、未授权 repo、connector 白名单外 repo 均不会自动执行；已自动批准但未执行的 Action 在 claim 时失效；跨 owner 不命中。
-- `npm test`：193 个确定性测试通过（当前）；fake GitHub 执行 1 次，无审批卡，`action.auto_approved` 审计存在。
+- `npm test`：200 个确定性测试通过（当前）；fake GitHub 执行 1 次，无审批卡，`action.auto_approved` 审计存在。
 - 崩溃窗口：report 已提交但 post-commit 自动批准丢失时，重放会 finalize 仍为 proposed 的预授权 Action。
-- 证据边界：E1；真实 token/仓库 G1、计划/周期触发与预算仍未验证。
+- 证据边界：E1；真实 token/仓库 G1、计划/周期触发与真实 Go 配额仍未验证。
+
+**2026-11-18 验证（Magpie 用量/预算，PA-06/PA-08 部分）：**
+
+- 可选 `MAGPIE_URL`（例 `http://127.0.0.1:3425`；不设置则不启用 Magpie 读取与预算门禁）+ `MAGPIE_GATEWAY_KEY`；读取 `/v1/magpie/quotas`、`/usage?period=today`、`/limit`。
+- 仅匹配 OpenCode Go 卡；`remaining <= 5%`、窗口 `limited` 或 gateway key `limited` 时阻止新的 Router/Worker 模型请求；Magpie 不可达时 fail-open 并标记 degraded；单个无 “go” 标签的 OpenCode 卡按 Go 处理；多个 OpenCode 卡时仅显式 “go” 标签生效。
+- `/usage` 附带订阅窗口与今日 calls/tokens/cost（gateway-wide，所有 Provider）；有 Magpie 数据时移除本地“token/费用未采集”行；不显示其他 Provider 卡片或账号。
+- 本地 Magpie 0.1.3792 只读探测返回 quotas/usage/limit 形状，但当前工作区没有 OpenCode Go 卡（只有 Codex/Copilot），因此真实 Go 配额仍未验证。
+- `npm test`：200 pass / 0 fail。
+- 证据边界：E1（fake Magpie HTTP + 本地只读探测）；真实 Go 订阅窗口、重置与 429 未验证。
 
 **2026-11-18 验证（PA-14 部分）：**
 
