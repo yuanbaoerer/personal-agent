@@ -40,6 +40,8 @@ K13 与 K14 必须包含至少一个可控竞态复现测试；应用的锁、�
 
 **K14 实现状态（2026-11-17，E1）**：`ActionRepository.claimForExecution` 在同一事务内重核 owner/conversation/taskRevision、Task 非终态/非 cancelling、Mandate 含工具；失败则 approved → superseded、消费一次性审批并审计，不调用工具。审批入口同样重核；同一审批重复 claim 只有一次成功（`action_executing`）；approved Action 错过执行窗口时转为 expired 并消费审批；外部已发仍走 unknown → reconcile。真实写工具、平台审批点击与故障注入 pending，不能据此把 K14 标为 E3 通过。
 
+**完成验证器（PA-09 部分，E1）**：`TaskCompletionVerifier` 先做结构校验，再按任务类型注册 verifier；`github-read` 要求 succeeded `github.read` Action 的 repo/source 与报告来源 URL 匹配，缺回执/来源不符/未知 verifier/文本人审 → `needs_review`，结构非法 → `failed`。`needs_review` 为终态，不再派工，只能 `/ack <taskId> [note]` 转 succeeded，写 `acknowledged_at/by` 与 `task.acknowledged` 审计；`/status`、`/usage`、`/admin/status` 显示待核对数。真实 G1/G3 外部判据与文本任务人审质量仍 pending，PA-09 保持 OPEN。
+
 **周期计划（PA-08 部分，E1）**：`/schedule new` 只创建 draft，`/schedule confirm` 后才激活；edit 退回 draft 并递增 version，pause/resume/cancel 停止或恢复新触发。支持 daily/weekdays、IANA 时区、DST 缺口跳过、重复时间取第一次、错过超过 1h 不补跑、结束日含 23:59:59.999。每次 scheduledAt 由 `source_key` 与 `pa_schedule_policy_runs` 双重去重，run 记录关联 Task；计划任务只允许 `github.read` 且自动批准绑定 policy/version/repo，计划暂停/修改/取消/过期或 repo 超出白名单时提案拒绝、执行前再次核验。`confirm/resume` 立即 `wake()`，由 maintenance 重算最早到期时间，不把共享 job 推晚。真实飞书 G3、真实 GitHub 触发/回执与生产 alarm 仍 pending，PA-08 保持 OPEN。
 
 **恢复证据（PA-04 部分，E1）**：`npm run test:recovery` 使用 file-backed SQLite 重建进程，覆盖 Inbox 已受理但未路由、Assignment/Effect 租约过期、Task 创建后派工 effect 丢失、Action 外部写已生效但本地 unknown 后 reconcile、Reminder 到期跨重启只外发一次、`needs_manual` 在 `/status` 可见；Outbox 发送中断的 businessKey 核对由 `outbox.test.ts` 覆盖。真实 SIGKILL、DO 驱逐、Pi 会话跨重启、真实飞书回执仍为 pending，不能据此宣称 E4 通过。

@@ -18,6 +18,7 @@ import type { Store } from "../storage/store.ts";
 import type { EffectDispatcher, EffectOutcome } from "../delivery/effects.ts";
 import type { BudgetService } from "../observability/magpie.ts";
 import type { AgentRuntime, WakeScheduler } from "../runtime/types.ts";
+import { TaskCompletionVerifier } from "./completion.ts";
 
 export interface ActionProposer {
   proposeForReport(
@@ -42,6 +43,7 @@ export interface TaskServiceDeps {
   assignmentMaxLifetimeMs?: number;
   maxTaskAttempts?: number;
   budget?: BudgetService;
+  completionVerifier?: TaskCompletionVerifier;
 }
 
 export interface CreateTaskInput {
@@ -88,6 +90,7 @@ export class TaskService {
   readonly #maxAssignmentLifetimeMs: number;
   readonly #maxTaskAttempts: number;
   readonly #budget?: BudgetService;
+  readonly #completion: TaskCompletionVerifier;
   #proposer: ActionProposer | undefined;
 
   constructor(deps: TaskServiceDeps) {
@@ -104,6 +107,9 @@ export class TaskService {
       deps.assignmentMaxLifetimeMs ?? 10 * 60_000;
     this.#maxTaskAttempts = deps.maxTaskAttempts ?? 3;
     this.#budget = deps.budget;
+    this.#completion =
+      deps.completionVerifier ??
+      new TaskCompletionVerifier({ actions: deps.actions, now: this.#now });
   }
 
   setActionProposer(proposer: ActionProposer): void {
@@ -517,7 +523,13 @@ export class TaskService {
       );
       await this.#runtime.submit(
         opened.id,
-        workerPrompt(claimed.task, inputs, this.#actions.listByTask(claimed.task.id)),
+        workerPrompt(
+          claimed.task,
+          inputs,
+          this.#actions
+            .listByTask(claimed.task.id)
+            .filter((action) => action.taskRevision === claimed.task.revision),
+        ),
         operationId,
         "app.task",
       );
@@ -823,23 +835,66 @@ export class TaskService {
 
     switch (report.status) {
       case "ready": {
-        const completion = evaluateCompletion(task, report);
-        if (!completion.ok) {
+        const completion = this.#completion.verify(task, report);
+        if (completion.verdict === "failed") {
           const updated = this.#tasks.updateTask(task.id, task.revision, {
             status: "failed",
-            lastError: completion.reason,
+            lastError: completion.verification.reason,
+            verification: completion.verification,
             updatedAt: now,
           });
           if (updated === undefined) {
             return { status: "done" };
           }
-          this.#reply(task, "failure", `任务未通过完成条件：${completion.reason}`, `failed:${assignment.id}`);
+          this.#reply(
+            task,
+            "failure",
+            `任务未通过完成条件：${completion.verification.reason}`,
+            `failed:${assignment.id}`,
+          );
+          return { status: "done" };
+        }
+        if (completion.verdict === "needs_review") {
+          const updated = this.#tasks.updateTask(task.id, task.revision, {
+            status: "needs_review",
+            resultRef: report.summary,
+            lastError: completion.verification.reason,
+            verification: completion.verification,
+            updatedAt: now,
+          });
+          if (updated === undefined) {
+            return { status: "done" };
+          }
+          this.#store.recordAudit({
+            event: "task.needs_review",
+            subjectType: "task",
+            subjectId: task.id,
+            after: {
+              verifier: completion.verification.verifier,
+              verifierVersion: completion.verification.verifierVersion,
+              reason: completion.verification.reason,
+              missing: completion.verification.missing,
+              evidenceRefs: completion.verification.evidenceRefs,
+            },
+            traceId: `task:${task.id}`,
+            occurredAt: now,
+          });
+          this.#reply(
+            task,
+            "status",
+            [
+              `任务完成后无法用可核对证据确认，已进入待人工核对（${completion.verification.verifier}）：${completion.verification.reason}`,
+              `确认完成：/ack ${task.id} [备注]`,
+            ].join("\n"),
+            `needs-review:${assignment.id}`,
+          );
           return { status: "done" };
         }
         const updated = this.#tasks.updateTask(task.id, task.revision, {
           status: "succeeded",
           resultRef: report.summary,
           lastError: undefined,
+          verification: completion.verification,
           updatedAt: now,
         });
         if (updated === undefined) {
@@ -928,6 +983,49 @@ export class TaskService {
         return { status: "done" };
       }
     }
+  }
+
+  acknowledge(
+    taskId: string,
+    ownerId: string,
+    note: string | undefined,
+  ): { ok: boolean; reason?: string; task?: TaskRecord } {
+    const task = this.#tasks.get(taskId);
+    if (task === undefined || task.ownerId !== ownerId) {
+      return { ok: false, reason: "找不到属于你的该任务。" };
+    }
+    if (task.status !== "needs_review") {
+      return {
+        ok: false,
+        reason: `任务当前状态为 ${task.status}，只有 needs_review 可以 /ack。`,
+      };
+    }
+    const now = this.#now().toISOString();
+    const updated = this.#tasks.acknowledge(taskId, ownerId, now);
+    if (updated === undefined) {
+      return { ok: false, reason: "任务状态已变化，请重新查看。" };
+    }
+    const superseded = this.#actions.supersedeForTask(taskId, now);
+    this.#store.recordAudit({
+      event: "task.acknowledged",
+      subjectType: "task",
+      subjectId: taskId,
+      after: {
+        verifier: task.verification?.verifier,
+        verifierVersion: task.verification?.verifierVersion,
+        note: note ?? "",
+        supersededActions: superseded.length,
+      },
+      traceId: `task:${taskId}`,
+      occurredAt: now,
+    });
+    this.#reply(
+      updated,
+      "result",
+      `已确认任务完成：${updated.resultRef ?? updated.goal}`,
+      "acknowledged",
+    );
+    return { ok: true, task: updated };
   }
 
   #failAssignment(assignment: AssignmentRecord, reason: string): EffectOutcome {
@@ -1193,59 +1291,19 @@ export function parseWorkerReport(text: string): WorkerReport | undefined {
       typeof record.cost === "object" && record.cost !== null
         ? (record.cost as Record<string, unknown>)
         : undefined,
+    completionReason:
+      typeof record.completionReason === "string" ? record.completionReason : undefined,
+    evidenceRef:
+      typeof record.evidenceRef === "string" ? record.evidenceRef : undefined,
+    verifierVersion:
+      typeof record.verifierVersion === "string" ? record.verifierVersion : undefined,
+    unverifiedClaims: Array.isArray(record.unverifiedClaims)
+      ? record.unverifiedClaims.filter(
+          (item): item is string => typeof item === "string",
+        )
+      : undefined,
   };
 }
 
-export function evaluateCompletion(
-  task: Pick<TaskRecord, "completionCriteria">,
-  report: WorkerReport,
-): {
-  ok: boolean;
-  reason: string;
-} {
-  if (report.summary.trim().length === 0) {
-    return { ok: false, reason: "summary is empty" };
-  }
-  if (report.evidence.length === 0) {
-    return { ok: false, reason: "no evidence was provided" };
-  }
-  if (
-    report.evidence.some(
-      (item) => item.kind.trim().length === 0 || item.value.trim().length === 0,
-    )
-  ) {
-    return { ok: false, reason: "evidence contains an empty kind or value" };
-  }
 
-  // Completion criteria may be plain text or a machine-readable JSON object.
-  // The Coordinator enforces the structured part instead of trusting the
-  // Worker's claim of success.
-  const required = requiredEvidenceKinds(task.completionCriteria);
-  for (const kind of required) {
-    if (!report.evidence.some((item) => item.kind === kind)) {
-      return { ok: false, reason: `missing required evidence kind: ${kind}` };
-    }
-  }
-
-  return { ok: true, reason: "" };
-}
-
-function requiredEvidenceKinds(criteria: string): string[] {
-  const trimmed = criteria.trim();
-  if (!trimmed.startsWith("{")) {
-    return [];
-  }
-  let value: unknown;
-  try {
-    value = JSON.parse(trimmed);
-  } catch {
-    return [];
-  }
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return [];
-  }
-  const kinds = (value as Record<string, unknown>).requiredEvidenceKinds;
-  return Array.isArray(kinds)
-    ? kinds.filter((item): item is string => typeof item === "string" && item.length > 0)
-    : [];
-}
+export { evaluateCompletion } from "./completion.ts";

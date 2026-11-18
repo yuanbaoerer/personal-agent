@@ -132,6 +132,7 @@ export function routerPrompt(input: RouterInput): string {
     "- Use save_memory only when the owner explicitly asks you to remember something.",
     "- Use remind only when the owner explicitly asks for a reminder.",
     "- For read-only GitHub requests, set mandate.resources to include \"github\" and mandate.tools to [\"github.read\"]; do not promise write access.",
+    "- For github.read tasks, completionCriteria must be JSON with repo set to the exact owner/name requested (for example {\"repo\":\"owner/name\",\"requiredEvidenceKinds\":[\"github\"]}); never omit repo.",
     "- Never infer personal facts, preferences, or plans; only remember what the owner explicitly asks to remember.",
     "- If it is unclear whether the owner wants something remembered, a reminder set, or just a reply, reply and ask for confirmation.",
     `Owner message: ${input.text}`,

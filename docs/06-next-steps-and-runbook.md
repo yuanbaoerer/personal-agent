@@ -29,7 +29,8 @@
 | 工具扩展 seam + 只读样例：`registerTools`、resource/readOnly/timeoutMs/replayPolicy 双重校验 | Provider/Channel 扩展契约、真实第三方工具 |
 | Magpie 用量/预算：可选读取 quotas/usage/limit，OpenCode Go 窗口低于阈值或 key 限额时阻止新模型请求，`/usage` 附带订阅窗口 | 当前 Magpie 工作区无 OpenCode Go 卡；真实配额/重置未验证 |
 | 周期计划：草稿→确认、daily/weekdays、IANA 时区/DST、确定性 runKey、暂停/恢复/取消/修改、计划级 repo 只读授权、DO wake | 真实 Feishu/GitHub G3、生产 alarm 观察 |
-| 211 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
+| 完成验证器：GitHub Action 回执/来源 URL、Action receipt、结构校验；needs_review 终态 + `/ack` | 真实 G1/G3 外部判据、文本人审质量 |
+| 226 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
 
 ## 2. 下一步待办
 
@@ -265,6 +266,24 @@ MAGPIE_MIN_REMAINING_PERCENT=5
 | 待定 | 真实飞书 G3、真实 GitHub 调度与回执、DO alarm 生产观察、每周频率 | 需真实凭据/部署 |
 
 边界：E1；PA-08 保持 OPEN，不能据确定性测试宣称 G3 已通过。
+
+### 2.14 2026-11-18 实施进展（TaskCompletionVerifier / needs_review，PA-09 部分）
+
+```bash
+/ack <taskId> [备注]      # 仅对 needs_review 生效
+```
+
+| 内容 | 实现 | 证据 |
+| --- | --- | --- |
+| verifier 注册 | `TaskCompletionVerifier.register()`；内置 structural/text-review/github-read/action-receipt；`github.read` mandate 强制 github-read，模型不能用 criteria 降级 | `completion-verifier.test.ts` |
+| GitHub 判据 | repo 优先取主人消息/目标，否则显式 criterion；至少一条当前 revision 的 succeeded `github.read` Action；Action 证据 repo/source 匹配；报告中每个 GitHub URL 都必须来自该 Action 的已知 URL 字段 | 无 Action、无 repo、来源不符、旧 revision、混合 mandate、虚构 citation 测试 |
+| 其他判据 | 有工具 mandate → action-receipt（无 Action 不得成功）；text-review/未知 verifier → needs_review；无工具旧任务 → structural，仅声明结构通过；模型不能降级工具任务 | 无 Action、未知/文本/旧路径测试 |
+| 终态 | `needs_review` 不再派工；`/ack` 是唯一出口，写 `acknowledged_at/by` 与 `task.acknowledged` 审计；其他状态拒绝 | ack 状态/审计/重复 ack 测试 |
+| 可观测 | `/status`、`/usage`、`/admin/status` 显示待核对任务数；SQLite 用 `waiting_user + needs_review=1` 兼容旧 CHECK | 状态文本测试；backup schema v11 |
+| 报告字段 | Worker Report 兼容解析 `completionReason`、`evidenceRef`、`verifierVersion`、`unverifiedClaims`，但不把它们当作已验证事实 | 解析测试 |
+| 待定 | 真实 G1/G3 外部数据判据、真实模型虚构来源、文本任务固定样例/人审流程 | 需真实凭据与评测数据 |
+
+边界：E1；PA-09 保持 OPEN。
 
 ## 3. 环境与密钥
 

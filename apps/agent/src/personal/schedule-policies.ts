@@ -495,8 +495,11 @@ export class SchedulePolicyService {
       conversationId: policy.conversationId,
       sourceKey: this.#runKey(policy.id, scheduledAt),
       goal: this.#taskGoal(policy),
-      completionCriteria:
-        "报告须列出关键事实及对应来源 URL，并说明查询范围；不得声称执行任何写操作。",
+      completionCriteria: JSON.stringify({
+        verifier: "github-read",
+        repo: policy.repo,
+        requiredEvidenceKinds: ["github"],
+      }),
       mandate: {
         resources: ["chat", "github"],
         tools: ["github.read"],

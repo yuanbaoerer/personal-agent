@@ -345,6 +345,15 @@ const migrations: readonly (readonly string[])[] = [
     `ALTER TABLE pa_actions ADD COLUMN schedule_policy_id TEXT`,
     `ALTER TABLE pa_actions ADD COLUMN schedule_policy_version INTEGER`,
   ],
+  [
+    // Completion verifier output and the only path out of needs_review.
+    `ALTER TABLE pa_tasks ADD COLUMN verification_json TEXT`,
+    `ALTER TABLE pa_tasks ADD COLUMN acknowledged_at TEXT`,
+    `ALTER TABLE pa_tasks ADD COLUMN acknowledged_by TEXT`,
+    // SQLite cannot widen a CHECK constraint in place. needs_review is stored
+    // as waiting_user + this terminal flag and mapped to the domain status.
+    `ALTER TABLE pa_tasks ADD COLUMN needs_review INTEGER NOT NULL DEFAULT 0`,
+  ],
 ];
 
 /** Highest schema version this build can read/migrate. */

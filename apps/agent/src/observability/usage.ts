@@ -38,6 +38,7 @@ const TASK_STATUSES: TaskStatus[] = [
   "waiting_user",
   "waiting_external",
   "succeeded",
+  "needs_review",
   "failed",
   "cancelling",
   "cancelled",
@@ -102,7 +103,7 @@ export function formatUsage(snapshot: UsageSnapshot): string {
   const lines = [
     `用量快照 ${snapshot.generatedAt}`,
     `Task：排队 ${snapshot.tasks.queued}，运行 ${snapshot.tasks.running}，` +
-      `成功 ${snapshot.tasks.succeeded}，失败 ${snapshot.tasks.failed}。`,
+      `成功 ${snapshot.tasks.succeeded}，待核对 ${snapshot.tasks.needs_review}，失败 ${snapshot.tasks.failed}。`,
     `Action：成功 ${snapshot.actions.succeeded}，失败 ${snapshot.actions.failed}，` +
       `unknown ${snapshot.actions.unknown}，需人工 ${snapshot.actions.needs_manual}。`,
     `Effect：pending ${snapshot.effects.pending}，running ${snapshot.effects.running}，` +

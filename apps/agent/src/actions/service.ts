@@ -842,7 +842,8 @@ export class ActionService {
       task.status === "cancelled" ||
       task.status === "cancelling" ||
       task.status === "failed" ||
-      task.status === "succeeded"
+      task.status === "succeeded" ||
+      task.status === "needs_review"
     ) {
       return "task_not_executable";
     }

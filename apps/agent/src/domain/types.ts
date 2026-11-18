@@ -130,6 +130,7 @@ export type TaskStatus =
   | "waiting_user"
   | "waiting_external"
   | "succeeded"
+  | "needs_review"
   | "failed"
   | "cancelling"
   | "cancelled";
@@ -158,10 +159,31 @@ export interface TaskRecord {
   budget?: Record<string, unknown>;
   resultRef?: string;
   lastError?: string;
+  /** Program verifier output; absent for tasks that never reached ready. */
+  verification?: TaskVerification;
+  acknowledgedAt?: string;
+  acknowledgedBy?: string;
   /** Set when this task was created by an authorized schedule policy. */
   schedulePolicyId?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export type CompletionVerdict = "succeeded" | "needs_review" | "failed";
+
+export interface TaskVerification {
+  verifier: string;
+  verifierVersion: string;
+  verdict: CompletionVerdict;
+  reason: string;
+  /** Program checks that actually ran, not model claims. */
+  checked: string[];
+  /** Facts/evidence the verifier could not confirm. */
+  missing: string[];
+  /** References to persisted evidence (action/tool source), not free text. */
+  evidenceRefs: string[];
+  externalFactsVerified: boolean;
+  verifiedAt: string;
 }
 
 export type TaskInputKind = "supplement";
@@ -232,6 +254,10 @@ export interface WorkerReport {
   questions?: string[];
   proposedActions?: ProposedAction[];
   cost?: Record<string, unknown>;
+  completionReason?: string;
+  evidenceRef?: string;
+  verifierVersion?: string;
+  unverifiedClaims?: string[];
 }
 
 export type ActionStatus =

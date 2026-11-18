@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import {
   describeReminderCancelFailure,
   formatSchedules,
+  normalizeGithubCriteria,
   resolveTaskId,
 } from "../src/coordinator/router.ts";
 import { parseRouterDecision, routerPrompt } from "../src/coordinator/pi-router.ts";
@@ -239,5 +240,37 @@ describe("worker report validation", () => {
   it("rejects an invalid status or missing fields", () => {
     assert.equal(parseWorkerReport('{"status":"done"}'), undefined);
     assert.equal(parseWorkerReport("no json"), undefined);
+  });
+});
+
+describe("GitHub completion criteria", () => {
+  it("adds the repo from the owner message when the model omitted it", () => {
+    const criteria = normalizeGithubCriteria(
+      "with source URLs",
+      "检查仓库进展",
+      "看看 https://github.com/Owner/Repo 的 open issues",
+      ["github.read"],
+    );
+    const parsed = JSON.parse(criteria) as Record<string, unknown>;
+    assert.equal(parsed.repo, "owner/repo");
+    assert.equal(parsed.verifier, "github-read");
+    assert.deepEqual(parsed.requiredEvidenceKinds, ["github"]);
+  });
+
+  it("prefers the repo named by the owner over a model-supplied repo", () => {
+    const criteria = normalizeGithubCriteria(
+      '{"repo":"owner/repo"}',
+      "检查 other/repo",
+      "检查 other/repo 的进展",
+      ["github.read"],
+    );
+    assert.equal((JSON.parse(criteria) as Record<string, unknown>).repo, "other/repo");
+  });
+
+  it("never invents a repo for a non-GitHub task", () => {
+    assert.equal(
+      normalizeGithubCriteria("done", "check owner/repo", "owner/repo", []),
+      "done",
+    );
   });
 });

@@ -1,0 +1,526 @@
+import type {
+  ActionRecord,
+  TaskRecord,
+  TaskVerification,
+  WorkerReport,
+} from "../domain/types.ts";
+import type { ActionRepository } from "../storage/actions.ts";
+
+export const VERIFIER_VERSION = "2026-11-18.1";
+
+export interface CompletionVerdict {
+  verdict: TaskVerification["verdict"];
+  verification: TaskVerification;
+}
+
+export interface CompletionDeps {
+  actions: ActionRepository;
+  now?: () => Date;
+}
+
+export interface CompletionContext {
+  task: TaskRecord;
+  report: WorkerReport;
+  actions: readonly ActionRecord[];
+  structural: { checked: string[]; criteria: Criteria };
+  at: string;
+}
+
+export type CompletionVerifierFn = (context: CompletionContext) => CompletionVerdict;
+
+interface Criteria {
+  verifier?: string;
+  repo?: string;
+  requiredEvidenceKinds: string[];
+}
+
+function parseCriteria(text: string): Criteria {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith("{")) {
+    return { requiredEvidenceKinds: [] };
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(trimmed);
+  } catch {
+    return { requiredEvidenceKinds: [] };
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return { requiredEvidenceKinds: [] };
+  }
+  const record = value as Record<string, unknown>;
+  return {
+    verifier: typeof record.verifier === "string" ? record.verifier : undefined,
+    repo: typeof record.repo === "string" ? record.repo.toLowerCase() : undefined,
+    requiredEvidenceKinds: Array.isArray(record.requiredEvidenceKinds)
+      ? record.requiredEvidenceKinds.filter(
+          (item): item is string => typeof item === "string",
+        )
+      : [],
+  };
+}
+
+function structuralCheck(
+  task: Pick<TaskRecord, "completionCriteria">,
+  report: WorkerReport,
+): { ok: true; checked: string[]; criteria: Criteria } | { ok: false; reason: string } {
+  if (report.summary.trim().length === 0) {
+    return { ok: false, reason: "summary is empty" };
+  }
+  if (report.evidence.length === 0) {
+    return { ok: false, reason: "no evidence was provided" };
+  }
+  if (
+    report.evidence.some(
+      (item) => item.kind.trim().length === 0 || item.value.trim().length === 0,
+    )
+  ) {
+    return { ok: false, reason: "evidence contains an empty kind or value" };
+  }
+  const criteria = parseCriteria(task.completionCriteria);
+  for (const kind of criteria.requiredEvidenceKinds) {
+    if (!report.evidence.some((item) => item.kind === kind)) {
+      return { ok: false, reason: `missing required evidence kind: ${kind}` };
+    }
+  }
+  return {
+    ok: true,
+    checked: [
+      "summary_nonempty",
+      "evidence_nonempty",
+      "evidence_fields_nonempty",
+      ...(criteria.requiredEvidenceKinds.length > 0 ? ["required_evidence_kinds"] : []),
+    ],
+    criteria,
+  };
+}
+
+
+function actionEvidence(action: ActionRecord): Record<string, unknown> | undefined {
+  return action.evidence;
+}
+
+function githubActionEvidenceValid(action: ActionRecord, repo: string): boolean {
+  const evidence = actionEvidence(action);
+  if (evidence === undefined) {
+    return false;
+  }
+  if (
+    typeof evidence.repo !== "string" ||
+    evidence.repo.toLowerCase() !== repo.toLowerCase()
+  ) {
+    return false;
+  }
+  const source = evidence.source;
+  if (typeof source !== "string") {
+    return false;
+  }
+  try {
+    const url = new URL(source);
+    return (
+      url.protocol === "https:" &&
+      url.hostname === "github.com" &&
+      (url.pathname.toLowerCase() === `/${repo.toLowerCase()}` ||
+        url.pathname.toLowerCase().startsWith(`/${repo.toLowerCase()}/`))
+    );
+  } catch {
+    return false;
+  }
+}
+
+function normalizeGithubUrl(raw: string): string | undefined {
+  try {
+    const url = new URL(raw.trim());
+    if (
+      url.protocol !== "https:" ||
+      url.hostname.toLowerCase() !== "github.com" ||
+      url.username.length > 0 ||
+      url.password.length > 0 ||
+      url.port.length > 0
+    ) {
+      return undefined;
+    }
+    return `${url.origin.toLowerCase()}${url.pathname.replace(/\/$/, "").toLowerCase()}`;
+  } catch {
+    return undefined;
+  }
+}
+
+function collectUrlField(value: unknown, urls: Set<string>): void {
+  if (typeof value !== "string") {
+    return;
+  }
+  const normalized = normalizeGithubUrl(value);
+  if (normalized !== undefined) {
+    urls.add(normalized);
+  }
+}
+
+/** Only known URL-bearing fields, not free-text issue/commit titles. */
+function collectEvidenceUrls(
+  value: unknown,
+  urls: Set<string>,
+  key?: string,
+): void {
+  if (
+    key === "source" ||
+    key === "url" ||
+    key === "htmlUrl" ||
+    key === "html_url" ||
+    key === "externalRef"
+  ) {
+    collectUrlField(value, urls);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectEvidenceUrls(item, urls);
+    }
+    return;
+  }
+  if (typeof value === "object" && value !== null) {
+    for (const [childKey, item] of Object.entries(value)) {
+      collectEvidenceUrls(item, urls, childKey);
+    }
+  }
+}
+
+function allowedActionUrls(actions: readonly ActionRecord[]): Set<string> {
+  const urls = new Set<string>();
+  for (const action of actions) {
+    if (action.externalRef !== undefined) {
+      collectUrlField(action.externalRef, urls);
+    }
+    collectEvidenceUrls(action.evidence, urls);
+  }
+  return urls;
+}
+
+function reportHasVerifiedGithubSource(
+  report: WorkerReport,
+  repo: string,
+  allowed: ReadonlySet<string>,
+): boolean {
+  const prefix = `https://github.com/${repo.toLowerCase()}`;
+  let cited = 0;
+  for (const item of report.evidence) {
+    for (const match of item.value.matchAll(/https:\/\/github\.com\/[^\s"'<>\])]+/gi)) {
+      const url = normalizeGithubUrl(match[0].replace(/[.,;:]+$/, ""));
+      if (url === undefined) {
+        continue;
+      }
+      cited += 1;
+      if (!(url === prefix || url.startsWith(`${prefix}/`)) || !allowed.has(url)) {
+        return false;
+      }
+    }
+  }
+  return cited > 0;
+}
+
+/**
+ * The Coordinator's completion gate. A Worker `ready` report is never trusted
+ * directly: structural checks always run, and tasks that claim external facts
+ * must match evidence persisted by the executor.
+ */
+export class TaskCompletionVerifier {
+  readonly #actions: ActionRepository;
+  readonly #now: () => Date;
+  readonly #verifiers = new Map<string, CompletionVerifierFn>();
+
+  constructor(deps: CompletionDeps) {
+    this.#actions = deps.actions;
+    this.#now = deps.now ?? (() => new Date());
+    this.register("structural", ({ structural, at }) =>
+      this.#verdict("structural", "succeeded", "structural checks passed", {
+        checked: structural.checked,
+        externalFactsVerified: false,
+      }, at),
+    );
+    this.register("text-review", ({ structural, at }) =>
+      this.#verdict(
+        "text-review",
+        "needs_review",
+        "text task has no independent semantic verifier",
+        {
+          checked: structural.checked,
+          missing: ["independent semantic review"],
+          externalFactsVerified: false,
+        },
+        at,
+      ),
+    );
+    this.register("github-read", ({ task, report, actions, structural, at }) =>
+      this.#verifyGithub(task, report, actions, structural, at),
+    );
+    this.register("action-receipt", ({ structural, actions, at }) => {
+      const succeeded = actions.filter((action) => action.status === "succeeded");
+      const evidenceRefs = succeeded
+        .map((action) => action.externalRef ?? `action:${action.id}`)
+        .filter((value): value is string => typeof value === "string");
+      if (succeeded.length === 0) {
+        return this.#verdict(
+          "action-receipt",
+          "needs_review",
+          "no succeeded action receipt",
+          {
+            checked: structural.checked,
+            missing: ["succeeded action receipt"],
+            externalFactsVerified: false,
+          },
+          at,
+        );
+      }
+      return this.#verdict(
+        "action-receipt",
+        "succeeded",
+        "executor receipt exists for the reported action",
+        {
+          checked: [...structural.checked, "action_succeeded"],
+          evidenceRefs,
+          externalFactsVerified: false,
+        },
+        at,
+      );
+    });
+  }
+
+  /** Host/extension seam; task types can add stricter verifiers by name. */
+  register(name: string, verifier: CompletionVerifierFn): void {
+    this.#verifiers.set(name, verifier);
+  }
+
+  verify(task: TaskRecord, report: WorkerReport): CompletionVerdict {
+    const structural = structuralCheck(task, report);
+    const at = this.#now().toISOString();
+    if (!structural.ok) {
+      return {
+        verdict: "failed",
+        verification: {
+          verifier: "structural",
+          verifierVersion: VERIFIER_VERSION,
+          verdict: "failed",
+          reason: structural.reason,
+          checked: ["summary_nonempty", "evidence_nonempty", "evidence_fields_nonempty"],
+          missing: [structural.reason],
+          evidenceRefs: [],
+          externalFactsVerified: false,
+          verifiedAt: at,
+        },
+      };
+    }
+
+    const actions = this.#actions
+      .listByTask(task.id)
+      // A receipt from an earlier revision cannot prove work under the
+      // current goal/criteria.
+      .filter((action) => action.taskRevision === task.revision);
+    const requested = structural.criteria.verifier;
+    const hasGithub = task.mandate.tools.includes("github.read");
+    const hasExecutorTool = task.mandate.tools.length > 0;
+    // A model-supplied completion criteria string must never downgrade a
+    // tool-backed task to structural-only success. The mandate is the
+    // minimum verifier strength, not the report text.
+    const verifier = hasGithub
+      ? "github-read"
+      : hasExecutorTool
+        ? "action-receipt"
+        : requested ?? "structural";
+
+    const registered = this.#verifiers.get(verifier);
+    if (registered === undefined) {
+      return this.#verdict(
+        verifier,
+        "needs_review",
+        `unknown completion verifier: ${verifier}`,
+        {
+          checked: structural.checked,
+          missing: ["registered verifier"],
+          externalFactsVerified: false,
+        },
+        at,
+      );
+    }
+    return registered({
+      task,
+      report,
+      actions,
+      structural: { checked: structural.checked, criteria: structural.criteria },
+      at,
+    });
+  }
+
+  #verifyGithub(
+    task: TaskRecord,
+    report: WorkerReport,
+    actions: readonly ActionRecord[],
+    structural: { checked: string[]; criteria: Criteria },
+    at: string,
+  ): CompletionVerdict {
+    if (!task.mandate.tools.includes("github.read")) {
+      return this.#verdict(
+        "github-read",
+        "needs_review",
+        "github verifier selected without a github.read mandate",
+        {
+          checked: structural.checked,
+          missing: ["github.read mandate"],
+          externalFactsVerified: false,
+        },
+        at,
+      );
+    }
+    const succeeded = actions.filter(
+      (action) => action.tool === "github.read" && action.status === "succeeded",
+    );
+    if (succeeded.length === 0) {
+      return this.#verdict(
+        "github-read",
+        "needs_review",
+        "no succeeded github.read action receipt",
+        {
+          checked: structural.checked,
+          missing: ["succeeded github.read action"],
+          externalFactsVerified: false,
+        },
+        at,
+      );
+    }
+
+    const expectedRepo = structural.criteria.repo;
+    if (expectedRepo === undefined) {
+      return this.#verdict(
+        "github-read",
+        "needs_review",
+        "github completion criteria has no explicit repository",
+        {
+          checked: [...structural.checked, "github_action_receipt"],
+          missing: ["explicit repository completion criterion"],
+          externalFactsVerified: false,
+        },
+        at,
+      );
+    }
+    const candidateRepos = [expectedRepo];
+
+    const accepted = succeeded.filter(
+      (action) =>
+        typeof action.args.repo === "string" &&
+        candidateRepos.includes(action.args.repo.toLowerCase()) &&
+        githubActionEvidenceValid(action, action.args.repo.toLowerCase()),
+    );
+    if (accepted.length === 0) {
+      return this.#verdict(
+        "github-read",
+        "needs_review",
+        "github action evidence does not match the expected repository",
+        {
+          checked: [...structural.checked, "github_action_receipt", "github_source_url"],
+          missing: ["matching github.com source URL in executor evidence"],
+          externalFactsVerified: false,
+        },
+        at,
+      );
+    }
+
+    const sourceRepo = expectedRepo;
+    const allowed = allowedActionUrls(accepted);
+    if (!reportHasVerifiedGithubSource(report, sourceRepo, allowed)) {
+      return this.#verdict(
+        "github-read",
+        "needs_review",
+        "report has no source URL from the verified GitHub read",
+        {
+          checked: [...structural.checked, "github_action_receipt", "github_source_url"],
+          missing: [`verified GitHub source URL in report evidence`],
+          evidenceRefs: accepted
+            .map((action) => action.externalRef ?? `action:${action.id}`)
+            .filter((value): value is string => typeof value === "string"),
+          externalFactsVerified: false,
+        },
+        at,
+      );
+    }
+
+    const otherTools = task.mandate.tools.filter((tool) => tool !== "github.read");
+    const missingTools = otherTools.filter(
+      (tool) => !succeeded.some((action) => action.tool === tool),
+    );
+    if (missingTools.length > 0) {
+      return this.#verdict(
+        "github-read",
+        "needs_review",
+        "mandated non-GitHub tools have no succeeded receipt",
+        {
+          checked: [
+            ...structural.checked,
+            "github_action_receipt",
+            "non_github_action_receipts",
+          ],
+          missing: missingTools.map((tool) => `succeeded ${tool} action`),
+          evidenceRefs: accepted
+            .map((action) => action.externalRef ?? `action:${action.id}`)
+            .filter((value): value is string => typeof value === "string"),
+          externalFactsVerified: true,
+        },
+        at,
+      );
+    }
+
+    return this.#verdict(
+      "github-read",
+      "succeeded",
+      "github action and source URL verified",
+      {
+        checked: [
+          ...structural.checked,
+          "github_action_receipt",
+          "github_repository_match",
+          "github_source_url",
+        ],
+        evidenceRefs: accepted
+          .map((action) => action.externalRef ?? `action:${action.id}`)
+          .filter((value): value is string => typeof value === "string"),
+        externalFactsVerified: true,
+      },
+      at,
+    );
+  }
+
+  #verdict(
+    verifier: string,
+    verdict: TaskVerification["verdict"],
+    reason: string,
+    details: {
+      checked: string[];
+      missing?: string[];
+      evidenceRefs?: string[];
+      externalFactsVerified: boolean;
+    },
+    at: string,
+  ): CompletionVerdict {
+    return {
+      verdict,
+      verification: {
+        verifier,
+        verifierVersion: VERIFIER_VERSION,
+        verdict,
+        reason,
+        checked: details.checked,
+        missing: details.missing ?? [],
+        evidenceRefs: details.evidenceRefs ?? [],
+        externalFactsVerified: details.externalFactsVerified,
+        verifiedAt: at,
+      },
+    };
+  }
+}
+
+/** Backward-compatible structural predicate used by existing callers/tests. */
+export function evaluateCompletion(
+  task: Pick<TaskRecord, "completionCriteria">,
+  report: WorkerReport,
+): { ok: boolean; reason: string } {
+  const result = structuralCheck(task, report);
+  return result.ok ? { ok: true, reason: "" } : { ok: false, reason: result.reason };
+}

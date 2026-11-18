@@ -116,6 +116,69 @@ export function resolveTaskId(
   return { status: "not_found" };
 }
 
+const GITHUB_REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+
+/**
+ * The router model supplies completion criteria, but a github.read task must
+ * carry the exact repo for the verifier. Prefer the model's JSON field, then
+ * a repo visibly present in the task/message; never invent one.
+ */
+function extractGithubRepo(text: string): string | undefined {
+  const urlMatch = /https?:\/\/github\.com\/([^/\s?#]+\/[^/\s?#]+)/i.exec(text);
+  const plainSource = text.replace(/https?:\/\/\S+/g, " ");
+  const plainMatch =
+    /(?:^|\s)([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)(?=$|[\s,.;:!?，。；：！？])/.exec(
+      plainSource,
+    );
+  const candidate = urlMatch?.[1] ?? plainMatch?.[1];
+  return candidate !== undefined && GITHUB_REPO_PATTERN.test(candidate)
+    ? candidate.toLowerCase()
+    : undefined;
+}
+
+export function normalizeGithubCriteria(
+  criteria: string,
+  goal: string,
+  ownerText: string,
+  mandateTools: readonly string[],
+): string {
+  if (!mandateTools.includes("github.read")) {
+    return criteria;
+  }
+  let parsed: Record<string, unknown> = {};
+  try {
+    const value = JSON.parse(criteria) as unknown;
+    if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+      parsed = value as Record<string, unknown>;
+    }
+  } catch {
+    // Plain text is replaced below once a repo is known.
+  }
+  const repo =
+    extractGithubRepo(ownerText) ??
+    extractGithubRepo(goal) ??
+    (typeof parsed.repo === "string" && GITHUB_REPO_PATTERN.test(parsed.repo)
+      ? parsed.repo.toLowerCase()
+      : undefined);
+  if (repo === undefined) {
+    return criteria;
+  }
+  const required = new Set(
+    Array.isArray(parsed.requiredEvidenceKinds)
+      ? parsed.requiredEvidenceKinds.filter(
+          (item): item is string => typeof item === "string",
+        )
+      : [],
+  );
+  required.add("github");
+  return JSON.stringify({
+    ...parsed,
+    verifier: "github-read",
+    repo,
+    requiredEvidenceKinds: [...required],
+  });
+}
+
 export function formatSchedules(schedules: readonly ScheduleRecord[]): string {
   if (schedules.length === 0) {
     return "当前没有提醒。";
@@ -350,8 +413,12 @@ export class Router implements InboundHandler {
           conversationId: context.conversationId,
           sourceKey: `inbox:${context.inboxId}:task`,
           goal: decision.task.goal,
-          completionCriteria:
+          completionCriteria: normalizeGithubCriteria(
             decision.task.completionCriteria || "提供可核对的结果和证据",
+            decision.task.goal,
+            context.text,
+            decision.task.mandate?.tools ?? [],
+          ),
           mandate: decision.task.mandate,
           priority: decision.task.priority,
         });
@@ -537,6 +604,27 @@ export class Router implements InboundHandler {
       return { ok: false, reason: "找不到属于你的该任务。" };
     }
 
+    const current = this.#tasks.get(resolution.id);
+    if (current === undefined) {
+      return { ok: false, reason: "找不到属于你的该任务。" };
+    }
+    if (changes.mandate !== undefined) {
+      // The router model proposes mandate changes. A revision may extend the
+      // scope, but it must never shrink tools/resources and thereby weaken the
+      // completion verifier for already-authorized work.
+      const nextTools = new Set(changes.mandate.tools);
+      const nextResources = new Set(changes.mandate.resources);
+      if (
+        current.mandate.tools.some((tool) => !nextTools.has(tool)) ||
+        current.mandate.resources.some((resource) => !nextResources.has(resource))
+      ) {
+        return {
+          ok: false,
+          reason: "修订不能缩小任务授权范围；需要更小范围时请新建任务。",
+        };
+      }
+    }
+
     const task = this.#taskService.revise(resolution.id, {
       goal: goal === undefined || goal.length === 0 ? undefined : goal,
       completionCriteria:
@@ -672,11 +760,12 @@ export class Router implements InboundHandler {
     const tasks = this.#tasks.listByOwner(ownerId, 5);
     const lines = [
       `服务运行中。受理 ${this.#store.countInbox("accepted")} 条，拒绝 ${this.#store.countInbox("rejected")} 条；`,
-      `待发送 ${this.#store.countOutbox("pending")} 条，待核对 ${this.#store.countOutbox("unknown")} 条，` +
+      `待发送 ${this.#store.countOutbox("pending")} 条，待核对投递 ${this.#store.countOutbox("unknown")} 条，` +
         `需人工 ${this.#store.countOutbox("needs_manual")} 条。`,
       `任务：排队 ${this.#tasks.countByStatus("queued")}，运行 ${this.#tasks.countByStatus("running")}，` +
         `等待 ${this.#tasks.countByStatus("waiting_user") + this.#tasks.countByStatus("waiting_external")}，` +
-        `完成 ${this.#tasks.countByStatus("succeeded")}，失败 ${this.#tasks.countByStatus("failed")}。`,
+        `完成 ${this.#tasks.countByStatus("succeeded")}，待核对任务 ${this.#tasks.countByStatus("needs_review")}，` +
+        `失败 ${this.#tasks.countByStatus("failed")}。`,
     ];
     if (tasks.length > 0) {
       lines.push("最近任务：");
@@ -969,6 +1058,28 @@ export class Router implements InboundHandler {
             .join("\n"),
         },
       ];
+    }
+
+    const ack = /^\/(?:ack|确认完成)\s+(\S+)(?:\s+([\s\S]+))?$/.exec(text);
+    if (ack !== null) {
+      const resolution = resolveTaskId(ownerId, ack[1] as string, this.#tasks);
+      if (resolution.status === "ambiguous") {
+        return [
+          {
+            purpose: "failure",
+            text: "任务编号前缀匹配到多个任务，请给出更长的编号。",
+          },
+        ];
+      }
+      if (resolution.status === "not_found") {
+        return [{ purpose: "failure", text: "找不到属于你的该任务。" }];
+      }
+      const result = this.#taskService.acknowledge(
+        resolution.id,
+        ownerId,
+        ack[2]?.trim(),
+      );
+      return result.ok ? [] : [{ purpose: "failure", text: result.reason ?? "无法确认任务。" }];
     }
 
     const cancel = /^\/(?:cancel|取消)\s+(\S+)$/.exec(text);

@@ -104,7 +104,7 @@ npm start
 
 - `/allow-read owner/repo` 授予 24h、可撤销的只读预授权；只对 `github.read` 且 args.repo 命中时自动批准，不发送审批卡；report 事务提交后再批准，重复 report 不重复批准。
 - `/revoke-read`、过期、未授权 repo、connector 白名单外 repo 均不会自动执行；已自动批准但未执行的 Action 在 claim 时失效；跨 owner 不命中。
-- `npm test`：211 个确定性测试通过（当前）；fake GitHub 执行 1 次，无审批卡，`action.auto_approved` 审计存在。
+- `npm test`：226 个确定性测试通过（当前）；fake GitHub 执行 1 次，无审批卡，`action.auto_approved` 审计存在。
 - 崩溃窗口：report 已提交但 post-commit 自动批准丢失时，重放会 finalize 仍为 proposed 的预授权 Action。
 - 证据边界：E1；真实 token/仓库 G1、计划/周期触发与真实 Go 配额仍未验证。
 
@@ -114,7 +114,7 @@ npm start
 - 仅匹配 OpenCode Go 卡；`remaining <= 5%`、窗口 `limited` 或 gateway key `limited` 时阻止新的 Router/Worker 模型请求；Magpie 不可达时 fail-open 并标记 degraded；单个无 “go” 标签的 OpenCode 卡按 Go 处理；多个 OpenCode 卡时仅显式 “go” 标签生效。
 - `/usage` 附带订阅窗口与今日 calls/tokens/cost（gateway-wide，所有 Provider）；有 Magpie 数据时移除本地“token/费用未采集”行；不显示其他 Provider 卡片或账号。
 - 本地 Magpie 0.1.3792 只读探测返回 quotas/usage/limit 形状，但当前工作区没有 OpenCode Go 卡（只有 Codex/Copilot），因此真实 Go 配额仍未验证。
-- `npm test`：当时 200 pass / 0 fail（当前 211）。
+- `npm test`：当时 200 pass / 0 fail（当前 217）。
 - 证据边界：E1（fake Magpie HTTP + 本地只读探测）；真实 Go 订阅窗口、重置与 429 未验证。
 
 **2026-11-18 验证（周期计划 SchedulePolicy，PA-08 部分）：**
@@ -124,8 +124,18 @@ npm start
 - 每次 `scheduledAt` 使用唯一 runKey 和 `pa_schedule_policy_runs(policy_id, scheduled_at)` 抢占；重复 alarm/重启不重复建任务，run 记录关联 task；仅创建 Task，不引入常驻 Model Watchdog。
 - 计划任务只带 `github.read` 和 `github` resource；计划本身作为精确 repo/version 的只读授权，paused/edited/cancelled/expired 或 repo 超出白名单时提案直接拒绝，不降级成审批卡，执行前再次核验。
 - `confirm/resume` 立即 `wake()`，由 maintenance 重新计算真正最早到期时间；避免把共享 maintenance job 推到更晚而压住其他 effect/reminder/计划。Node 继续 1s 轮询。
-- `npm test`：211 个确定性测试通过。
+- `npm test`：当时 211 个确定性测试通过。
 - 证据边界：E1；真实飞书 G3、真实 GitHub 计划触发、Worker alarm 实际唤醒与生产观察仍 pending。
+
+**2026-11-18 验证（TaskCompletionVerifier / needs_review，PA-09 部分）：**
+
+- `ready` 报告不再直接映射成功：结构检查后按任务类型选择 verifier，记录 `verifier/verifierVersion/checked/missing/evidenceRefs/externalFactsVerified` 到 `pa_tasks.verification_json`。
+- `github-read`：repo 优先取主人消息/任务目标中的 GitHub 地址（否则要求显式 repo criterion）；要求 `github.read` mandate，且当前 revision 至少一条 succeeded `github.read` Action。Action 证据 repo/source 必须匹配；报告中的每个 GitHub URL 都必须存在于该 Action 的已知 URL 字段，且至少一个。缺 Action、无 repo、引用不在证据、来源不符 → `needs_review`；结构非法/必需 evidence kind 缺失 → `failed`。混合 mandate 还要求每个非 GitHub 工具都有成功 Action。
+- 有 executor tool 的 mandate 至少走 `action-receipt`，无 Action 不得成功；混合 mandate 运行 GitHub 检查与各非 GitHub 工具回执。`text-review` 与未知 verifier → `needs_review`；无工具旧任务仍走结构 verifier，但只声明结构通过、不声明外部事实已验证。模型不能通过 completion criteria 或修订缩小 mandate 来降级验证。
+- `needs_review` 是终态：不再派工；只能 `/ack <taskId> [备注]` 转 succeeded，写入 `acknowledged_at/by` 与 `task.acknowledged` 审计；其他状态 `/ack` 拒绝。
+- `/status`、`/usage` 显示待核对任务数；`/admin/status` 复用同一文本。`needs_review` 在 SQLite 中以 `waiting_user + needs_review=1` 存储，领域状态保持终态语义。
+- `npm test`：226 个确定性测试通过。
+- 证据边界：E1；真实 G1/G3 外部判据、文本任务人审质量和真实模型虚假来源仍未验证。
 
 **2026-11-18 验证（PA-14 部分）：**
 

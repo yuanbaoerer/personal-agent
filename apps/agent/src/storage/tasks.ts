@@ -8,6 +8,7 @@ import type {
   TaskInputRecord,
   TaskRecord,
   TaskStatus,
+  TaskVerification,
   WorkerReport,
 } from "../domain/types.ts";
 import type { Db, SqlRow } from "./db.ts";
@@ -28,6 +29,10 @@ interface TaskRow {
   budget_json: string | null;
   result_ref: string | null;
   last_error: string | null;
+  verification_json: string | null;
+  acknowledged_at: string | null;
+  acknowledged_by: string | null;
+  needs_review: number;
   schedule_policy_id: string | null;
   created_at: string;
   updated_at: string;
@@ -70,13 +75,19 @@ function mapTask(row: TaskRow): TaskRecord {
     completionCriteria: row.completion_criteria,
     mandate: JSON.parse(row.mandate_json) as Mandate,
     revision: Number(row.revision),
-    status: row.status,
+    status: Number(row.needs_review) === 1 ? "needs_review" : row.status,
     priority: Number(row.priority),
     attempts: Number(row.attempts),
     deadline: row.deadline ?? undefined,
     budget: row.budget_json === null ? undefined : (JSON.parse(row.budget_json) as Record<string, unknown>),
     resultRef: row.result_ref ?? undefined,
     lastError: row.last_error ?? undefined,
+    verification:
+      row.verification_json === null
+        ? undefined
+        : (JSON.parse(row.verification_json) as TaskVerification),
+    acknowledgedAt: row.acknowledged_at ?? undefined,
+    acknowledgedBy: row.acknowledged_by ?? undefined,
     schedulePolicyId: row.schedule_policy_id ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -228,10 +239,19 @@ export class TaskRepository {
   }
 
   countByStatus(status: TaskStatus): number {
-    const row = this.#db.all<{ count: number }>(
-      "SELECT COUNT(*) AS count FROM pa_tasks WHERE status = ?",
-      status,
-    )[0];
+    const row =
+      status === "needs_review"
+        ? this.#db.all<{ count: number }>(
+            "SELECT COUNT(*) AS count FROM pa_tasks WHERE status = 'waiting_user' AND needs_review = 1",
+          )[0]
+        : status === "waiting_user"
+          ? this.#db.all<{ count: number }>(
+              "SELECT COUNT(*) AS count FROM pa_tasks WHERE status = 'waiting_user' AND needs_review = 0",
+            )[0]
+          : this.#db.all<{ count: number }>(
+              "SELECT COUNT(*) AS count FROM pa_tasks WHERE status = ?",
+              status,
+            )[0];
     return Number(row?.count ?? 0);
   }
 
@@ -402,6 +422,7 @@ export class TaskRepository {
       status?: TaskStatus;
       resultRef?: string;
       lastError?: string;
+      verification?: TaskVerification;
       updatedAt: string;
     },
   ): TaskRecord | undefined {
@@ -410,21 +431,60 @@ export class TaskRepository {
       return undefined;
     }
 
+    const dbStatus =
+      fields.status === undefined
+        ? null
+        : fields.status === "needs_review"
+          ? "waiting_user"
+          : fields.status;
+    const needsReview =
+      fields.status === undefined ? null : fields.status === "needs_review" ? 1 : 0;
     this.#db.run(
       `UPDATE pa_tasks
        SET status = COALESCE(?, status),
+           needs_review = COALESCE(?, needs_review),
            result_ref = COALESCE(?, result_ref),
            last_error = ?,
+           verification_json = COALESCE(?, verification_json),
            updated_at = ?
        WHERE id = ? AND revision = ?`,
-      fields.status ?? null,
+      dbStatus,
+      needsReview,
       fields.resultRef ?? null,
       fields.lastError ?? null,
+      fields.verification === undefined ? null : JSON.stringify(fields.verification),
       fields.updatedAt,
       taskId,
       expectedRevision,
     );
 
+    return this.get(taskId);
+  }
+
+  /** Owner acknowledgement is the only exit from needs_review. */
+  acknowledge(
+    taskId: string,
+    ownerId: string,
+    now: string,
+  ): TaskRecord | undefined {
+    const current = this.get(taskId);
+    if (
+      current === undefined ||
+      current.ownerId !== ownerId ||
+      current.status !== "needs_review"
+    ) {
+      return undefined;
+    }
+    this.#db.run(
+      `UPDATE pa_tasks
+       SET status = 'succeeded', needs_review = 0, last_error = NULL,
+           acknowledged_at = ?, acknowledged_by = ?, updated_at = ?
+       WHERE id = ? AND status = 'waiting_user' AND needs_review = 1`,
+      now,
+      ownerId,
+      now,
+      taskId,
+    );
     return this.get(taskId);
   }
 
@@ -685,5 +745,10 @@ export class TaskRepository {
 }
 
 export function isTerminal(status: TaskStatus): boolean {
-  return status === "succeeded" || status === "failed" || status === "cancelled";
+  return (
+    status === "succeeded" ||
+    status === "needs_review" ||
+    status === "failed" ||
+    status === "cancelled"
+  );
 }
