@@ -204,6 +204,59 @@ describe("read-only preauthorization", () => {
     assert.equal(github.calls.length, 0);
   });
 
+  it("recovers a lost post-commit auto-approval on report replay", async () => {
+    const github = githubFixture();
+    const services = createServices({
+      now: () => START,
+      github: {
+        token: "secret",
+        allowedRepos: ["owner/repo"],
+        fetch: github.fetch,
+      },
+    });
+    await sendText(services, "/allow-read owner/repo", "evt_allow_lost_finalize");
+    const task = readTask(services, "preauth-lost-finalize");
+    const claimed = services.tasks.claimNext(START.toISOString(), 60_000, 2);
+    assert.ok(claimed);
+    const report = {
+      status: "ready" as const,
+      summary: "read the repo",
+      evidence: [{ kind: "test", value: "ok" }],
+      proposedActions: [
+        { tool: "github.read", args: { operation: "repo", repo: "owner/repo" } },
+      ],
+    };
+
+    const original = services.actionService.finalizeReportedActions;
+    services.actionService.finalizeReportedActions = () => {
+      throw new Error("crash after report commit");
+    };
+    assert.throws(
+      () =>
+        services.taskService.report(
+          claimed.assignment.id,
+          claimed.assignment.fencingToken,
+          1,
+          report,
+        ),
+      /crash after report commit/,
+    );
+    const [pending] = services.actions.listByTask(task.id);
+    assert.ok(pending);
+    assert.equal(pending.status, "proposed");
+    assert.equal(services.tasks.get(task.id)?.status, "waiting_external");
+
+    services.actionService.finalizeReportedActions = original;
+    services.taskService.report(
+      claimed.assignment.id,
+      claimed.assignment.fencingToken,
+      1,
+      report,
+    );
+
+    assert.equal(services.actions.get(pending.id)?.status, "approved");
+  });
+
   it("does not auto-approve a different repo while a grant is active", async () => {
     const github = githubFixture();
     const services = createServices({

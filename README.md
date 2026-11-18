@@ -103,7 +103,8 @@ npm start
 
 - `/allow-read owner/repo` 授予 24h、可撤销的只读预授权；只对 `github.read` 且 args.repo 命中时自动批准，不发送审批卡；report 事务提交后再批准，重复 report 不重复批准。
 - `/revoke-read`、过期、未授权 repo、connector 白名单外 repo 均不会自动执行；已自动批准但未执行的 Action 在 claim 时失效；跨 owner 不命中。
-- `npm test`：192 个确定性测试通过（当前）；fake GitHub 执行 1 次，无审批卡，`action.auto_approved` 审计存在。
+- `npm test`：193 个确定性测试通过（当前）；fake GitHub 执行 1 次，无审批卡，`action.auto_approved` 审计存在。
+- 崩溃窗口：report 已提交但 post-commit 自动批准丢失时，重放会 finalize 仍为 proposed 的预授权 Action。
 - 证据边界：E1；真实 token/仓库 G1、计划/周期触发与预算仍未验证。
 
 **2026-11-18 验证（PA-14 部分）：**

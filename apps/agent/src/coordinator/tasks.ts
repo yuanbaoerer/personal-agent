@@ -673,7 +673,18 @@ export class TaskService {
     if (reported === undefined && task.status !== "running") {
       // A replayed report may only persist actions while the task is still
       // running (the crash window between markReported and the proposal
-      // transaction). Once it moved on, replay must not fail or re-approve it.
+      // transaction). If the post-commit auto-approval itself was lost, retry
+      // it here; finalized actions are no longer proposed, so this is safe.
+      const unfinalized = this.#actions
+        .listByTask(task.id)
+        .filter(
+          (action) =>
+            action.status === "proposed" && action.preauthorizationId !== undefined,
+        )
+        .map((action) => action.id);
+      if (unfinalized.length > 0) {
+        this.#proposer?.finalizeReportedActions?.(unfinalized);
+      }
       return { status: "done" };
     }
 

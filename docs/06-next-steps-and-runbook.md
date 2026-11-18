@@ -23,11 +23,11 @@
 | 非阻塞调度：Assignment/Router 短切片轮询，两个 Worker 等待时普通 effect 与 status/cancel 不被长等待拖住 | 真实模型长生成、平台延迟、物理并发压测 |
 | Outbox traceId + `/诊断`/`/admin/diagnostics` 安全诊断（无正文/goal/args） | token/费用、预算、token 级报表、真实 G2 链路 |
 | 模型解读记忆/提醒的确认项（最长 10 分钟，提醒以 dueAt 为上限；owner 校验、取消/过期不写入）；显式命令即时 | 项目范围隔离、Worker 记忆注入、真实误触发负例 |
-| GitHub 只读连接器：repo 白名单、GET-only、超时/大小/分页上限、资源 scope、来源 URL、可区分错误 | 真实 token/仓库 G1、只读自动审批策略 |
+| GitHub 只读连接器：repo 白名单、GET-only、超时/大小/分页上限、资源 scope、来源 URL、可区分错误 | 真实 token/仓库 G1、不支持写 Issue |
 | 只读预授权：24h、可撤销、repo 作用域、仅 github.read、自动批准无审批卡 | 真实 G1、周期计划、预算 |
 | SQLite 备份：VACUUM INTO、manifest SHA-256、integrity_check、600 权限、verify、恢复到空目录（拒绝较新 schema） | 恢复/升级自动化、加密、保留期 |
 | 工具扩展 seam + 只读样例：`registerTools`、resource/readOnly/timeoutMs/replayPolicy 双重校验 | Provider/Channel 扩展契约、真实第三方工具 |
-| 192 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
+| 193 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
 
 ## 2. 下一步待办
 
@@ -218,7 +218,7 @@ npm run backup -- --restore ./backups/<timestamp> --target ./restored-data
 | 授权范围 | 仅 `github.read`、repo 必须同时在 `GITHUB_ALLOWED_REPOS`；24h 过期；owner 作用域 | 过期/跨 owner/不同 repo 测试 |
 | 自动批准 | 提案命中 active preauth → 事务提交后 approve/execute，无审批卡；生产 `createApp` 已注入 | report-path 测试；`createApp` wiring 测试 |
 | 撤销/过期 | 撤销/过期阻止新提案；已自动批准但未执行的 Action 在 claim 时因 provenance 失效转 superseded | revoke-before-execute 测试 |
-| 重放 | 重复 report 只在 task 仍 running 时补写；task 已前进则直接返回，不误判 failed | report replay 断言 |
+| 重放 | 重复 report 只在 task 仍 running 时补写；task 已前进则直接返回；post-commit 自动批准丢失时，重放会 finalize 仍为 proposed 的预授权 Action | report replay / lost-finalize 断言 |
 | 审计 | `action.auto_approved` + 既有 action 生命周期事件 | 审计断言 |
 | 待定 | 周期计划触发、预算、真实 token G1 | 需部署/预算决策 |
 
