@@ -12,7 +12,7 @@
 | PA-11 真实模型 10×3、G1–G3 E3、7 天自用 | 未开始 | 需 D01–D04 决策与真实凭据 |
 | PA-12 Docker 自托管 | E1 | `5c56462`；Dockerfile/Compose/preflight/健康检查；本地拉取阻塞，镜像构建/容器健康/E3/E4 pending |
 | PA-13 扩展契约 | E1 部分 | `a6269b2`；Provider 配置校验、实验期 Tool/Runtime/Channel contract v1、ToolRegistry.describe；第二 Provider/入站 Channel pending |
-| PA-14 数据资产 | E1 部分 | 备份 manifest v2、双库校验/恢复、agent JSON 导出；加密/保留/Pi 修复 pending |
+| PA-14 数据资产 | E1 部分 | `7fe4f07`；备份 manifest v2、双库校验/恢复、agent JSON 导出；加密/保留/Pi 修复 pending |
 | PA-12/PA-13 部分 | E1/pending | 见路线图 |
 
 固定 40 场景分类为渠道 8、任务 10、权限 10、恢复 8、记忆 4。K01–K14 映射由 `evals/scenarios.ts` 维护；pending 不计入成功分母。报告命令：
