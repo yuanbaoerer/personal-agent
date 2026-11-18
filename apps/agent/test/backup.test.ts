@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -44,9 +45,16 @@ describe("sqlite backup", () => {
         dataDir,
         outDir,
         now: START,
+        appVersion: "0.1.0",
+        commitSha: "deadbeef",
       });
 
+      assert.equal(manifest.version, 2);
       assert.equal(manifest.files.length, 2);
+      assert.equal(manifest.metadata?.appVersion, "0.1.0");
+      assert.equal(manifest.metadata?.commitSha, "deadbeef");
+      assert.equal(manifest.metadata?.rowCounts.pa_identities, 1);
+      assert.equal(manifest.metadata?.piTables, 1);
       assert.equal(manifest.files[0]?.schemaVersion, "12");
       assert.equal(manifest.files[1]?.name, "pi.sqlite");
       assert.equal((await stat(join(outDir, "agent.sqlite"))).mode & 0o777, 0o600);
@@ -58,6 +66,34 @@ describe("sqlite backup", () => {
       assert.ok(row !== undefined && "count" in row && typeof row.count === "number");
       assert.equal(row.count, 1);
       copy.close();
+    });
+  });
+
+  it("runs the documented backup CLI with root-relative metadata", async () => {
+    await withDir(async (dir) => {
+      const dataDir = join(dir, "data");
+      const outDir = join(dir, "backup-cli");
+      await mkdir(dataDir, { recursive: true });
+      const store = openStore(join(dataDir, "agent.sqlite"));
+      store.close();
+      const result = spawnSync(
+        process.execPath,
+        ["scripts/backup.ts", "--data", dataDir, "--out", outDir],
+        { cwd: process.cwd(), encoding: "utf8" },
+      );
+      assert.equal(result.status, 0, result.stderr);
+      const manifest = JSON.parse(
+        await readFile(join(outDir, "manifest.json"), "utf8"),
+      ) as {
+        version: number;
+        metadata?: { appVersion?: string; sdkVersions?: Record<string, string> };
+      };
+      assert.equal(manifest.version, 2);
+      assert.equal(manifest.metadata?.appVersion, "0.1.0");
+      assert.equal(
+        manifest.metadata?.sdkVersions?.["@earendil-works/pi-durable"],
+        "1.5.0",
+      );
     });
   });
 
@@ -137,13 +173,13 @@ describe("sqlite backup", () => {
       const restoreDir = join(dir, "restore");
       await mkdir(dataDir, { recursive: true });
       const store = openStore(join(dataDir, "agent.sqlite"));
-      store.bindOwner({
+      const owner = store.bindOwner({
         channel: "feishu",
         accountId: APP_ID,
         actorId: OWNER_OPEN_ID,
         verifiedAt: START.toISOString(),
       });
-      store.close();
+      assert.equal(owner.id.length > 0, true);
       await createBackup({
         dataDir,
         outDir: backupDir,
@@ -154,8 +190,9 @@ describe("sqlite backup", () => {
       await restoreBackup({ backupDir, targetDir: restoreDir });
 
       const restored = openStore(join(restoreDir, "agent.sqlite"));
-      assert.equal(restored.findOwner("feishu", APP_ID, OWNER_OPEN_ID)?.id !== undefined, true);
+      assert.equal(restored.findOwner("feishu", APP_ID, OWNER_OPEN_ID)?.id, owner.id);
       restored.close();
+      assert.equal((await stat(join(restoreDir, "manifest.json"))).mode & 0o777, 0o600);
       assert.equal((await stat(join(restoreDir, "manifest.json"))).mode & 0o777, 0o600);
       await assert.rejects(
         () => restoreBackup({ backupDir, targetDir: restoreDir }),

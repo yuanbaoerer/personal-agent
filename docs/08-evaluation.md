@@ -76,6 +76,8 @@ K13 与 K14 必须包含至少一个可控竞态复现测试；应用的锁、�
 
 确定性单元测试只证明有界契约。对真实模型，至少选 10 个代表任务，每个独立执行 3 次，以外部判定或人审为依据，记录波动和失败；模型输出合法 JSON 并非成功标准。
 
+**PA-14 数据资产（2026-11-18，E1 部分）**：备份 manifest v2 记录 SHA/app/commit/schema/非敏感行数，兼容 v1；双库备份、完整性校验、空目录恢复；agent JSON 导出不读 env/secret、不含 Pi 内容。加密/保留期、Pi SDK 修复、真实写入中 SIGKILL/PITR 与业务全量核对仍 pending。
+
 **PA-13 扩展契约（2026-11-18，E1 部分）**：`MODEL_PROVIDER` 未知值启动前拒绝；`TOOL_CONTRACT_VERSION=1` 与 `ToolRegistry.describe()`；`RUNTIME_CONTRACT_VERSION=1`、`CHANNEL_CONTRACT_VERSION=1`；只读工具注册文档。第二真实 Provider、通用入站 Channel 和真实 G1 仍 pending，不能用确定性契约替代。
 
 **PA-12 自托管（2026-11-18，E1）**：Dockerfile/Compose、preflight、健康检查、持久卷、非 root/只读根和部署文档已落地；确定性测试覆盖 preflight 缺配置/owner 与目录写入。镜像构建、容器健康、重启持久化需真实命令证据；arm64、webhook TLS、定期备份/加密和真实 E3/E4 仍 pending。

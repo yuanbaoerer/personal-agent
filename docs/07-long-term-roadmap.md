@@ -166,7 +166,7 @@ PA-09 的 TaskCompletionVerifier 已落地 E1：结构校验后按任务类型�
 
 PA-08 的 SchedulePolicy 已落地 E1：`/schedule new` 只创建草稿，确认后激活；edit 退回草稿并要求重新确认；每次 occurrence 由确定性 sourceKey + run 表去重；计划任务绑定精确 repo/version 的只读授权，暂停/修改/取消/过期或白名单变化时拒绝且执行前重核；Node 轮询、DO 用立即 `wake()` 触发 maintenance 重算。预算读取/门禁已在前一节落地。真实飞书 G3、真实 GitHub 调度与 DO alarm 生产观察仍 pending；PA-08 保持 OPEN。PA-10 的项目范围隔离/Worker 记忆注入已完成 E1；PA-11 的固定 40 场景目录与确定性 JSON/Markdown 报告已落地，37/40 执行通过、3 条真实 pending，真实模型 10×3/G1–G3/7 天自用需主人决策。详见 [15 · 待决策](15-decisions-pending.md)。
 
-PA-14 的本地 SQLite 备份/校验/恢复已落地 E1：`npm run backup` 用 `VACUUM INTO` 复制 agent/pi 数据库，manifest 记录 SHA-256/字节/schema_version，复制后 `integrity_check`，目录/文件 700/600；`--verify` 重算，`--restore --target` 只恢复到一个空目录并拒绝较新 schema；恢复/升级自动化、加密与保留期 pending，PA-14 保持 OPEN。
+PA-14 的数据资产路径已推进到 E1：manifest v2 元数据、双库备份/校验/空目录恢复、agent JSON 导出（不含 Pi/secret）、删除边界文档；加密/保留期、Pi 跨 SDK 修复、写入中 SIGKILL、真实 PITR 仍 pending，PA-14 保持 OPEN。
 
 PA-12 的 Node + Docker 自托管路径已落地 E1：Dockerfile/Compose、非 root/只读根、持久卷、健康检查、preflight 与诊断文档；镜像未发布 registry，真实 E3/E4、arm64 与定期备份 pending，PA-12 保持 OPEN。
 

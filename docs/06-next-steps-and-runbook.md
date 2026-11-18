@@ -30,7 +30,7 @@
 | Magpie 用量/预算：可选读取 quotas/usage/limit，OpenCode Go 窗口低于阈值或 key 限额时阻止新模型请求，`/usage` 附带订阅窗口 | 当前 Magpie 工作区无 OpenCode Go 卡；真实配额/重置未验证 |
 | 周期计划：草稿→确认、daily/weekdays、IANA 时区/DST、确定性 runKey、暂停/恢复/取消/修改、计划级 repo 只读授权、DO wake | 真实 Feishu/GitHub G3、生产 alarm 观察 |
 | 完成验证器：GitHub Action 回执/来源 URL、Action receipt、结构校验；needs_review 终态 + `/ack` | 真实 G1/G3 外部判据、文本人审质量 |
-| 235 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
+| 238 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
 
 ## 2. 下一步待办
 
@@ -338,6 +338,26 @@ docker compose exec agent node scripts/backup.ts --data /data --out /data/backup
 | 待定 | 第二真实 Provider、通用入站 ChannelAdapter、真实 G1 | D10/D12；稳定性 D11 |
 
 边界：E1；Provider 验证只有单一真实 Provider 配置，Channel 入站仍以飞书为参考；PA-13 保持 OPEN。
+
+### 2.18 2026-11-18 实施进展（PA-14 数据资产，E1 部分）
+
+```bash
+npm run backup -- --data ./data --out ./backups/<date>
+npm run backup -- --verify ./backups/<date>
+npm run backup -- --restore ./backups/<date> --target ./restored
+npm run export:data -- --data ./data --out ./exports/agent.json
+```
+
+| 内容 | 实现 | 证据 |
+| --- | --- | --- |
+| 备份元数据 | manifest v2：SHA/字节/schema/app/commit/非敏感行数/Pi 表数；兼容 v1 | backup tests |
+| 双库备份 | agent + 可选 pi 的 `VACUUM INTO`、integrity_check、700/600、非空拒绝 | backup tests |
+| 恢复 | 空目录、文件名校验、较新 schema 拒绝、manifest 校验 | backup tests |
+| JSON 导出 | agent 业务表白名单；不读 env/secret；不含 Pi 内容；目标不覆盖 | export tests |
+| 文档 | 备份/恢复/导出/删除边界/安全停止 | docs/17 |
+| 待定 | 加密、保留期、Pi SDK 修复、定期备份、真实 PITR | D13/D14 |
+
+边界：E1；真实写入中备份、SIGKILL、Pi 恢复和业务全量核对 pending，PA-14 保持 OPEN。
 
 ## 3. 环境与密钥
 

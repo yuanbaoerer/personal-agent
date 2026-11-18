@@ -1,8 +1,10 @@
+import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { chmod, copyFile, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 
 import { LATEST_SCHEMA_VERSION } from "../apps/agent/src/storage/schema.ts";
@@ -14,8 +16,20 @@ export interface BackupFile {
   schemaVersion?: string;
 }
 
+export interface BackupMetadata {
+  tool: string;
+  appVersion?: string;
+  commitSha?: string;
+  agentSchemaVersion?: string;
+  /** Coarse, non-secret row counts used to compare a restored instance. */
+  rowCounts: Record<string, number>;
+  piTables: number;
+  sdkVersions: Record<string, string>;
+}
+
 export interface BackupManifest {
-  version: 1;
+  /** v2 adds non-secret metadata; v1 remains readable. */
+  version: 1 | 2;
   createdAt: string;
   source: {
     dataDir: string;
@@ -23,6 +37,7 @@ export interface BackupManifest {
     piDatabase?: string;
   };
   files: BackupFile[];
+  metadata?: BackupMetadata;
 }
 
 export interface BackupOptions {
@@ -32,6 +47,9 @@ export interface BackupOptions {
   /** Optional source names; defaults match the local Node service. */
   agentDatabase?: string;
   piDatabase?: string;
+  appVersion?: string;
+  commitSha?: string;
+  sdkVersions?: Record<string, string>;
 }
 
 /** Restore a verified backup into a new/empty data directory. */
@@ -115,10 +133,19 @@ export async function createBackup(options: BackupOptions): Promise<BackupManife
   }
 
   const manifest: BackupManifest = {
-    version: 1,
+    version: 2,
     createdAt,
     source: { dataDir, agentDatabase: agentName, piDatabase: hasPi ? piName : undefined },
     files,
+    metadata: {
+      tool: "backup-v2",
+      appVersion: options.appVersion,
+      commitSha: options.commitSha,
+      agentSchemaVersion: readSchemaVersion(join(outDir, agentName)),
+      rowCounts: readRowCounts(join(outDir, agentName)),
+      piTables: hasPi ? readTableCount(join(outDir, piName)) : 0,
+      sdkVersions: options.sdkVersions ?? {},
+    },
   };
   await writeFile(join(outDir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, {
     mode: 0o600,
@@ -132,7 +159,10 @@ export async function verifyBackup(outDir: string): Promise<BackupManifest> {
   const manifest = JSON.parse(
     await readFile(join(dir, "manifest.json"), "utf8"),
   ) as BackupManifest;
-  if (manifest.version !== 1 || !Array.isArray(manifest.files)) {
+  if (
+    (manifest.version !== 1 && manifest.version !== 2) ||
+    !Array.isArray(manifest.files)
+  ) {
     throw new Error("unsupported backup manifest");
   }
   if (manifest.files.length === 0) {
@@ -179,6 +209,41 @@ async function copyDatabase(source: string, target: string): Promise<BackupFile>
     sha256: await hashFile(target),
     schemaVersion,
   };
+}
+
+function readRowCounts(path: string): Record<string, number> {
+  const db = new DatabaseSync(path, { readOnly: true });
+  try {
+    const tables = db
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'pa_%' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+      )
+      .all() as { name: string }[];
+    const counts: Record<string, number> = {};
+    for (const table of tables) {
+      const row = db.prepare(`SELECT COUNT(*) AS count FROM "${table.name}"`).get() as
+        | { count?: number }
+        | undefined;
+      counts[table.name] = Number(row?.count ?? 0);
+    }
+    return counts;
+  } finally {
+    db.close();
+  }
+}
+
+function readTableCount(path: string): number {
+  const db = new DatabaseSync(path, { readOnly: true });
+  try {
+    const row = db
+      .prepare(
+        "SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+      )
+      .get() as { count?: number } | undefined;
+    return Number(row?.count ?? 0);
+  } finally {
+    db.close();
+  }
 }
 
 function readSchemaVersion(path: string): string | undefined {
@@ -281,9 +346,35 @@ function parseArgs(argv: string[]): CliOptions {
   }
   const dataDir = args.data ?? "./data";
   const createdAt = new Date().toISOString().replace(/[:.]/g, "-");
+  let commitSha: string | undefined;
+  try {
+    commitSha = execFileSync("git", ["rev-parse", "HEAD"], {
+      encoding: "utf8",
+      cwd: fileURLToPath(new URL("..", import.meta.url)),
+    }).trim();
+  } catch {
+    commitSha = undefined;
+  }
+  let appVersion: string | undefined;
+  let sdkVersions: Record<string, string> | undefined;
+  try {
+    const pkg = JSON.parse(
+      readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+    ) as { version?: string };
+    appVersion = pkg.version;
+    const agentPkg = JSON.parse(
+      readFileSync(new URL("../apps/agent/package.json", import.meta.url), "utf8"),
+    ) as { dependencies?: Record<string, string> };
+    sdkVersions = agentPkg.dependencies ?? {};
+  } catch {
+    appVersion = undefined;
+  }
   return {
     dataDir,
     outDir: args.out ?? join("backups", createdAt),
+    appVersion,
+    commitSha,
+    sdkVersions,
     agentDatabase: args.agent,
     piDatabase: args.pi,
   };
