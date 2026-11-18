@@ -170,7 +170,7 @@ PA-14 的本地 SQLite 备份/校验/恢复已落地 E1：`npm run backup` 用 `
 
 PA-12 的 Node + Docker 自托管路径已落地 E1：Dockerfile/Compose、非 root/只读根、持久卷、健康检查、preflight 与诊断文档；镜像未发布 registry，真实 E3/E4、arm64 与定期备份 pending，PA-12 保持 OPEN。
 
-PA-13 的 ToolCapability 已部分落地 E1：工具声明 `resource`/`readOnly`/`timeoutMs`/`replayPolicy`；`createApp({registerTools})` 提供独立注册 seam；只读样例见 [14 · ToolCapability](14-tool-capability.md)；未知写只有 `replayPolicy="verify"` 且 verify 返回不满足时才重试，否则 needs_manual。Provider/Channel 扩展契约仍 pending。详见 [06 · 待办 §2.5](06-next-steps-and-runbook.md)。
+PA-13 的扩展契约已部分落地 E1：`MODEL_PROVIDER` 配置校验、实验期 `TOOL/RUNTIME/CHANNEL_CONTRACT_VERSION=1`、`ToolRegistry.describe()` 与只读工具文档；工具声明 `resource`/`readOnly`/`timeoutMs`/`replayPolicy`，`createApp({registerTools})` 是独立注册 seam，未知写只有 `replayPolicy="verify"` 且 verify 返回不满足时才重试。第二真实 Provider、通用入站 ChannelAdapter、真实 G1 与稳定性 D11 仍 pending，PA-13 保持 OPEN。详见 [06 · 待办 §2.17](06-next-steps-and-runbook.md)。
 
 ## 9. 风险、监控指标与停止规则
 

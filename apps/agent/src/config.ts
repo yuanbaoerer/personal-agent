@@ -3,7 +3,11 @@ import { ConfigError } from "./domain/errors.ts";
 
 export type FeishuEventMode = "webhook" | "long_connection";
 
+export const SUPPORTED_MODEL_PROVIDERS = ["opencode-go"] as const;
+export type ModelProvider = (typeof SUPPORTED_MODEL_PROVIDERS)[number];
+
 export interface ModelConfig {
+  provider: ModelProvider;
   modelId: string;
   /** Absent means the Node process cannot run model tasks. */
   apiKey?: string;
@@ -60,12 +64,20 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     throw new ConfigError("FEISHU_EVENT_MODE must be webhook or long_connection");
   }
 
+  const providerRaw = read("MODEL_PROVIDER") ?? "opencode-go";
+  if (!SUPPORTED_MODEL_PROVIDERS.includes(providerRaw as ModelProvider)) {
+    throw new ConfigError(
+      `MODEL_PROVIDER must be one of: ${SUPPORTED_MODEL_PROVIDERS.join(", ")}`,
+    );
+  }
+
   return {
     host: read("HOST") ?? "0.0.0.0",
     port: parseInteger(read("PORT") ?? "8787", "PORT", 1, 65_535),
     databasePath: read("DATABASE_PATH") ?? "./data/agent.sqlite",
     piDatabasePath: read("PI_DATABASE_PATH") ?? "./data/pi.sqlite",
     model: {
+      provider: providerRaw as ModelProvider,
       modelId: read("OPENCODE_MODEL") ?? "deepseek-v4.1-flash",
       apiKey: read("OPENCODE_API_KEY"),
     },

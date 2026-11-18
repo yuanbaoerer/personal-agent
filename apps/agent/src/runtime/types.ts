@@ -1,3 +1,6 @@
+/** Experimental until D11; bump only with a documented migration. */
+export const RUNTIME_CONTRACT_VERSION = 1;
+
 /**
  * The runtime seam. Production uses PiHarness sessions in the Durable Object;
  * tests and the local Node process use deterministic implementations.

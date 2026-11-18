@@ -9,6 +9,22 @@ const BASE = {
   FEISHU_VERIFICATION_TOKEN: "token",
 };
 
+describe("model provider config", () => {
+  it("defaults to opencode-go and accepts a pinned model", () => {
+    const config = loadConfig({ ...BASE, OPENCODE_MODEL: "fixed-model" });
+    assert.equal(config.model.provider, "opencode-go");
+    assert.equal(config.model.modelId, "fixed-model");
+    assert.equal(config.model.apiKey, undefined);
+  });
+
+  it("rejects an unsupported provider instead of silently falling back", () => {
+    assert.throws(
+      () => loadConfig({ ...BASE, MODEL_PROVIDER: "openai" }),
+      /MODEL_PROVIDER must be one of/,
+    );
+  });
+});
+
 describe("Feishu event mode config", () => {
   it("defaults to webhook", () => {
     assert.equal(loadConfig(BASE).eventMode, "webhook");

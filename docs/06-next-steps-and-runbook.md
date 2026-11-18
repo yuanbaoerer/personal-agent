@@ -30,7 +30,7 @@
 | Magpie 用量/预算：可选读取 quotas/usage/limit，OpenCode Go 窗口低于阈值或 key 限额时阻止新模型请求，`/usage` 附带订阅窗口 | 当前 Magpie 工作区无 OpenCode Go 卡；真实配额/重置未验证 |
 | 周期计划：草稿→确认、daily/weekdays、IANA 时区/DST、确定性 runKey、暂停/恢复/取消/修改、计划级 repo 只读授权、DO wake | 真实 Feishu/GitHub G3、生产 alarm 观察 |
 | 完成验证器：GitHub Action 回执/来源 URL、Action receipt、结构校验；needs_review 终态 + `/ack` | 真实 G1/G3 外部判据、文本人审质量 |
-| 232 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
+| 235 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
 
 ## 2. 下一步待办
 
@@ -326,6 +326,19 @@ docker compose exec agent node scripts/backup.ts --data /data --out /data/backup
 
 边界：E1；镜像构建/容器启动/重启持久化需实际命令证据；真实飞书 E3/E4 未通过，Cloudflare 仍为可选实验路径。
 
+### 2.17 2026-11-18 实施进展（PA-13 扩展契约，E1 部分）
+
+| 内容 | 实现 | 证据 |
+| --- | --- | --- |
+| Provider 配置 | `MODEL_PROVIDER` 默认 `opencode-go`，未知值启动前 `ConfigError`；`OPENCODE_MODEL` 固定模型 | `config.test.ts` 默认/拒绝测试 |
+| Runtime 契约 | `RUNTIME_CONTRACT_VERSION=1`；Node/DO 继续通过 `createApp` 注入 Store/Runtime/Wake | 组合根测试/代码审查 |
+| Tool 契约 | `TOOL_CONTRACT_VERSION=1`；`ToolRegistry.describe()` 暴露 resource/readOnly/replayPolicy/timeout | `tool-capability.test.ts` |
+| Channel 契约 | `CHANNEL_CONTRACT_VERSION=1`；出站 send/可选查询；无查询 unknown/needs_manual | 既有 outbox 契约测试 |
+| 文档 | 只读工具注册、版本变更、Provider/Channel 边界 | docs/14 |
+| 待定 | 第二真实 Provider、通用入站 ChannelAdapter、真实 G1 | D10/D12；稳定性 D11 |
+
+边界：E1；Provider 验证只有单一真实 Provider 配置，Channel 入站仍以飞书为参考；PA-13 保持 OPEN。
+
 ## 3. 环境与密钥
 
 ```bash
@@ -343,7 +356,8 @@ cp infra/.dev.vars.example infra/.dev.vars  # 本地 workerd
 | `FEISHU_EVENT_MODE` | `webhook`（默认）或 `long_connection`；长连接由本地 Node 主动连 Feishu，不需要公网地址 |
 | `OWNER_FEISHU_OPEN_ID` | 显式主人绑定；禁止昵称推断 |
 | `OPENCODE_API_KEY` | 本地模型；未设置时模型任务显式失败。DO 部署时用 Worker secret |
-| `OPENCODE_MODEL` | 本地模型 id，默认 `deepseek-v4.1-flash`；provider 固定 `opencode-go` |
+| `MODEL_PROVIDER` | 本地 Node 的 Provider，默认 `opencode-go`；未知值启动前 `ConfigError`；当前仅支持该 Provider |
+| `OPENCODE_MODEL` | 本地模型 id，默认 `deepseek-v4.1-flash`；由 `MODEL_PROVIDER` 解析 |
 | `GITHUB_TOKEN` / `GITHUB_ALLOWED_REPOS` | 只读 GitHub 连接器；两者都需配置，仓库为逗号分隔 `owner/name` 精确白名单；不配置则不注册工具 |
 | `MAGPIE_URL` / `MAGPIE_GATEWAY_KEY` / `MAGPIE_MIN_REMAINING_PERCENT` | 可选 Magpie 用量/预算；URL 例 `http://127.0.0.1:3425`；默认 key `magpie-personal-agent`；窗口剩余低于百分比（默认 5）时暂停新模型请求 |
 | `DATABASE_PATH` | 本地 Node SQLite（`pa_*` 应用状态），默认 `./data/agent.sqlite` |

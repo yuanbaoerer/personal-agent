@@ -26,6 +26,17 @@ export class ToolTimeoutError extends Error {
   }
 }
 
+/** Experimental until D11; bump only with a documented migration. */
+export const TOOL_CONTRACT_VERSION = 1;
+
+export interface ToolDescriptor {
+  name: string;
+  resource?: string;
+  readOnly: boolean;
+  replayPolicy: "verify" | "never";
+  timeoutMs: number;
+}
+
 export interface ToolExecution {
   evidence: Record<string, unknown>;
   externalRef?: string;
@@ -46,6 +57,7 @@ export interface ActionTool {
   readonly replayPolicy?: "verify" | "never";
   /** Bound on one tool call; defaults to 15s. */
   readonly timeoutMs?: number;
+  readonly description?: string;
   canonicalize(args: Record<string, unknown>): Record<string, unknown>;
   execute(args: Record<string, unknown>): Promise<ToolExecution>;
   verify(args: Record<string, unknown>): Promise<ToolVerification>;
@@ -67,6 +79,18 @@ export class ToolRegistry {
 
   names(): string[] {
     return [...this.#tools.keys()].sort();
+  }
+
+  describe(): ToolDescriptor[] {
+    return [...this.#tools.values()]
+      .map((tool) => ({
+        name: tool.name,
+        resource: tool.resource,
+        readOnly: tool.readOnly === true,
+        replayPolicy: tool.replayPolicy ?? "never",
+        timeoutMs: tool.timeoutMs ?? 15_000,
+      }))
+      .sort((left, right) => left.name.localeCompare(right.name));
   }
 }
 

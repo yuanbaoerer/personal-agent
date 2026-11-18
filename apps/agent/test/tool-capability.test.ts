@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { createApp } from "../src/app.ts";
-import type { ActionTool, ToolRegistry } from "../src/actions/tools.ts";
-import { ToolRejectedError } from "../src/actions/tools.ts";
+import type { ActionTool } from "../src/actions/tools.ts";
+import { ToolRegistry, ToolRejectedError } from "../src/actions/tools.ts";
 import { StaticRouterModel } from "../src/coordinator/router.ts";
 import { FakeRuntime } from "../src/runtime/fake.ts";
 import { noopWake } from "../src/runtime/types.ts";
@@ -55,6 +55,20 @@ function build(register: (registry: ToolRegistry) => void) {
 }
 
 describe("read-only tool extension", () => {
+  it("exposes capability metadata without executing the tool", () => {
+    const registry = new ToolRegistry();
+    registry.register(new ClockTool());
+    assert.deepEqual(registry.describe(), [
+      {
+        name: "time.now",
+        resource: "clock",
+        readOnly: true,
+        replayPolicy: "verify",
+        timeoutMs: 2_000,
+      },
+    ]);
+  });
+
   it("registers independently and enforces the Mandate resource", async () => {
     const { store, owner, conversation, app } = build((registry) => {
       registry.register(new ClockTool());

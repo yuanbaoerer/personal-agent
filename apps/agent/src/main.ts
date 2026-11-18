@@ -84,7 +84,7 @@ function createRuntime(
   }
   const runtime = new NodePiRuntime({
     databasePath: piDatabasePath,
-    model: { provider: "opencode-go", modelId: model.modelId },
+    model: { provider: model.provider, modelId: model.modelId },
     models: createOpencodeModels(model.apiKey),
   });
   return { runtime, close: () => runtime.close() };
@@ -220,7 +220,10 @@ async function main(): Promise<void> {
     databasePath,
     piDatabasePath,
     eventMode: config.eventMode,
-    model: config.model.apiKey === undefined ? "unavailable" : config.model.modelId,
+    model:
+      config.model.apiKey === undefined
+        ? "unavailable"
+        : `${config.model.provider}/${config.model.modelId}`,
   });
 
   if (longConnection !== undefined) {

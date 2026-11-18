@@ -11,6 +11,7 @@
 | PA-11 固定 40 场景目录 + JSON/Markdown 报告 | E1 | `evals/scenarios.ts`、`scripts/eval-report.ts`；37/40 确定性执行通过，3 条真实 pending |
 | PA-11 真实模型 10×3、G1–G3 E3、7 天自用 | 未开始 | 需 D01–D04 决策与真实凭据 |
 | PA-12 Docker 自托管 | E1 | `5c56462`；Dockerfile/Compose/preflight/健康检查；本地拉取阻塞，镜像构建/容器健康/E3/E4 pending |
+| PA-13 扩展契约 | E1 部分 | Provider 配置校验、Tool/Runtime/Channel contract v1、ToolRegistry.describe；第二 Provider/入站 Channel pending |
 | PA-12/PA-13 部分 | E1/pending | 见路线图 |
 
 固定 40 场景分类为渠道 8、任务 10、权限 10、恢复 8、记忆 4。K01–K14 映射由 `evals/scenarios.ts` 维护；pending 不计入成功分母。报告命令：
@@ -87,6 +88,27 @@ npm run eval:report:critical  # CI 关键集
 - 现状：Node + SQLite 为 provisional 默认；真实 E3/E4 未齐。
 - 需决定：是否在真实飞书 E3 与 SIGKILL/恢复证据前把 ADR 改为 Accepted，或继续保持 provisional。
 - 建议：保持 provisional，直到 D03 的真实 E3/E4 证据完成；Docker 启动成功不能替代。
+- [ ] 已审核：________________
+
+### D10 第二个真实 Provider
+
+- 现状：只注册 `opencode-go`；`MODEL_PROVIDER` 可配置但未知值拒绝。
+- 需决定：第二 Provider 选型（OpenAI 兼容/其他）、凭据与模型、是否允许评测期切换。
+- 建议：先不扩第二 Provider；等 D01 真实模型预算确定后，用同一契约集验证一次，再决定是否进入默认配置。
+- [ ] 已审核：________________
+
+### D11 扩展 API 稳定性
+
+- 现状：Tool/Runtime/Channel `CONTRACT_VERSION=1`，但未有第三方实现。
+- 需决定：现在承诺 v1 稳定，还是标记 experimental 直到至少一个外部只读工具/Channel 实现通过。
+- 建议：保持 experimental（文档已标注 E1），不改版本号；出现第二个实现后再宣布 v1 兼容承诺。
+- [ ] 已审核：________________
+
+### D12 通用入站 ChannelAdapter
+
+- 现状：出站 `ChannelAdapter` 已抽象；入站仍是飞书专用解析/验签。
+- 需决定：是否为 CLI/第二 IM 立即抽取通用入站事件契约，还是先以飞书参考实现交付。
+- 建议：先交付飞书；CLI 走本地 Intent 入口，不强行抽象事件协议；第二 IM 时再抽取并加契约测试。
 - [ ] 已审核：________________
 
 ## 3. 决策后的实施顺序
