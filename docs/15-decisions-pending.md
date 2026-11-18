@@ -10,7 +10,7 @@
 | PA-10 确认/项目记忆 | E1 | `e9aee02` + `4f9047a`；记忆 global/project 隔离、修订保留 project、Worker 注入 |
 | PA-11 固定 40 场景目录 + JSON/Markdown 报告 | E1 | `evals/scenarios.ts`、`scripts/eval-report.ts`；37/40 确定性执行通过，3 条真实 pending |
 | PA-11 真实模型 10×3、G1–G3 E3、7 天自用 | 未开始 | 需 D01–D04 决策与真实凭据 |
-| PA-12 Docker 自托管 | E1 | Dockerfile/Compose/preflight/健康检查；镜像未发布，E3/E4 pending |
+| PA-12 Docker 自托管 | E1 | `5c56462`；Dockerfile/Compose/preflight/健康检查；本地拉取阻塞，镜像构建/容器健康/E3/E4 pending |
 | PA-12/PA-13 部分 | E1/pending | 见路线图 |
 
 固定 40 场景分类为渠道 8、任务 10、权限 10、恢复 8、记忆 4。K01–K14 映射由 `evals/scenarios.ts` 维护；pending 不计入成功分母。报告命令：
