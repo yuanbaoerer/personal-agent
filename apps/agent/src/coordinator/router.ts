@@ -136,9 +136,18 @@ function extractGithubRepo(text: string): string | undefined {
     : undefined;
 }
 
+const PROJECT_NAME_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
+
 export function extractProjectFlag(text: string): string | undefined {
   const match = /(?:^|\s)--project=([A-Za-z0-9._-]{1,64})(?=$|\s)/.exec(text);
   return match?.[1];
+}
+
+function invalidProjectFlag(text: string, project: string | undefined): boolean {
+  return (
+    text.includes("--project=") &&
+    (project === undefined || !PROJECT_NAME_PATTERN.test(project))
+  );
 }
 
 export function normalizeGithubCriteria(
@@ -436,7 +445,12 @@ export class Router implements InboundHandler {
           decision.text.length > 0 && decision.text.length <= 200
             ? decision.text
             : `已接单：${task.goal}`;
-        this.#reply(context, ack);
+        this.#reply(
+          context,
+          mandate.project === undefined
+            ? ack
+            : `${ack}\n项目：${mandate.project}`,
+        );
         void this.#wake.wake();
         return { status: "done" };
       }
@@ -494,20 +508,34 @@ export class Router implements InboundHandler {
         }
         try {
           const project = extractProjectFlag(context.text) ?? decision.project;
-          const { confirmation } = this.#confirmation.create({
+          const created = this.#confirmation.create({
             ownerId: context.ownerId,
             conversationId: context.conversationId,
             sourceInboxId: context.inboxId,
             kind: "memory_save",
             payload: { key: decision.key, value: decision.value, project },
           });
+          const { confirmation } = created;
           if (confirmation.status !== "pending") {
             this.#reply(context, "该记忆确认已处理，无需重复确认。");
             return { status: "done" };
           }
+          const storedKey =
+            typeof confirmation.payload.key === "string"
+              ? confirmation.payload.key
+              : decision.key;
+          const storedValue =
+            typeof confirmation.payload.value === "string"
+              ? confirmation.payload.value
+              : decision.value;
+          const storedProject =
+            typeof confirmation.payload.project === "string"
+              ? confirmation.payload.project
+              : undefined;
           this.#reply(
             context,
-            `请确认是否记住：${project === undefined ? "" : `[项目 ${project}] `}${decision.key} = ${decision.value}\n` +
+            `${created.inserted ? "" : "已存在同一消息的待确认项，展示原始内容：\n"}` +
+              `请确认是否记住：${storedProject === undefined ? "" : `[项目 ${storedProject}] `}${storedKey} = ${storedValue}\n` +
               `回复 /确认 ${confirmation.id.slice(0, 8)}（10 分钟内有效）；` +
               `/取消确认 ${confirmation.id.slice(0, 8)} 可撤销。`,
             "status",
@@ -540,7 +568,7 @@ export class Router implements InboundHandler {
             1,
             Math.min(10, Math.floor((parsed.getTime() - this.#now().getTime()) / 60_000)),
           );
-          const { confirmation } = this.#confirmation.create({
+          const created = this.#confirmation.create({
             ownerId: context.ownerId,
             conversationId: context.conversationId,
             sourceInboxId: context.inboxId,
@@ -553,14 +581,28 @@ export class Router implements InboundHandler {
             },
             expiresAt: parsed.toISOString(),
           });
+          const { confirmation } = created;
           if (confirmation.status !== "pending") {
             this.#reply(context, "该提醒确认已处理，无需重复确认。");
             return { status: "done" };
           }
-          const when = `${formatInTimezone(parsed.toISOString(), timezone)}（${timezone}）`;
+          const storedDueAt =
+            typeof confirmation.payload.dueAt === "string"
+              ? confirmation.payload.dueAt
+              : parsed.toISOString();
+          const storedTimezone =
+            typeof confirmation.payload.timezone === "string"
+              ? confirmation.payload.timezone
+              : timezone;
+          const storedText =
+            typeof confirmation.payload.text === "string"
+              ? confirmation.payload.text
+              : decision.text;
+          const when = `${formatInTimezone(storedDueAt, storedTimezone)}（${storedTimezone}）`;
           this.#reply(
             context,
-            `请确认提醒：${when}\n${decision.text}\n` +
+            `${created.inserted ? "" : "已存在同一消息的待确认项，展示原始内容：\n"}` +
+              `请确认提醒：${when}\n${storedText}\n` +
               `回复 /确认 ${confirmation.id.slice(0, 8)}（${minutes} 分钟内有效）；` +
               `/取消确认 ${confirmation.id.slice(0, 8)} 可撤销。`,
             "status",
@@ -626,6 +668,8 @@ export class Router implements InboundHandler {
       const nextTools = new Set(changes.mandate.tools);
       const nextResources = new Set(changes.mandate.resources);
       if (
+        (changes.mandate.project !== undefined &&
+          changes.mandate.project !== current.mandate.project) ||
         current.mandate.tools.some((tool) => !nextTools.has(tool)) ||
         current.mandate.resources.some((resource) => !nextResources.has(resource))
       ) {
@@ -1193,6 +1237,14 @@ export class Router implements InboundHandler {
 
     if (text === "/memory" || text === "记忆" || text.startsWith("/memory --project=")) {
       const project = extractProjectFlag(text);
+      if (invalidProjectFlag(text, project)) {
+        return [
+          {
+            purpose: "failure",
+            text: "项目名无效：只允许 1–64 位字母、数字、点、下划线或连字符。",
+          },
+        ];
+      }
       const memories =
         project === undefined
           ? this.#memory.list(ownerId)
@@ -1220,6 +1272,14 @@ export class Router implements InboundHandler {
       );
     if (remember !== null) {
       const project = remember[1] ?? extractProjectFlag(text);
+      if (invalidProjectFlag(text, project)) {
+        return [
+          {
+            purpose: "failure",
+            text: "项目名无效：只允许 1–64 位字母、数字、点、下划线或连字符。",
+          },
+        ];
+      }
       try {
         this.#memory.save(
           ownerId,
@@ -1250,6 +1310,14 @@ export class Router implements InboundHandler {
       /^\/(?:forget|忘记)\s+(?:--project=(\S+)\s+)?(\S+)$/.exec(text);
     if (forget !== null) {
       const project = forget[1] ?? extractProjectFlag(text);
+      if (invalidProjectFlag(text, project)) {
+        return [
+          {
+            purpose: "failure",
+            text: "项目名无效：只允许 1–64 位字母、数字、点、下划线或连字符。",
+          },
+        ];
+      }
       const memory = this.#memory.forget(ownerId, forget[2] as string, project);
       return [
         memory === undefined

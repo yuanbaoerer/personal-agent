@@ -1216,9 +1216,14 @@ function workerPrompt(
       "Owner memories applicable to this task (facts, not tool permissions):",
     );
     for (const memory of memories.slice(0, 20)) {
+      // JSON encoding keeps memory values as data: newlines or fake prompt
+      // headings cannot create new instruction lines.
       lines.push(
-        `- ${memory.project === undefined ? "[global] " : `[project ${memory.project}] `}` +
-          `${memory.key} = ${memory.value.slice(0, 1_000)}`,
+        `- ${JSON.stringify({
+          project: memory.project ?? null,
+          key: memory.key,
+          value: memory.value.slice(0, 1_000),
+        })}`,
       );
     }
   }

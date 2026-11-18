@@ -66,6 +66,14 @@ describe("project-scoped memory", () => {
     await sendText(services, "/forget --project=alpha repo", "evt_project_forget");
     assert.equal(services.memory.get(services.owner.id, "repo", "alpha")?.status, "deleted");
     assert.equal(services.memory.get(services.owner.id, "repo")?.value, "global-repo");
+
+    await sendText(services, "/forget --project=项目 repo", "evt_bad_project");
+    await sendText(services, "/memory --project=项目", "evt_bad_project_list");
+    const rejection = services.store
+      .listRecentOutbox(5)
+      .map((row) => row.text)
+      .join("\n");
+    assert.match(rejection, /项目名无效/);
   });
 
   it("injects only global and same-project memories into a Worker prompt", async () => {
@@ -84,8 +92,8 @@ describe("project-scoped memory", () => {
     await services.effectDispatcher.drain(20);
 
     const prompt = services.runtime.submissions.at(-1)?.text ?? "";
-    assert.match(prompt, /\[global\] tone = concise/);
-    assert.match(prompt, /\[project alpha\] repo = alpha-repo/);
+    assert.match(prompt, /"project":null,"key":"tone","value":"concise"/);
+    assert.match(prompt, /"project":"alpha","key":"repo","value":"alpha-repo"/);
     assert.ok(!prompt.includes("beta-repo"));
   });
 

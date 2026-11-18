@@ -266,7 +266,9 @@ export class MemoryRepository {
         `SELECT * FROM pa_memories
          WHERE owner_id = ? AND status = 'active'
            AND (project = '' OR project = ?)
-         ORDER BY project ASC, updated_at DESC, key ASC`,
+         ORDER BY CASE WHEN project = '' THEN 1 ELSE 0 END,
+                  updated_at DESC, key ASC
+         LIMIT 20`,
         ownerId,
         project ?? "",
       )
