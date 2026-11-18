@@ -160,7 +160,9 @@ PA-06 的可观测/诊断已落地 E1：Outbox traceId 贯通 inbox/task/schedul
 
 PA-10 的确认与范围已落地 E1：模型解读的 `save_memory`/`remind` 先生成 10 分钟确认项，`/确认` 后应用，`/取消确认`、过期、跨 owner 均不写入；显式命令保持即时。项目范围隔离与 Worker 记忆注入 pending，PA-10 保持 OPEN。
 
-PA-07 的只读 GitHub 连接器已落地 E1，并新增可撤销的只读预授权：`/allow-read owner/repo` 24h 内仅对该 repo 的 `github.read` 自动批准，撤销/过期即恢复逐次审批；真实 token/仓库 G1 与周期计划 pending，PA-07/PA-08 保持 OPEN。下一实施项为 PA-08 SchedulePolicy/预算；详见 [06 · 待办 §2.11](06-next-steps-and-runbook.md)。
+PA-07 的只读 GitHub 连接器已落地 E1，并新增可撤销的只读预授权：`/allow-read owner/repo` 24h 内仅对该 repo 的 `github.read` 自动批准，撤销/过期即恢复逐次审批；真实 token/仓库 G1 仍 pending，PA-07 保持 OPEN。
+
+PA-08 的 SchedulePolicy 已落地 E1：`/schedule new` 只创建草稿，确认后激活；edit 退回草稿并要求重新确认；每次 occurrence 由确定性 sourceKey + run 表去重；计划任务绑定精确 repo/version 的只读授权，暂停/修改/取消/过期或白名单变化时拒绝且执行前重核；Node 轮询、DO 用立即 `wake()` 触发 maintenance 重算。预算读取/门禁已在前一节落地。真实飞书 G3、真实 GitHub 调度与 DO alarm 生产观察仍 pending；PA-08 保持 OPEN。下一实施项为 PA-09 TaskCompletionVerifier/needs_review；详见 [06 · 待办 §2.13](06-next-steps-and-runbook.md)。
 
 PA-14 的本地 SQLite 备份/校验/恢复已落地 E1：`npm run backup` 用 `VACUUM INTO` 复制 agent/pi 数据库，manifest 记录 SHA-256/字节/schema_version，复制后 `integrity_check`，目录/文件 700/600；`--verify` 重算，`--restore --target` 只恢复到一个空目录并拒绝较新 schema；恢复/升级自动化、加密与保留期 pending，PA-14 保持 OPEN。
 

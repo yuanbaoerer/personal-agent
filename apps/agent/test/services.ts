@@ -13,13 +13,15 @@ import type { ConversationRecord, OwnerIdentity } from "../src/domain/types.ts";
 import { MemoryService } from "../src/personal/memory.ts";
 import { ConfirmationService } from "../src/personal/confirmations.ts";
 import { PreauthorizationService } from "../src/personal/preauthorizations.ts";
+import { SchedulePolicyService } from "../src/personal/schedule-policies.ts";
 import { MagpieBudget, type BudgetService, type MagpieConfig } from "../src/observability/magpie.ts";
 import { ReminderService, type ReminderTimer } from "../src/personal/reminders.ts";
 import { FakeRuntime } from "../src/runtime/fake.ts";
-import { noopWake } from "../src/runtime/types.ts";
+import { noopWake, type WakeScheduler } from "../src/runtime/types.ts";
 import { ActionRepository } from "../src/storage/actions.ts";
 import { ConfirmationRepository } from "../src/storage/confirmations.ts";
 import { PreauthorizationRepository } from "../src/storage/preauthorizations.ts";
+import { SchedulePolicyRepository } from "../src/storage/schedule-policies.ts";
 import { EffectRepository } from "../src/storage/effects.ts";
 import { MemoryRepository, ScheduleRepository } from "../src/storage/personal.ts";
 import { TaskRepository } from "../src/storage/tasks.ts";
@@ -37,6 +39,7 @@ export interface TestServices {
   memories: MemoryRepository;
   confirmations: ConfirmationRepository;
   preauthorizations: PreauthorizationRepository;
+  schedulePolicies: SchedulePolicyRepository;
   runtime: FakeRuntime;
   lamp: MockLampTool;
   tools: ToolRegistry;
@@ -46,6 +49,7 @@ export interface TestServices {
   memory: MemoryService;
   confirmation: ConfirmationService;
   preauthorization: PreauthorizationService;
+  schedulePolicy: SchedulePolicyService;
   budget?: BudgetService;
   router: Router;
   ingress: IngressService;
@@ -68,6 +72,7 @@ export function createServices(options: {
   maxConcurrentTools?: number;
   budget?: BudgetService;
   magpie?: MagpieConfig;
+  wake?: WakeScheduler;
 } = {}): TestServices {
   const now = options.now ?? (() => new Date());
   const store = options.store ?? createStore();
@@ -96,8 +101,10 @@ export function createServices(options: {
   const memories = new MemoryRepository(db);
   const confirmations = new ConfirmationRepository(db);
   const preauthorizations = new PreauthorizationRepository(db);
+  const schedulePolicies = new SchedulePolicyRepository(db);
   const { registry, lamp } = createDefaultToolRegistry(store, now, options.github);
   const runtime = new FakeRuntime();
+  const wake = options.wake ?? noopWake;
 
   const budget = options.budget ?? (options.magpie === undefined ? undefined : new MagpieBudget(options.magpie));
   const taskService = new TaskService({
@@ -106,7 +113,7 @@ export function createServices(options: {
     actions,
     effects,
     runtime,
-    wake: noopWake,
+    wake,
     now,
     budget,
     maxActiveWorkers: options.maxActiveWorkers ?? 2,
@@ -120,17 +127,25 @@ export function createServices(options: {
     allowedRepos: options.github?.allowedRepos ?? [],
     now,
   });
+  const schedulePolicy = new SchedulePolicyService({
+    store,
+    policies: schedulePolicies,
+    tasks: taskService,
+    allowedRepos: options.github?.allowedRepos ?? [],
+    now,
+  });
   const actionService = new ActionService({
     store,
     actions,
     effects,
     tools: registry,
-    wake: noopWake,
+    wake,
     now,
     actionTtlMs: options.actionTtlMs,
     maxConcurrentTools: options.maxConcurrentTools,
     tasks,
     preauthorizations: preauthorization,
+    schedulePolicies: schedulePolicy,
     onSettled: (taskId) => taskService.onActionSettled(taskId),
   });
   taskService.setActionProposer(actionService);
@@ -138,7 +153,7 @@ export function createServices(options: {
   const reminders = new ReminderService({
     store,
     schedules,
-    wake: noopWake,
+    wake,
     timer: options.reminderTimer,
     now,
   });
@@ -156,9 +171,10 @@ export function createServices(options: {
     memory,
     confirmation,
     preauthorization,
+    schedulePolicy,
     budget,
     model,
-    wake: noopWake,
+    wake,
     now,
   });
 
@@ -180,6 +196,7 @@ export function createServices(options: {
     memories,
     confirmations,
     preauthorizations,
+    schedulePolicies,
     runtime,
     lamp,
     tools: registry,
@@ -189,6 +206,7 @@ export function createServices(options: {
     memory,
     confirmation,
     preauthorization,
+    schedulePolicy,
     budget,
     router,
     ingress,

@@ -357,6 +357,7 @@ export class Assistant extends DurableObject<Env> {
     app.actionService.sweep();
     app.confirmation.expirePending();
     await app.reminders.fireDue();
+    app.schedulePolicy.fireDue();
     await app.effectDispatcher.drain(20);
     if (app.dispatcher !== undefined) {
       await app.dispatcher.drain(10);
@@ -371,6 +372,8 @@ export class Assistant extends DurableObject<Env> {
     if (outbox !== undefined) candidates.push(outbox);
     const schedules = app.schedules.nextDueAt();
     if (schedules !== undefined) candidates.push(schedules);
+    const policyRun = app.schedulePolicy.nextDueAt();
+    if (policyRun !== undefined) candidates.push(policyRun);
     if (app.store.listPendingInbox(1).length > 0) {
       return Date.now() + 1_000;
     }

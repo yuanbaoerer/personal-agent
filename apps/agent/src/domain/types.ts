@@ -158,6 +158,8 @@ export interface TaskRecord {
   budget?: Record<string, unknown>;
   resultRef?: string;
   lastError?: string;
+  /** Set when this task was created by an authorized schedule policy. */
+  schedulePolicyId?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -266,6 +268,9 @@ export interface ActionRecord {
   evidence?: Record<string, unknown>;
   lastError?: string;
   preauthorizationId?: string;
+  /** Plan-scoped read authorization for tasks created by a schedule. */
+  schedulePolicyId?: string;
+  schedulePolicyVersion?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -314,6 +319,50 @@ export interface ScheduleRecord {
   status: ScheduleStatus;
   createdAt: string;
   updatedAt: string;
+}
+
+export type SchedulePolicyStatus =
+  | "draft"
+  | "active"
+  | "paused"
+  | "cancelled"
+  | "expired";
+
+export type ScheduleCadence = "daily" | "weekdays";
+
+/**
+ * An explicitly confirmed recurring task. The owner authorizes the exact
+ * time, cadence, target conversation, read-only scope and goal; each
+ * occurrence creates at most one Task with a deterministic source key.
+ */
+export interface SchedulePolicyRecord {
+  id: string;
+  ownerId: string;
+  conversationId: string;
+  timezone: string;
+  cadence: ScheduleCadence;
+  /** Local wall-clock time in HH:MM. */
+  localTime: string;
+  repo: string;
+  goal: string;
+  status: SchedulePolicyStatus;
+  version: number;
+  expiresAt: string;
+  nextRunAt?: string;
+  lastRunAt?: string;
+  confirmedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ScheduleRunStatus = "dispatched" | "skipped";
+
+export interface SchedulePolicyRunRecord {
+  policyId: string;
+  scheduledAt: string;
+  taskId?: string;
+  status: ScheduleRunStatus;
+  createdAt: string;
 }
 
 export interface MemoryRecord {

@@ -308,6 +308,43 @@ const migrations: readonly (readonly string[])[] = [
     // revoked grant can stop work that has not executed yet.
     `ALTER TABLE pa_actions ADD COLUMN preauthorization_id TEXT`,
   ],
+  [
+    // Recurring, owner-confirmed task policies. A draft has no timer until the
+    // owner confirms the exact scope; every edit returns to draft.
+    `CREATE TABLE pa_schedule_policies (
+      id TEXT PRIMARY KEY,
+      owner_id TEXT NOT NULL,
+      conversation_id TEXT NOT NULL,
+      timezone TEXT NOT NULL,
+      cadence TEXT NOT NULL CHECK (cadence IN ('daily', 'weekdays')),
+      local_time TEXT NOT NULL,
+      repo TEXT NOT NULL,
+      goal TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (
+        status IN ('draft', 'active', 'paused', 'cancelled', 'expired')
+      ),
+      version INTEGER NOT NULL,
+      expires_at TEXT NOT NULL,
+      next_run_at TEXT,
+      last_run_at TEXT,
+      confirmed_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    ) STRICT`,
+    `CREATE INDEX pa_schedule_policies_due_idx
+       ON pa_schedule_policies (status, next_run_at)`,
+    `CREATE TABLE pa_schedule_policy_runs (
+      policy_id TEXT NOT NULL REFERENCES pa_schedule_policies(id),
+      scheduled_at TEXT NOT NULL,
+      task_id TEXT,
+      status TEXT NOT NULL CHECK (status IN ('dispatched', 'skipped')),
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (policy_id, scheduled_at)
+    ) STRICT`,
+    `ALTER TABLE pa_tasks ADD COLUMN schedule_policy_id TEXT`,
+    `ALTER TABLE pa_actions ADD COLUMN schedule_policy_id TEXT`,
+    `ALTER TABLE pa_actions ADD COLUMN schedule_policy_version INTEGER`,
+  ],
 ];
 
 /** Highest schema version this build can read/migrate. */

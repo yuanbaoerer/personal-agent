@@ -57,6 +57,7 @@ export interface CreateTaskInput {
   };
   priority?: number;
   deadline?: string;
+  schedulePolicyId?: string;
 }
 
 const DEFAULT_MANDATE = {
@@ -128,6 +129,7 @@ export class TaskService {
       mandate: input.mandate ?? DEFAULT_MANDATE,
       priority: input.priority,
       deadline: input.deadline,
+      schedulePolicyId: input.schedulePolicyId,
       createdAt: now,
     });
 

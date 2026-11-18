@@ -104,7 +104,7 @@ npm start
 
 - `/allow-read owner/repo` 授予 24h、可撤销的只读预授权；只对 `github.read` 且 args.repo 命中时自动批准，不发送审批卡；report 事务提交后再批准，重复 report 不重复批准。
 - `/revoke-read`、过期、未授权 repo、connector 白名单外 repo 均不会自动执行；已自动批准但未执行的 Action 在 claim 时失效；跨 owner 不命中。
-- `npm test`：200 个确定性测试通过（当前）；fake GitHub 执行 1 次，无审批卡，`action.auto_approved` 审计存在。
+- `npm test`：211 个确定性测试通过（当前）；fake GitHub 执行 1 次，无审批卡，`action.auto_approved` 审计存在。
 - 崩溃窗口：report 已提交但 post-commit 自动批准丢失时，重放会 finalize 仍为 proposed 的预授权 Action。
 - 证据边界：E1；真实 token/仓库 G1、计划/周期触发与真实 Go 配额仍未验证。
 
@@ -114,8 +114,18 @@ npm start
 - 仅匹配 OpenCode Go 卡；`remaining <= 5%`、窗口 `limited` 或 gateway key `limited` 时阻止新的 Router/Worker 模型请求；Magpie 不可达时 fail-open 并标记 degraded；单个无 “go” 标签的 OpenCode 卡按 Go 处理；多个 OpenCode 卡时仅显式 “go” 标签生效。
 - `/usage` 附带订阅窗口与今日 calls/tokens/cost（gateway-wide，所有 Provider）；有 Magpie 数据时移除本地“token/费用未采集”行；不显示其他 Provider 卡片或账号。
 - 本地 Magpie 0.1.3792 只读探测返回 quotas/usage/limit 形状，但当前工作区没有 OpenCode Go 卡（只有 Codex/Copilot），因此真实 Go 配额仍未验证。
-- `npm test`：200 pass / 0 fail。
+- `npm test`：当时 200 pass / 0 fail（当前 211）。
 - 证据边界：E1（fake Magpie HTTP + 本地只读探测）；真实 Go 订阅窗口、重置与 429 未验证。
+
+**2026-11-18 验证（周期计划 SchedulePolicy，PA-08 部分）：**
+
+- `/schedule new <owner/name> <HH:MM> <daily|weekdays> <内容> [--until=YYYY-MM-DD] [--tz=Area/City]` 创建草稿；草稿不触发，必须 `/schedule confirm <id>` 后激活；`edit` 会退回草稿、版本 +1 并要求重新确认；支持 `list/show/pause/resume/cancel`。
+- 墙钟时间按 IANA 时区计算；DST 春季不存在的本地时间跳过当天，秋季重复时间取第一次；工作日跳过周末；错过超过 1 小时的触发跳过而不补跑；`--until` 最后一天含 23:59:59.999。
+- 每次 `scheduledAt` 使用唯一 runKey 和 `pa_schedule_policy_runs(policy_id, scheduled_at)` 抢占；重复 alarm/重启不重复建任务，run 记录关联 task；仅创建 Task，不引入常驻 Model Watchdog。
+- 计划任务只带 `github.read` 和 `github` resource；计划本身作为精确 repo/version 的只读授权，paused/edited/cancelled/expired 或 repo 超出白名单时提案直接拒绝，不降级成审批卡，执行前再次核验。
+- `confirm/resume` 立即 `wake()`，由 maintenance 重新计算真正最早到期时间；避免把共享 maintenance job 推到更晚而压住其他 effect/reminder/计划。Node 继续 1s 轮询。
+- `npm test`：211 个确定性测试通过。
+- 证据边界：E1；真实飞书 G3、真实 GitHub 计划触发、Worker alarm 实际唤醒与生产观察仍 pending。
 
 **2026-11-18 验证（PA-14 部分）：**
 

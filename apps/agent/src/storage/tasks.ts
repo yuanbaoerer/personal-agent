@@ -28,6 +28,7 @@ interface TaskRow {
   budget_json: string | null;
   result_ref: string | null;
   last_error: string | null;
+  schedule_policy_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -76,6 +77,7 @@ function mapTask(row: TaskRow): TaskRecord {
     budget: row.budget_json === null ? undefined : (JSON.parse(row.budget_json) as Record<string, unknown>),
     resultRef: row.result_ref ?? undefined,
     lastError: row.last_error ?? undefined,
+    schedulePolicyId: row.schedule_policy_id ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -122,6 +124,7 @@ export interface NewTaskInput {
   priority?: number;
   deadline?: string;
   budget?: Record<string, unknown>;
+  schedulePolicyId?: string;
   createdAt: string;
 }
 
@@ -159,8 +162,8 @@ export class TaskRepository {
       `INSERT INTO pa_tasks
         (id, owner_id, conversation_id, source_key, goal, completion_criteria,
          mandate_json, revision, status, priority, attempts, deadline, budget_json,
-         created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'queued', ?, 0, ?, ?, ?, ?)
+         schedule_policy_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'queued', ?, 0, ?, ?, ?, ?, ?)
        ON CONFLICT (source_key) DO NOTHING
        RETURNING *`,
       id,
@@ -173,6 +176,7 @@ export class TaskRepository {
       input.priority ?? 0,
       input.deadline ?? null,
       input.budget === undefined ? null : JSON.stringify(input.budget),
+      input.schedulePolicyId ?? null,
       input.createdAt,
       input.createdAt,
     )[0];

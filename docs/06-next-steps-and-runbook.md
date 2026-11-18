@@ -28,7 +28,8 @@
 | SQLite 备份：VACUUM INTO、manifest SHA-256、integrity_check、600 权限、verify、恢复到空目录（拒绝较新 schema） | 恢复/升级自动化、加密、保留期 |
 | 工具扩展 seam + 只读样例：`registerTools`、resource/readOnly/timeoutMs/replayPolicy 双重校验 | Provider/Channel 扩展契约、真实第三方工具 |
 | Magpie 用量/预算：可选读取 quotas/usage/limit，OpenCode Go 窗口低于阈值或 key 限额时阻止新模型请求，`/usage` 附带订阅窗口 | 当前 Magpie 工作区无 OpenCode Go 卡；真实配额/重置未验证 |
-| 200 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
+| 周期计划：草稿→确认、daily/weekdays、IANA 时区/DST、确定性 runKey、暂停/恢复/取消/修改、计划级 repo 只读授权、DO wake | 真实 Feishu/GitHub G3、生产 alarm 观察 |
+| 211 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
 
 ## 2. 下一步待办
 
@@ -223,7 +224,7 @@ npm run backup -- --restore ./backups/<timestamp> --target ./restored-data
 | 审计 | `action.auto_approved` + 既有 action 生命周期事件 | 审计断言 |
 | 待定 | 周期计划触发、预算、真实 token G1 | 需部署/预算决策 |
 
-边界：E1；PA-08 的 SchedulePolicy/预算仍未实现，PA-07/PA-08 保持 OPEN。
+边界：E1；预算与 SchedulePolicy 的后续实施见 §2.12/§2.13，PA-07/PA-08 保持 OPEN。
 
 ### 2.12 2026-11-18 实施进展（Magpie 用量/预算，PA-06/PA-08 部分）
 
@@ -240,9 +241,30 @@ MAGPIE_MIN_REMAINING_PERCENT=5
 | 预算门禁 | OpenCode Go 窗口 remaining ≤5%、window limited 或 gateway key limited 时阻止新的 Router/Worker 模型请求；Router 只拦新请求，pending 重连不中断；任务 dispatch 60s retry（30 天上限） | gate/limit/窗口测试 |
 | 失败策略 | Magpie 不可达或可选端点失败时 fail-open + degraded，Direct Provider 不受影响；配额端点失败才视为不可用 | 不可达测试 |
 | 当前环境 | 本地 Magpie 0.1.3792 可读 quotas/usage/limit，但工作区没有 OpenCode Go 卡（仅 Codex/Copilot），因此真实 Go 窗口未验证 | 只读探测 |
-| 待定 | 在 Magpie 中添加 OpenCode Go 订阅并验证 5h/7d 窗口、重置与 429；SchedulePolicy 触发 | 需真实订阅连接 |
+| 待定 | 在 Magpie 中添加 OpenCode Go 订阅并验证 5h/7d 窗口、重置与 429 | 需真实订阅连接 |
 
 边界：E1；真实 Go 订阅额度、重置与 429 未验证，PA-06/PA-08 保持 OPEN。
+
+### 2.13 2026-11-18 实施进展（周期计划 SchedulePolicy，PA-08 部分）
+
+```bash
+/schedule new owner/repo 09:00 weekdays 检查仓库进展 --tz=Asia/Shanghai --until=2026-12-31
+/schedule confirm <id>
+/schedule list | show <id> | pause <id> | resume <id> | cancel <id>
+/schedule edit <id> owner/repo 10:00 weekdays 新内容 --tz=Asia/Shanghai --until=2026-12-31
+```
+
+| 内容 | 实现 | 证据 |
+| --- | --- | --- |
+| 草稿与确认 | 创建只写 draft；确认前不排期。草稿回复展示频率、时区、仓库、内容、收件会话、截止时间 | 命令草稿/确认测试 |
+| 修改与撤销 | edit 整包替换并 `status=draft, version+1, next_run_at=NULL`；pause/resume/cancel 均按 owner；修改后必须重新确认 | 生命周期测试 |
+| 时间计算 | IANA 墙钟；daily/weekdays；DST 春季缺口跳过、秋季重复取第一次；工作日跳周末；错过 >1h 不补跑；`--until` 结束日含 23:59:59.999 | `schedule-policy.test.ts` DST/边界测试 |
+| 幂等触发 | `source_key=schedule:<policyId>:<scheduledAt>` + Task 唯一键；`pa_schedule_policy_runs(policy_id, scheduled_at)` 抢占；advance 对 `next_run_at` CAS；崩溃窗口可复用 run | 重复 fire、run→task、错过窗口测试 |
+| 计划授权 | Task 记录 `schedule_policy_id`；Action 记录 policy/version；仅 `github.read` + 精确 repo + active/未过期/白名单 + 版本匹配时自动批准；其他提案拒绝而非审批卡；执行前再次核验 | 自动批准、out-of-plan repo 拒绝、edit 后执行拒绝测试 |
+| 宿主唤醒 | `confirm/resume` 立即 `wake()`；DO maintenance 的 `#nextDueAt` 纳入 policy 并重算最早时间；Node 1s 轮询 | 类型检查/wiring；真实 alarm 待验证 |
+| 待定 | 真实飞书 G3、真实 GitHub 调度与回执、DO alarm 生产观察、每周频率 | 需真实凭据/部署 |
+
+边界：E1；PA-08 保持 OPEN，不能据确定性测试宣称 G3 已通过。
 
 ## 3. 环境与密钥
 

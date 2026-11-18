@@ -13,6 +13,7 @@ import type { Store } from "../storage/store.ts";
 import type { TaskRepository } from "../storage/tasks.ts";
 import type { WakeScheduler } from "../runtime/types.ts";
 import type { PreauthorizationService } from "../personal/preauthorizations.ts";
+import type { SchedulePolicyService } from "../personal/schedule-policies.ts";
 import {
   ToolRejectedError,
   ToolTimeoutError,
@@ -36,6 +37,7 @@ export interface ActionServiceDeps {
   maxConcurrentTools?: number;
   tasks?: TaskRepository;
   preauthorizations?: PreauthorizationService;
+  schedulePolicies?: SchedulePolicyService;
   onSettled?: (taskId: string) => void;
 }
 
@@ -67,6 +69,7 @@ export class ActionService {
   readonly #maxConcurrentTools: number;
   readonly #tasks?: TaskRepository;
   readonly #preauthorizations?: PreauthorizationService;
+  readonly #schedulePolicies?: SchedulePolicyService;
   readonly #onSettled: (taskId: string) => void;
   #activeTools = 0;
   readonly #toolWaiters: (() => void)[] = [];
@@ -84,6 +87,7 @@ export class ActionService {
     this.#maxConcurrentTools = Math.max(1, deps.maxConcurrentTools ?? 2);
     this.#tasks = deps.tasks;
     this.#preauthorizations = deps.preauthorizations;
+    this.#schedulePolicies = deps.schedulePolicies;
     this.#onSettled = deps.onSettled ?? (() => {});
   }
 
@@ -118,7 +122,7 @@ export class ActionService {
         sourceKey,
         true,
       );
-      if (inserted.created) {
+      if (inserted?.created) {
         count += 1;
         if (inserted.autoApprove) {
           autoApprove.push(inserted.action.id);
@@ -142,15 +146,11 @@ export class ActionService {
       if (this.#autoApproveReadOnly(action)) {
         continue;
       }
-      if (
-        action.preauthorizationId !== undefined &&
-        this.#preauthorizations?.isGrantActive(action.preauthorizationId) === false
-      ) {
-        this.#actions.supersede(action.id, "preauthorization_revoked", this.#now().toISOString());
-        this.#auditAction(action, "action.superseded", {
-          reason: "preauthorization_revoked",
-        });
-        this.#reply(action, "failure", "只读预授权已撤销或过期，未执行。", "superseded");
+      const revokedReason = this.#readAuthorizationRevoked(action);
+      if (revokedReason !== undefined) {
+        this.#actions.supersede(action.id, revokedReason, this.#now().toISOString());
+        this.#auditAction(action, "action.superseded", { reason: revokedReason });
+        this.#reply(action, "failure", "只读授权已撤销、过期或计划已变更，未执行。", "superseded");
         this.#onSettled(action.taskId);
         continue;
       }
@@ -175,7 +175,7 @@ export class ActionService {
       canonical.args,
       sourceKey,
       false,
-    ).action;
+    )?.action;
   }
 
   #canonicalProposal(
@@ -251,9 +251,34 @@ export class ActionService {
     args: Record<string, unknown>,
     sourceKey: string | undefined,
     deferAutoApprove: boolean,
-  ): { action: ActionRecord; autoApprove: boolean; created: boolean } {
+  ):
+    | { action: ActionRecord; autoApprove: boolean; created: boolean }
+    | undefined {
     const now = this.#now().toISOString();
-    const preauthorization = this.#findPreauthorization(task, tool, args);
+    const authorization = this.#findReadAuthorization(task, tool, args);
+    if (
+      task.schedulePolicyId !== undefined &&
+      authorization?.schedulePolicyId === undefined
+    ) {
+      // A task created by a plan is bound to that plan's exact repo and
+      // version. If its provenance no longer matches, do not insert an
+      // approval-card fallback: an owner click must not widen the confirmed
+      // scope, and an unstamped action would skip the execution-time check.
+      this.#store.recordAudit({
+        event: "action.proposal_rejected",
+        subjectType: "task",
+        subjectId: task.id,
+        after: {
+          tool: tool.name,
+          args,
+          schedulePolicyId: task.schedulePolicyId,
+          reason: "schedule_scope_violation",
+        },
+        traceId: `task:${task.id}`,
+        occurredAt: now,
+      });
+      return undefined;
+    }
     const { action, created } = this.#actions.insert({
       ownerId: task.ownerId,
       conversationId: task.conversationId,
@@ -266,7 +291,9 @@ export class ActionService {
       expiresAt: new Date(this.#now().getTime() + this.#ttlMs).toISOString(),
       nonce: randomUUID(),
       sourceKey,
-      preauthorizationId: preauthorization?.id,
+      preauthorizationId: authorization?.preauthorizationId,
+      schedulePolicyId: authorization?.schedulePolicyId,
+      schedulePolicyVersion: authorization?.schedulePolicyVersion,
       createdAt: now,
     });
 
@@ -284,7 +311,7 @@ export class ActionService {
       occurredAt: now,
     });
 
-    if (preauthorization !== undefined) {
+    if (authorization !== undefined) {
       if (deferAutoApprove) {
         return { action, autoApprove: true, created: true };
       }
@@ -297,21 +324,48 @@ export class ActionService {
     return { action, autoApprove: false, created: true };
   }
 
-  #findPreauthorization(
+  #findReadAuthorization(
     task: TaskRecord,
     tool: ActionTool,
     args: Record<string, unknown>,
-  ): { id: string } | undefined {
+  ):
+    | {
+        preauthorizationId?: string;
+        schedulePolicyId?: string;
+        schedulePolicyVersion?: number;
+      }
+    | undefined {
     if (
-      this.#preauthorizations === undefined ||
       tool.name !== "github.read" ||
       tool.readOnly !== true ||
       typeof args.repo !== "string"
     ) {
       return undefined;
     }
+    if (task.schedulePolicyId !== undefined) {
+      if (this.#schedulePolicies === undefined) {
+        return undefined;
+      }
+      const policy = this.#schedulePolicies.readAuthorization(
+        task.schedulePolicyId,
+        task.ownerId,
+        args.repo,
+      );
+      if (policy !== undefined) {
+        return {
+          schedulePolicyId: policy.id,
+          schedulePolicyVersion: policy.version,
+        };
+      }
+      // A paused/edited/expired plan must not fall through to a different
+      // authorization path or send an approval card for out-of-scope work.
+      return undefined;
+    }
+    if (this.#preauthorizations === undefined) {
+      return undefined;
+    }
     const grant = this.#preauthorizations.findActive(task.ownerId, tool.name, args.repo);
-    return grant === undefined ? undefined : { id: grant.id };
+    return grant === undefined ? undefined : { preauthorizationId: grant.id };
   }
 
   #sendApprovalCard(action: ActionRecord): void {
@@ -769,7 +823,7 @@ export class ActionService {
    */
   #executionGuard(action: ActionRecord): string | undefined {
     if (this.#tasks === undefined) {
-      return undefined;
+      return "task_guard_unavailable";
     }
     const task = this.#tasks.get(action.taskId);
     if (task === undefined) {
@@ -802,11 +856,24 @@ export class ActionService {
     ) {
       return "resource_outside_mandate";
     }
-    if (
-      action.preauthorizationId !== undefined &&
-      this.#preauthorizations?.isGrantActive(action.preauthorizationId) !== true
-    ) {
-      return "preauthorization_revoked";
+    if (action.preauthorizationId !== undefined) {
+      if (this.#preauthorizations?.isGrantActive(action.preauthorizationId) !== true) {
+        return "preauthorization_revoked";
+      }
+    }
+    if (action.schedulePolicyId !== undefined) {
+      if (
+        action.schedulePolicyVersion === undefined ||
+        typeof action.args.repo !== "string" ||
+        this.#schedulePolicies?.readAuthorization(
+          action.schedulePolicyId,
+          action.ownerId,
+          action.args.repo,
+          action.schedulePolicyVersion,
+        ) === undefined
+      ) {
+        return "schedule_policy_inactive";
+      }
     }
     return undefined;
   }
@@ -882,27 +949,69 @@ export class ActionService {
     });
   }
 
-  #autoApproveReadOnly(action: ActionRecord): boolean {
+  #readAuthorizationRevoked(action: ActionRecord): string | undefined {
     if (
-      this.#preauthorizations === undefined ||
-      action.preauthorizationId === undefined ||
-      action.tool !== "github.read" ||
-      typeof action.args.repo !== "string"
+      action.preauthorizationId !== undefined &&
+      this.#preauthorizations?.isGrantActive(action.preauthorizationId) !== true
     ) {
+      return "preauthorization_revoked";
+    }
+    if (action.schedulePolicyId !== undefined) {
+      if (
+        action.schedulePolicyVersion === undefined ||
+        typeof action.args.repo !== "string" ||
+        this.#schedulePolicies?.readAuthorization(
+          action.schedulePolicyId,
+          action.ownerId,
+          action.args.repo,
+          action.schedulePolicyVersion,
+        ) === undefined
+      ) {
+        return "schedule_policy_inactive";
+      }
+    }
+    return undefined;
+  }
+
+  #autoApproveReadOnly(action: ActionRecord): boolean {
+    if (action.tool !== "github.read" || typeof action.args.repo !== "string") {
       return false;
     }
     const tool = this.#tools.get(action.tool);
     if (tool?.readOnly !== true) {
       return false;
     }
-    const grant = this.#preauthorizations.findActiveById(action.preauthorizationId);
-    if (
-      grant === undefined ||
-      grant.ownerId !== action.ownerId ||
-      grant.tool !== action.tool ||
-      grant.repo !== action.args.repo.trim().toLowerCase()
-    ) {
-      return false;
+    let description: string;
+    if (action.schedulePolicyId !== undefined) {
+      if (
+        action.schedulePolicyVersion === undefined ||
+        this.#schedulePolicies?.readAuthorization(
+          action.schedulePolicyId,
+          action.ownerId,
+          action.args.repo,
+          action.schedulePolicyVersion,
+        ) === undefined
+      ) {
+        return false;
+      }
+      description = `已按周期计划授权执行 ${action.tool}（${action.args.repo}）。`;
+    } else {
+      if (
+        this.#preauthorizations === undefined ||
+        action.preauthorizationId === undefined
+      ) {
+        return false;
+      }
+      const grant = this.#preauthorizations.findActiveById(action.preauthorizationId);
+      if (
+        grant === undefined ||
+        grant.ownerId !== action.ownerId ||
+        grant.tool !== action.tool ||
+        grant.repo !== action.args.repo.trim().toLowerCase()
+      ) {
+        return false;
+      }
+      description = `已按只读预授权执行 ${action.tool}（${action.args.repo}）。`;
     }
 
     const result = this.approve({
@@ -920,16 +1029,17 @@ export class ActionService {
       event: "action.auto_approved",
       subjectType: "action",
       subjectId: action.id,
-      after: { tool: action.tool, repo: action.args.repo },
+      after: {
+        tool: action.tool,
+        repo: action.args.repo,
+        authorization:
+          action.schedulePolicyId === undefined ? "preauthorization" : "schedule_policy",
+        schedulePolicyId: action.schedulePolicyId,
+      },
       traceId: `action:${action.id}`,
       occurredAt: this.#now().toISOString(),
     });
-    this.#reply(
-      action,
-      "status",
-      `已按只读预授权执行 ${action.tool}（${action.args.repo}）。`,
-      "auto_approved",
-    );
+    this.#reply(action, "status", description, "auto_approved");
     return true;
   }
 

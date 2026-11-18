@@ -40,6 +40,8 @@ K13 与 K14 必须包含至少一个可控竞态复现测试；应用的锁、�
 
 **K14 实现状态（2026-11-17，E1）**：`ActionRepository.claimForExecution` 在同一事务内重核 owner/conversation/taskRevision、Task 非终态/非 cancelling、Mandate 含工具；失败则 approved → superseded、消费一次性审批并审计，不调用工具。审批入口同样重核；同一审批重复 claim 只有一次成功（`action_executing`）；approved Action 错过执行窗口时转为 expired 并消费审批；外部已发仍走 unknown → reconcile。真实写工具、平台审批点击与故障注入 pending，不能据此把 K14 标为 E3 通过。
 
+**周期计划（PA-08 部分，E1）**：`/schedule new` 只创建 draft，`/schedule confirm` 后才激活；edit 退回 draft 并递增 version，pause/resume/cancel 停止或恢复新触发。支持 daily/weekdays、IANA 时区、DST 缺口跳过、重复时间取第一次、错过超过 1h 不补跑、结束日含 23:59:59.999。每次 scheduledAt 由 `source_key` 与 `pa_schedule_policy_runs` 双重去重，run 记录关联 Task；计划任务只允许 `github.read` 且自动批准绑定 policy/version/repo，计划暂停/修改/取消/过期或 repo 超出白名单时提案拒绝、执行前再次核验。`confirm/resume` 立即 `wake()`，由 maintenance 重算最早到期时间，不把共享 job 推晚。真实飞书 G3、真实 GitHub 触发/回执与生产 alarm 仍 pending，PA-08 保持 OPEN。
+
 **恢复证据（PA-04 部分，E1）**：`npm run test:recovery` 使用 file-backed SQLite 重建进程，覆盖 Inbox 已受理但未路由、Assignment/Effect 租约过期、Task 创建后派工 effect 丢失、Action 外部写已生效但本地 unknown 后 reconcile、Reminder 到期跨重启只外发一次、`needs_manual` 在 `/status` 可见；Outbox 发送中断的 businessKey 核对由 `outbox.test.ts` 覆盖。真实 SIGKILL、DO 驱逐、Pi 会话跨重启、真实飞书回执仍为 pending，不能据此宣称 E4 通过。
 
 **非阻塞调度（PA-05 部分，E1）**：Assignment 等待按 100ms 切片轮询，pending 使用 250ms–5s 退避；Router 等待按 250ms 切片轮询，pending 使用 250ms–2s 退避。两个 pending Worker 与普通 effect 同轮处理时普通 effect 不被饿死；一个 wait handler 被持有时 `/status`/`/cancel` 仍通过 ingress 受理（E1 smoke，不是 p95 证据）。工具调用默认 15s 超时且不超过 execution lease−1s：只读超时失败、写超时转 unknown/reconcile；未知写仅在 `replayPolicy="verify"` 且 verify 不满足时才重试，否则 needs_manual。真实模型长生成、平台延迟、真实慢工具隔离和物理并发压测仍 pending，不能据此宣称 E3/E4。
@@ -48,7 +50,7 @@ K13 与 K14 必须包含至少一个可控竞态复现测试；应用的锁、�
 
 **确认与范围（PA-10 部分，E1）**：模型解读的 `save_memory`/`remind` 进入最长 10 分钟确认项（提醒以 dueAt 为上限；owner + source inbox 唯一），`/确认` 后应用；`/取消确认`、过期、跨 owner 均不写入；显式 `/remember`、`/remind` 保持即时；timer 注册失败会取消 schedule 并报错。项目范围隔离与 Worker 记忆注入仍 pending。
 
-**只读 GitHub（PA-07 部分，E1）**：`github.read` 仅 GET，repo 精确白名单、Bearer token、拒重定向、8s 超时、单次 ≤20 项/≤200KB；返回 repo/commits/open issues/open pulls/PR 状态与来源 URL；工具名与 `github` Mandate resource 双重校验；401/403/429（含 retry-after）/404/timeout 可区分。新增 24h 可撤销只读预授权：仅对命中 repo 的 `github.read` 自动批准，report 事务提交后执行；撤销/过期阻止新提案，并让未执行的已批准 Action 在 claim 时失效；重复 report 不重复批准，post-commit 自动批准丢失时重放会补做。真实 token/仓库 G1 与周期计划/预算仍 pending。
+**只读 GitHub（PA-07 部分，E1）**：`github.read` 仅 GET，repo 精确白名单、Bearer token、拒重定向、8s 超时、单次 ≤20 项/≤200KB；返回 repo/commits/open issues/open pulls/PR 状态与来源 URL；工具名与 `github` Mandate resource 双重校验；401/403/429（含 retry-after）/404/timeout 可区分。新增 24h 可撤销只读预授权：仅对命中 repo 的 `github.read` 自动批准，report 事务提交后执行；撤销/过期阻止新提案，并让未执行的已批准 Action 在 claim 时失效；重复 report 不重复批准，post-commit 自动批准丢失时重放会补做。真实 token/仓库 G1 与预算仍 pending；周期计划已部分落地，见下方 PA-08。
 
 **备份/校验（PA-14 部分，E1）**：`npm run backup` 使用 `VACUUM INTO` 复制 agent/pi SQLite；manifest 记录 SHA-256/字节/schema_version；复制后 `integrity_check`，目录/文件 700/600；`--verify` 重新校验并拒绝路径型文件名；`--restore --target` 先 verify，只恢复到空目录，拒绝高于当前 build 的 schema，恢复后重跑完整性检查。恢复/升级自动化、加密与保留期仍 pending。
 

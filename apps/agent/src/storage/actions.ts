@@ -28,6 +28,8 @@ interface ActionRow {
   evidence_json: string | null;
   last_error: string | null;
   preauthorization_id: string | null;
+  schedule_policy_id: string | null;
+  schedule_policy_version: number | null;
   source_key: string | null;
   created_at: string;
   updated_at: string;
@@ -71,6 +73,9 @@ function mapAction(row: ActionRow): ActionRecord {
         : (JSON.parse(row.evidence_json) as Record<string, unknown>),
     lastError: row.last_error ?? undefined,
     preauthorizationId: row.preauthorization_id ?? undefined,
+    schedulePolicyId: row.schedule_policy_id ?? undefined,
+    schedulePolicyVersion:
+      row.schedule_policy_version === null ? undefined : Number(row.schedule_policy_version),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -104,6 +109,8 @@ export interface NewActionInput {
   nonce: string;
   sourceKey?: string;
   preauthorizationId?: string;
+  schedulePolicyId?: string;
+  schedulePolicyVersion?: number;
   createdAt: string;
 }
 
@@ -134,9 +141,10 @@ export class ActionRepository {
         (id, owner_id, conversation_id, task_id, task_revision, fencing_token,
          tool, args_json, args_hash, status, expires_at, nonce, approved_at,
          approved_by, execution_attempts, lease_until, external_ref, evidence_json,
-         last_error, preauthorization_id, source_key, created_at, updated_at)
+         last_error, preauthorization_id, schedule_policy_id,
+         schedule_policy_version, source_key, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'proposed', ?, ?, NULL, NULL, 0,
-               NULL, NULL, NULL, NULL, ?, ?, ?, ?)
+               NULL, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (source_key) DO NOTHING
        RETURNING *`,
       randomUUID(),
@@ -151,6 +159,8 @@ export class ActionRepository {
       input.expiresAt,
       input.nonce,
       input.preauthorizationId ?? null,
+      input.schedulePolicyId ?? null,
+      input.schedulePolicyVersion ?? null,
       input.sourceKey ?? null,
       input.createdAt,
       input.createdAt,

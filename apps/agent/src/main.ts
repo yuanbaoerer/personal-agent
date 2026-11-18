@@ -169,12 +169,14 @@ async function main(): Promise<void> {
         app.actionService.sweep();
         const expiredConfirmations = app.confirmation.expirePending();
         const fired = await app.reminders.fireDue();
+        const scheduled = app.schedulePolicy.fireDue();
         const effectResult = await app.effectDispatcher.drain(20);
         const result = await dispatcher.drain(10);
         const changed =
           recovered +
           expiredConfirmations +
           fired +
+          scheduled +
           effectResult.done +
           effectResult.retried +
           effectResult.failed +
@@ -188,6 +190,7 @@ async function main(): Promise<void> {
             recovered,
             expiredConfirmations,
             fired,
+            scheduled,
             effects: effectResult,
             ...result,
           });

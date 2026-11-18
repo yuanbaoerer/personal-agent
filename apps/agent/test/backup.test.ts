@@ -47,7 +47,7 @@ describe("sqlite backup", () => {
       });
 
       assert.equal(manifest.files.length, 2);
-      assert.equal(manifest.files[0]?.schemaVersion, "9");
+      assert.equal(manifest.files[0]?.schemaVersion, "10");
       assert.equal(manifest.files[1]?.name, "pi.sqlite");
       assert.equal((await stat(join(outDir, "agent.sqlite"))).mode & 0o777, 0o600);
       assert.equal((await stat(join(outDir, "manifest.json"))).mode & 0o777, 0o600);

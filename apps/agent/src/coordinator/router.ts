@@ -2,6 +2,7 @@ import type {
   InboxRecord,
   ReplyDraft,
   RouterDecision,
+  SchedulePolicyRecord,
   RouterInput,
   ScheduleRecord,
   TaskRecord,
@@ -13,6 +14,7 @@ import type { Store } from "../storage/store.ts";
 import type { MemoryService } from "../personal/memory.ts";
 import type { ConfirmationService } from "../personal/confirmations.ts";
 import type { PreauthorizationService } from "../personal/preauthorizations.ts";
+import type { SchedulePolicyService } from "../personal/schedule-policies.ts";
 import { assertTimezone, formatInTimezone } from "../personal/reminders.ts";
 import type { ReminderService } from "../personal/reminders.ts";
 import type { EffectDispatcher, EffectOutcome } from "../delivery/effects.ts";
@@ -66,6 +68,7 @@ export interface RouterDeps {
   memory: MemoryService;
   confirmation: ConfirmationService;
   preauthorization: PreauthorizationService;
+  schedulePolicy?: SchedulePolicyService;
   budget?: BudgetService;
   model: RouterModel;
   wake: WakeScheduler;
@@ -132,6 +135,66 @@ export function describeReminderCancelFailure(reason: string | undefined): strin
   return reason ?? "未知原因";
 }
 
+export function formatSchedulePolicy(policy: SchedulePolicyRecord, full = false): string {
+  const id = full ? policy.id : policy.id.slice(0, 8);
+  const cadence = policy.cadence === "weekdays" ? "工作日" : "每天";
+  const next = policy.nextRunAt === undefined ? "未排期" : policy.nextRunAt;
+  return [
+    `- ${id} [${policy.status}] ${cadence} ${policy.localTime} ${policy.timezone} ${policy.repo}`,
+    `  下次 ${next}，截止 ${policy.expiresAt}，版本 ${policy.version}`,
+    `  内容：${policy.goal}`,
+  ].join("\n");
+}
+
+export interface ParsedScheduleSpec {
+  repo: string;
+  localTime: string;
+  cadence: "daily" | "weekdays";
+  goal: string;
+  timezone?: string;
+  until?: string;
+}
+
+export function parseScheduleSpec(
+  text: string,
+): { ok: true; value: ParsedScheduleSpec } | { ok: false; reason: string } {
+  const tokens = text.trim().split(/\s+/).filter((token) => token.length > 0);
+  if (tokens.length < 4) {
+    return {
+      ok: false,
+      reason:
+        "格式：/schedule new <owner/name> <HH:MM> <daily|weekdays> <内容> [--until=YYYY-MM-DD] [--tz=Area/City]",
+    };
+  }
+  const [repo, localTime, cadenceRaw] = tokens as [string, string, string];
+  const cadence =
+    cadenceRaw === "weekdays" || cadenceRaw === "工作日"
+      ? "weekdays"
+      : cadenceRaw === "daily" || cadenceRaw === "每天"
+        ? "daily"
+        : undefined;
+  if (cadence === undefined) {
+    return { ok: false, reason: "频率应为 daily（每天）或 weekdays（工作日）。" };
+  }
+  let timezone: string | undefined;
+  let until: string | undefined;
+  const goalTokens: string[] = [];
+  for (const token of tokens.slice(3)) {
+    if (token.startsWith("--until=")) {
+      until = token.slice("--until=".length);
+    } else if (token.startsWith("--tz=")) {
+      timezone = token.slice("--tz=".length);
+    } else {
+      goalTokens.push(token);
+    }
+  }
+  const goal = goalTokens.join(" ").trim();
+  if (goal.length === 0) {
+    return { ok: false, reason: "计划内容不能为空。" };
+  }
+  return { ok: true, value: { repo, localTime, cadence, goal, timezone, until } };
+}
+
 /**
  * The Router is the only semantic entry point. Deterministic commands run
  * without a model; everything else becomes a durable router.route effect so
@@ -148,6 +211,7 @@ export class Router implements InboundHandler {
   readonly #memory: MemoryService;
   readonly #confirmation: ConfirmationService;
   readonly #preauthorization: PreauthorizationService;
+  readonly #schedulePolicy?: SchedulePolicyService;
   readonly #budget?: BudgetService;
   readonly #model: RouterModel;
   readonly #wake: WakeScheduler;
@@ -165,6 +229,7 @@ export class Router implements InboundHandler {
     this.#memory = deps.memory;
     this.#confirmation = deps.confirmation;
     this.#preauthorization = deps.preauthorization;
+    this.#schedulePolicy = deps.schedulePolicy;
     this.#budget = deps.budget;
     this.#model = deps.model;
     this.#wake = deps.wake;
@@ -622,6 +687,147 @@ export class Router implements InboundHandler {
     return lines.join("\n");
   }
 
+  #scheduleCommand(
+    ownerId: string,
+    conversationId: string,
+    subcommandRaw: string | undefined,
+    rest: string,
+  ): ReplyDraft[] {
+    const service = this.#schedulePolicy;
+    if (service === undefined) {
+      return [{ purpose: "failure", text: "当前运行未启用周期计划。" }];
+    }
+    const subcommand = (subcommandRaw ?? "list").toLowerCase();
+    const aliases: Record<string, string> = {
+      "列表": "list",
+      "查看": "show",
+      "新建": "new",
+      "创建": "new",
+      "确认": "confirm",
+      "暂停": "pause",
+      "恢复": "resume",
+      "取消": "cancel",
+      "修改": "edit",
+    };
+    const sub = aliases[subcommand] ?? subcommand;
+    const [first, ...tail] = rest.split(/\s+/).filter((token) => token.length > 0);
+
+    if (sub === "list") {
+      const policies = service.list(ownerId);
+      return [
+        {
+          purpose: "status",
+          text:
+            policies.length === 0
+              ? "当前没有周期计划。创建：/schedule new <owner/name> <HH:MM> <daily|weekdays> <内容>"
+              : ["周期计划：", ...policies.map((policy) => formatSchedulePolicy(policy))].join("\n"),
+        },
+      ];
+    }
+
+    if (sub === "new") {
+      const parsed = parseScheduleSpec(rest);
+      if (!parsed.ok) {
+        return [{ purpose: "failure", text: parsed.reason }];
+      }
+      const result = service.createDraft(ownerId, conversationId, parsed.value);
+      if (!result.ok) {
+        return [{ purpose: "failure", text: result.reason }];
+      }
+      return [
+        {
+          purpose: "status",
+          text: [
+            "已创建计划草稿（未激活，不会触发任务）：",
+            formatSchedulePolicy(result.policy, true),
+            `收件人：当前私聊会话（${conversationId}）`,
+            "确认后才会按上述频率、仓库与内容创建任务，并回传到该会话。",
+            `确认：/schedule confirm ${result.policy.id}`,
+            `取消：/schedule cancel ${result.policy.id}`,
+          ].join("\n"),
+        },
+      ];
+    }
+
+    if (sub === "edit") {
+      if (first === undefined) {
+        return [{ purpose: "failure", text: "请提供计划编号。" }];
+      }
+      const parsed = parseScheduleSpec(tail.join(" "));
+      if (!parsed.ok) {
+        return [{ purpose: "failure", text: parsed.reason }];
+      }
+      const result = service.edit(ownerId, first, parsed.value);
+      if (!result.ok) {
+        return [{ purpose: "failure", text: result.reason }];
+      }
+      return [
+        {
+          purpose: "status",
+          text: [
+            "计划已修改并退回草稿，旧版本授权立即失效；确认前不会触发。",
+            formatSchedulePolicy(result.policy, true),
+            `重新确认：/schedule confirm ${result.policy.id}`,
+          ].join("\n"),
+        },
+      ];
+    }
+
+    if (sub === "confirm" || sub === "pause" || sub === "resume" || sub === "cancel" || sub === "show") {
+      if (first === undefined) {
+        return [{ purpose: "failure", text: "请提供计划编号。" }];
+      }
+      if (sub === "show") {
+        const policy = service.resolve(ownerId, first);
+        return [
+          policy === undefined
+            ? { purpose: "failure", text: "找不到属于你的该计划。" }
+            : { purpose: "status", text: formatSchedulePolicy(policy, true) },
+        ];
+      }
+      const result =
+        sub === "confirm"
+          ? service.confirm(ownerId, first)
+          : sub === "pause"
+            ? service.pause(ownerId, first)
+            : sub === "resume"
+              ? service.resume(ownerId, first)
+              : service.cancel(ownerId, first);
+      if (!result.ok) {
+        return [{ purpose: "failure", text: result.reason }];
+      }
+      if (sub === "confirm" || sub === "resume") {
+        // Wake now, not at nextRunAt: the host stores one shared maintenance
+        // job, so moving it forward would defer earlier effects/reminders or
+        // another plan's nearer occurrence. Maintenance recomputes the true
+        // earliest due time. Node uses a no-op wake and polls instead.
+        void this.#wake.wake();
+      }
+      const action =
+        sub === "confirm"
+          ? "已确认并激活"
+          : sub === "pause"
+            ? "已暂停"
+            : sub === "resume"
+              ? "已恢复"
+              : "已取消";
+      return [
+        {
+          purpose: "status",
+          text: `${action}。\n${formatSchedulePolicy(result.policy, true)}`,
+        },
+      ];
+    }
+
+    return [
+      {
+        purpose: "failure",
+        text:
+          "用法：/schedule list | new | show | confirm | pause | resume | cancel | edit",
+      },
+    ];
+  }
+
   async #command(event: InboxRecord, text: string): Promise<ReplyDraft[] | undefined> {
     const now = this.#now().toISOString();
     const ownerId = event.ownerId;
@@ -723,6 +929,16 @@ export class Router implements InboundHandler {
                   .join("\n"),
         },
       ];
+    }
+
+    const schedule = /^\/(?:schedule|计划)(?:\s+(\S+))?(?:\s+([\s\S]*))?$/i.exec(text);
+    if (schedule !== null) {
+      return this.#scheduleCommand(
+        ownerId,
+        conversationId,
+        schedule[1],
+        (schedule[2] ?? "").trim(),
+      );
     }
 
     const confirm = /^\/(?:确认|confirm)\s+(\S+)$/.exec(text);
