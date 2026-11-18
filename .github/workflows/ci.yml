@@ -19,6 +19,7 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+      - run: npm run scan:secrets
       - run: npm run eval:report
       - uses: actions/upload-artifact@v4
         if: always()

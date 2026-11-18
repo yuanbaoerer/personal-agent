@@ -1,0 +1,40 @@
+name: Bug report
+description: Report a deterministic failure or regression
+body:
+  - type: markdown
+    attributes:
+      value: "Do not include secrets, real Feishu IDs/message IDs, private chat content, or raw provider responses."
+  - type: input
+    id: commit
+    attributes:
+      label: Commit / version
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Command, input, and expected/actual result.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Test output, database state, or sanitized logs. Mark mock vs real.
+    validations:
+      required: true
+  - type: dropdown
+    id: boundary
+    attributes:
+      label: Evidence boundary
+      options: [Deterministic/mock, Real model, Real channel, Production/Worker]
+    validations:
+      required: true
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety
+      options:
+        - label: I removed secrets and personal identifiers.
+          required: true

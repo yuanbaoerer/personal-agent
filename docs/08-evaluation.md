@@ -76,6 +76,8 @@ K13 与 K14 必须包含至少一个可控竞态复现测试；应用的锁、�
 
 确定性单元测试只证明有界契约。对真实模型，至少选 10 个代表任务，每个独立执行 3 次，以外部判定或人审为依据，记录波动和失败；模型输出合法 JSON 并非成功标准。
 
+**PA-15 开源治理（2026-11-18，E1 部分）**：新增 SECURITY/CONTRIBUTING/CHANGELOG/模板/许可清单/治理文档；`npm run scan:secrets` 覆盖工作树与未忽略新文件并在 CI 强制执行；历史扫描报告 2 个提交含个人 Feishu ID（不打印值），无 app secret/token。许可证、历史重写、visibility、传递依赖审计仍待 D16–D18。
+
 **PA-14 数据资产（2026-11-18，E1 部分）**：备份 manifest v2 记录 SHA/app/commit/schema/非敏感行数，兼容 v1；双库备份、完整性校验、空目录恢复；agent JSON 导出不读 env/secret、不含 Pi 内容。加密/保留期、Pi SDK 修复、真实写入中 SIGKILL/PITR 与业务全量核对仍 pending。
 
 **PA-13 扩展契约（2026-11-18，E1 部分）**：`MODEL_PROVIDER` 未知值启动前拒绝；`TOOL_CONTRACT_VERSION=1` 与 `ToolRegistry.describe()`；`RUNTIME_CONTRACT_VERSION=1`、`CHANNEL_CONTRACT_VERSION=1`；只读工具注册文档。第二真实 Provider、通用入站 Channel 和真实 G1 仍 pending，不能用确定性契约替代。

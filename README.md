@@ -7,7 +7,7 @@
 
 > 聊天软件里的个人助手：一个主 Agent 协调多个任务 Worker，云端持续运行，本地按授权执行，结果回到原对话。
 
-**当前阶段：本地飞书私聊已通过长连接稳定接入；Cloudflare Worker 已部署，但飞书侧仍走本地长连接。** 本地 Node 服务具备飞书验签/解密、持久 Inbox/Outbox、主人白名单和确定性命令。2026-11-09（UTC+8）完成真实飞书 p2p 收发：入站 `om_x100b603e0219c0a0b1e2434fa552a87` 受理，出站 `om_x100b603e03ccbca4c1ec6d3785d2599` 被平台接受；webhook 与长连接均验证，当前使用 `FEISHU_EVENT_MODE=long_connection`，无需公网 URL。Cloudflare DO 已把 `pa_*` 迁移到 DO SQLite，并接入 webhook、Router/Worker、Task/Assignment、审批/动作执行、一次性提醒和显式记忆；`wrangler dev` 已通过真实模型 Router → Worker 任务。Worker 已部署到 `personal-agent.3103148441.workers.dev`，但飞书后台保存该请求地址仍超时，因此 Worker 侧云端事件入口（自定义域或 WS 桥接）与对象驱逐恢复仍未完成。
+**当前阶段：本地飞书私聊已通过长连接稳定接入；Cloudflare Worker 已部署，但飞书侧仍走本地长连接。** 本地 Node 服务具备飞书验签/解密、持久 Inbox/Outbox、主人白名单和确定性命令。2026-11-09（UTC+8）完成真实飞书 p2p 收发：入站 `<redacted-feishu-message-id>` 受理，出站 `<redacted-feishu-message-id>` 被平台接受；webhook 与长连接均验证，当前使用 `FEISHU_EVENT_MODE=long_connection`，无需公网 URL。Cloudflare DO 已把 `pa_*` 迁移到 DO SQLite，并接入 webhook、Router/Worker、Task/Assignment、审批/动作执行、一次性提醒和显式记忆；`wrangler dev` 已通过真实模型 Router → Worker 任务。Worker 已部署到 `personal-agent.3103148441.workers.dev`，但飞书后台保存该请求地址仍超时，因此 Worker 侧云端事件入口（自定义域或 WS 桥接）与对象驱逐恢复仍未完成。
 
 ## 当前实现
 
@@ -54,9 +54,11 @@ curl -fsS http://127.0.0.1:8787/healthz
 
 容器以非 root、只读根文件系统运行，命名卷 `agent-data` 持久化两份 SQLite；preflight 缺配置直接退出。详见 [16 · 自托管部署](docs/16-self-hosting.md)。镜像未发布 registry，arm64、真实 E3/E4 和定期备份仍 pending。
 
+**License:** 尚未声明。D16 决策前不得把本仓库描述为已获得开源许可或可再分发。安全报告见 `SECURITY.md`。
+
 **2026-11-09 验证：**
 
-- **真实飞书 p2p**：入站 `message_id=om_x100b603e0219c0a0b1e2434fa552a87` 受理；回调 `POST /webhooks/feishu` 200，约 13ms；主人 `ou_48fabf7749a25c7ef394de573e94d8cf` 绑定；出站 `platform_message_id=om_x100b603e03ccbca4c1ec6d3785d2599` 被平台接受，端到端约 2s。当前走本地 Node 长连接（`FEISHU_EVENT_MODE=long_connection`），无需 Tunnel；长连接事件日志为 `feishu_ws_event`，出站 `om_x100b60141b58d0a0ddb7d24898d4134`。
+- **真实飞书 p2p**：入站 `message_id=<redacted-feishu-message-id>` 受理；回调 `POST /webhooks/feishu` 200，约 13ms；主人 `<redacted-owner-open-id>` 绑定；出站 `platform_message_id=<redacted-feishu-message-id>` 被平台接受，端到端约 2s。当前走本地 Node 长连接（`FEISHU_EVENT_MODE=long_connection`），无需 Tunnel；长连接事件日志为 `feishu_ws_event`，出站 `<redacted-feishu-message-id>`。
 - `npm test`：106 个确定性测试通过，覆盖 Inbox/Outbox、Task/Assignment fencing/心跳、原子审批、取消后 reconcile 拒绝执行、unknown→reconcile、提醒 runKey/TTL/聊天取消、显式记忆和 K05/K06/K09。
 - `npm run typecheck` 与 `npm run deploy:dry-run` 通过。
 - `wrangler dev`：`/webhooks/feishu` 受理 `200`，同 `message_id` 重推返回 `duplicate`；`/admin/status` 无 token `401`、有 token `200`；`/ask` 真实模型返回 `DO_OK`。
@@ -104,7 +106,7 @@ curl -fsS http://127.0.0.1:8787/healthz
 - `pa_memories` 增加 `project` 作用域（空为全局）；`/remember [--project=名称] key=value`、`/memory [--project=名称]`、`/forget [--project=名称] key`；同一 key 可在不同项目并存。
 - Worker prompt 只注入全局 + 当前 Task `mandate.project` 的记忆，最多 20 条/每条 1000 字符，不注入其他项目；Router 不注入记忆。项目名只允许 1–64 位字母/数字/点/下划线/连字符。
 - 模型 `save_memory` 可带 project，确认卡显示项目后再写入；`/confirm` 仍按项目隔离复核。
-- `npm test`：238 个确定性测试通过（当前）。
+- `npm test`：242 个确定性测试通过（当前）。
 - 证据边界：E1；真实模型误触发/提示注入负例、语义检索与项目权限模型仍 pending。
 
 **2026-11-18 验证（PA-07 部分）：**
@@ -150,6 +152,14 @@ curl -fsS http://127.0.0.1:8787/healthz
 - `/status`、`/usage` 显示待核对任务数；`/admin/status` 复用同一文本。`needs_review` 在 SQLite 中以 `waiting_user + needs_review=1` 存储，领域状态保持终态语义。
 - `npm test`：当时 226 个确定性测试通过。
 - 证据边界：E1；真实 G1/G3 外部判据、文本任务人审质量和真实模型虚假来源仍未验证。
+
+**2026-11-18 验证（PA-15 开源治理，E1 部分）：**
+
+- 新增 `SECURITY.md`、`CONTRIBUTING.md`、`CHANGELOG.md`、`THIRD_PARTY_NOTICES.md`、Issue/PR 模板与 `docs/18`；仓库仍为 private，未选择 LICENSE。
+- 当前工作树/新文件 `npm run scan:secrets`：0 findings；CI 强制执行。脱敏前 2 个提交引入个人 Feishu owner/message ID（-G 也会把本次脱敏提交计入），未发现 app secret/token；历史处理待 D17。
+- 权限/日志复核指向既有 K09/K14 与 admin token 测试；CI 最小权限。
+- 242 个确定性测试通过。
+- 边界：许可证、历史重写、仓库公开、传递依赖审计、SBOM/签名与英文响应流程仍待决策 D16–D18。
 
 **2026-11-18 验证（PA-14 数据资产，E1 部分）：**
 

@@ -1,0 +1,29 @@
+name: Feature request
+description: Propose a scoped improvement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal and non-goals
+    validations:
+      required: true
+  - type: textarea
+    id: permissions
+    attributes:
+      label: Permission/data impact
+      description: New tools, resources, channels, scopes, or storage; explain why existing guards suffice.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Verification plan
+      description: Deterministic tests plus real-environment evidence if needed.
+    validations:
+      required: true

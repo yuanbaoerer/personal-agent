@@ -13,6 +13,7 @@
 | PA-12 Docker 自托管 | E1 | `5c56462`；Dockerfile/Compose/preflight/健康检查；本地拉取阻塞，镜像构建/容器健康/E3/E4 pending |
 | PA-13 扩展契约 | E1 部分 | `a6269b2`；Provider 配置校验、实验期 Tool/Runtime/Channel contract v1、ToolRegistry.describe；第二 Provider/入站 Channel pending |
 | PA-14 数据资产 | E1 部分 | `7fe4f07`；备份 manifest v2、双库校验/恢复、agent JSON 导出；加密/保留/Pi 修复 pending |
+| PA-15 开源治理 | E1 部分 | SECURITY/CONTRIBUTING/CHANGELOG/模板、工作树 secret scan、许可清单；LICENSE/历史/visibility pending |
 | PA-12/PA-13 部分 | E1/pending | 见路线图 |
 
 固定 40 场景分类为渠道 8、任务 10、权限 10、恢复 8、记忆 4。K01–K14 映射由 `evals/scenarios.ts` 维护；pending 不计入成功分母。报告命令：
@@ -131,6 +132,27 @@ npm run eval:report:critical  # CI 关键集
 - 现状：启动时自动迁移；恢复拒绝较新 schema；迁移事务回滚，但无自动 pre-upgrade 备份。
 - 需决定：生产是否要求显式 `upgrade` 命令并在迁移前强制备份，还是允许启动自动迁移。
 - 建议：v0.4 自托管默认在文档中要求先备份再启动；保留启动自动迁移，增加升级前 preflight/备份步骤。
+- [ ] 已审核：________________
+
+### D16 项目许可证
+
+- 现状：无 LICENSE；直接运行时依赖为 MIT；未做完整传递依赖/第三方片段审计。
+- 需决定：MIT / Apache-2.0 / AGPL-3.0 或其他；是否允许商业托管；贡献者许可方式。
+- 建议：Apache-2.0 或 MIT（均与当前直接 MIT 依赖兼容），先完成传递依赖审计再声明；在 LICENSE 前不合并第三方源码。
+- [ ] 已审核：________________
+
+### D17 历史个人标识处理
+
+- 现状：当前工作树已脱敏；2 个历史提交仍含真实 Feishu owner/message ID，未发现 app secret/token。
+- 需决定：公开前是否重写历史；是否通知相关方；是否需要额外轮换凭据。
+- 建议：公开前用 `git filter-repo` 仅替换个人 ID 并备份原历史；不强制 force-push 现有协作者（当前单 owner）。
+- [ ] 已审核：________________
+
+### D18 仓库可见性与发布
+
+- 现状：private；PA-15 明确不自动改 visibility。
+- 需决定：何时/由谁将仓库改为 public；是否先发布 private beta；main 分支保护/CODEOWNERS 要求。
+- 建议：在所有 D01–D17 关键项和真实 E3/E4 完成后，由仓库所有者手动执行；CI 永不修改 visibility。
 - [ ] 已审核：________________
 
 ## 3. 决策后的实施顺序

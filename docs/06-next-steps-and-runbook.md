@@ -30,14 +30,14 @@
 | Magpie 用量/预算：可选读取 quotas/usage/limit，OpenCode Go 窗口低于阈值或 key 限额时阻止新模型请求，`/usage` 附带订阅窗口 | 当前 Magpie 工作区无 OpenCode Go 卡；真实配额/重置未验证 |
 | 周期计划：草稿→确认、daily/weekdays、IANA 时区/DST、确定性 runKey、暂停/恢复/取消/修改、计划级 repo 只读授权、DO wake | 真实 Feishu/GitHub G3、生产 alarm 观察 |
 | 完成验证器：GitHub Action 回执/来源 URL、Action receipt、结构校验；needs_review 终态 + `/ack` | 真实 G1/G3 外部判据、文本人审质量 |
-| 238 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
+| 242 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
 
 ## 2. 下一步待办
 
 | ID | 优先级 | 待办 | 依赖 | 完成判据 | 2026-11-08 状态 |
 | --- | --- | --- | --- | --- | --- |
 | N01 | P0 | 飞书自建应用、机器人、事件订阅、回调 URL、发布 | 飞书账号 | 真实 p2p 事件 200；记录 event/message ID、验签日志、回调时延 | 完成：webhook 200；长连接 `feishu_ws_event` 已受理；`om_` 已记录 |
-| N02 | P0 | 真实主动发信与失败分类 | N01、app secret | `pa_outbox.platform_message_id` 有真实 `om_` ID；客户端收到消息 | 完成（平台侧）：`om_x100b603e03ccbca4c1ec6d3785d2599`；客户端收到待确认 |
+| N02 | P0 | 真实主动发信与失败分类 | N01、app secret | `pa_outbox.platform_message_id` 有真实 `om_` ID；客户端收到消息 | 完成（平台侧）：`<redacted-feishu-message-id>`；客户端收到待确认 |
 | N03 | P0 | 运行中断/补投演练 | N01/N02 | 入站已持久化但未回复、发信已接受但未落库两种窗口可核对；不重复发 | 本地确定性测试通过；真实中断窗口待补 |
 | N04 | P0 | 把 `pa_*` 存储适配到 DO SQLite | N01 | Worker 内 `ctx.storage.sql` migration；Inbox/Outbox 测试通过 | 完成：`DoDb` + migration，workerd 启动通过 |
 | N05 | P0 | 把飞书 webhook 接入 Worker | N01、N04 | 真实飞书回调进入 DO；主人绑定；重复事件不重复建任务 | Worker 已真实部署（2026-11-10）；飞书后台保存请求地址超时，尾流未见飞书请求；本地长连接已连上 Feishu，Worker 侧待自定义域或 WS 桥接 |
@@ -359,6 +359,19 @@ npm run export:data -- --data ./data --out ./exports/agent.json
 
 边界：E1；真实写入中备份、SIGKILL、Pi 恢复和业务全量核对 pending，PA-14 保持 OPEN。
 
+### 2.19 2026-11-18 实施进展（PA-15 开源治理，E1 部分）
+
+| 内容 | 实现 | 证据 |
+| --- | --- | --- |
+| 安全/贡献 | `SECURITY.md`、`CONTRIBUTING.md`（许可证未定前不合并第三方源码） | 文件 |
+| 模板/变更 | Issue/PR 模板、`CHANGELOG.md`、`THIRD_PARTY_NOTICES.md` | 文件 |
+| 秘密扫描 | `npm run scan:secrets`（工作树+未忽略新文件，CI）；`scan:secrets:history` 不打印匹配值 | 当前 0 findings；历史 2 提交含个人 Feishu ID |
+| 权限/日志 | admin token、webhook/owner、K09/K14 既有测试；CI contents: read | 既有测试/CI |
+| 版本政策 | 0.1.0 非稳定，仅 main；SemVer/迁移说明待正式版本 | docs/18 |
+| 待定 | LICENSE、历史重写、公开 visibility、传递依赖审计、SBOM/签名 | D16–D18 |
+
+边界：E1；本阶段不改变仓库可见性，也不构成法律/完整安全审计。PA-15 保持 OPEN。
+
 ## 3. 环境与密钥
 
 ```bash
@@ -577,5 +590,5 @@ npm run real:multi          # 真实模型三会话
 | 渠道 | 真实飞书自建应用，p2p；webhook + 长连接，无 Encrypt Key |
 | 场景 | 渠道/身份/投递；N01/N02 |
 | 结果 | 入站 1/1 受理；出站 1/1 平台接受；webhook 约 13ms；长连接 `feishu_ws_event` 通过 |
-| 证据 | inbound `om_x100b603e0219c0a0b1e2434fa552a87`；outbound `om_x100b603e03ccbca4c1ec6d3785d2599`；owner `ou_48fabf...` |
+| 证据 | inbound `<redacted-feishu-message-id>`；outbound `<redacted-feishu-message-id>`；owner `<redacted-owner-open-id>` |
 | 未决项 | 客户端收到待确认；临时 URL；真实 Worker 部署/驱逐恢复 |
