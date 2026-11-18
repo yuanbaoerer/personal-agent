@@ -164,7 +164,7 @@ PA-07 的只读 GitHub 连接器已落地 E1，并新增可撤销的只读预授
 
 PA-09 的 TaskCompletionVerifier 已落地 E1：结构校验后按任务类型注册 verifier；`github-read` 必须有 succeeded Action 回执、repo/来源 URL 匹配，否则 needs_review；`needs_review` 不再派工，只能 `/ack` 转 succeeded 并审计；`/status` 与 `/usage` 显示待核对数。真实 G1/G3 外部判据和人审质量仍 pending，PA-09 保持 OPEN。
 
-PA-08 的 SchedulePolicy 已落地 E1：`/schedule new` 只创建草稿，确认后激活；edit 退回草稿并要求重新确认；每次 occurrence 由确定性 sourceKey + run 表去重；计划任务绑定精确 repo/version 的只读授权，暂停/修改/取消/过期或白名单变化时拒绝且执行前重核；Node 轮询、DO 用立即 `wake()` 触发 maintenance 重算。预算读取/门禁已在前一节落地。真实飞书 G3、真实 GitHub 调度与 DO alarm 生产观察仍 pending；PA-08 保持 OPEN。下一实施项为 PA-10 剩余的项目范围/Worker 记忆注入，或 PA-11 评测集；详见 [06 · 待办 §2.14](06-next-steps-and-runbook.md)。
+PA-08 的 SchedulePolicy 已落地 E1：`/schedule new` 只创建草稿，确认后激活；edit 退回草稿并要求重新确认；每次 occurrence 由确定性 sourceKey + run 表去重；计划任务绑定精确 repo/version 的只读授权，暂停/修改/取消/过期或白名单变化时拒绝且执行前重核；Node 轮询、DO 用立即 `wake()` 触发 maintenance 重算。预算读取/门禁已在前一节落地。真实飞书 G3、真实 GitHub 调度与 DO alarm 生产观察仍 pending；PA-08 保持 OPEN。PA-10 的项目范围隔离/Worker 记忆注入已完成 E1；PA-11 的固定 40 场景目录与确定性 JSON/Markdown 报告已落地，37/40 执行通过、3 条真实 pending，真实模型 10×3/G1–G3/7 天自用需主人决策。详见 [15 · 待决策](15-decisions-pending.md)。
 
 PA-14 的本地 SQLite 备份/校验/恢复已落地 E1：`npm run backup` 用 `VACUUM INTO` 复制 agent/pi 数据库，manifest 记录 SHA-256/字节/schema_version，复制后 `integrity_check`，目录/文件 700/600；`--verify` 重算，`--restore --target` 只恢复到一个空目录并拒绝较新 schema；恢复/升级自动化、加密与保留期 pending，PA-14 保持 OPEN。
 

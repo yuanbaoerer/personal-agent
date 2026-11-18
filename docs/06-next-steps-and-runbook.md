@@ -288,6 +288,24 @@ MAGPIE_MIN_REMAINING_PERCENT=5
 
 边界：E1；PA-09 保持 OPEN。
 
+### 2.15 2026-11-18 实施进展（PA-11 确定性部分）
+
+```bash
+npm run eval:report           # 40 场景清单 + 37 条确定性测试 + JSON/MD
+npm run eval:report:critical  # 仅 critical，CI 关键集
+```
+
+| 内容 | 实现 | 证据 |
+| --- | --- | --- |
+| 固定 40 场景 | 8+10+10+8+4；每项含 ID/version/K/env/mock-real/前置/输入/故障/DB/外部/通知/trace | `evals/scenarios.ts` |
+| 执行器 | 逐场景静态校验测试名，再用 `node --test --test-name-pattern` 运行；缺失/不匹配/失败不伪造通过 | `scripts/eval-report.ts` |
+| 报告 | JSON+Markdown；绑定 SHA/dirty/Node/OS/arch/依赖/catalog；passed/failed/pending/skipped 分列；K01–K14 状态 | `evals/reports/`（gitignore） |
+| 当前结果 | 40 总数；37 executed/passed；3 pending（真实飞书、真实 GitHub 权限、DO 驱逐）；0 failed | 本地运行 |
+| CI | 每次 push/PR 运行 deterministic report 并上传 artifact；真实模型不自动触发 | `.github/workflows/ci.yml` |
+| 待决策 | 真实模型 Provider/预算、10 任务、E3 凭据、rubric、报告保留、发布阻断 | [15 · 待决策](15-decisions-pending.md) |
+
+边界：E1；40 场景是确定性契约覆盖，不等于 G1–G3 E3 或真实模型成功率。PA-11 保持 OPEN。
+
 ## 3. 环境与密钥
 
 ```bash

@@ -141,6 +141,14 @@ npm start
 - `npm test`：当时 226 个确定性测试通过。
 - 证据边界：E1；真实 G1/G3 外部判据、文本任务人审质量和真实模型虚假来源仍未验证。
 
+**2026-11-18 验证（PA-11 确定性部分）：**
+
+- 固定 40 场景目录：渠道 8、任务 10、权限 10、恢复 8、记忆 4；每项含 env E0–E5、mock/real、前置、输入、故障点、DB/外部/通知期望、trace、test/pending。
+- `npm run eval:report` 逐场景运行命名的确定性测试，输出 JSON + Markdown，绑定 commit SHA、dirty、Node/OS/arch、依赖版本、catalog 版本；passed/failed/pending/skipped 分开，pending 不计入分母。
+- 当前 37/40 确定性执行通过，3 条真实场景 pending（真实飞书、真实 GitHub 权限、Cloudflare 驱逐）；K01–K14 覆盖状态如实标 pending。真实模型 10×3、G1–G3 E3、7 天自用尚未运行。
+- CI 增加 `npm run eval:report` 并上传报告 artifact；真实模型评测不自动触发。
+- 待主人审核的 Provider/预算、任务清单、E3 凭据、判定 rubric、报告保留和发布阻断见 [15 · 待决策](docs/15-decisions-pending.md)。
+
 **2026-11-18 验证（PA-14 部分）：**
 
 - `npm run backup -- --data ./data --out ./backups/<timestamp>`：`VACUUM INTO` 复制 `agent.sqlite`、可选 `pi.sqlite`；manifest 记录 SHA-256、字节数、schema_version；复制后跑 `PRAGMA integrity_check`；目录/文件权限 700/600。
