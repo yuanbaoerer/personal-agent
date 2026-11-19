@@ -85,6 +85,7 @@ API 前缀 `/api/v1`，请求/响应 JSON，`cache-control: no-store`。
 | GET/POST | `/memories` | 列表 / 保存 |
 | DELETE | `/memories/:key?project=` | 软删除 |
 | GET/POST | `/reminders` | 列表 / 创建 |
+| PATCH | `/reminders/:id` | 修改 pending 提醒文本 |
 | DELETE | `/reminders/:id` | 取消 |
 | GET | `/events?after=&limit=` | 可重放事件游标 |
 | GET | `/events/stream?after=` | SSE 推送；支持 `Last-Event-ID`、心跳与 1s replay |
@@ -125,7 +126,8 @@ npm run pa -- approve <action-id> --yes
 npm run pa -- events --after 0
 npm run pa -- memory save city Shanghai --project alpha
 npm run pa -- reminders create "喝水" --at 2026-11-19T10:00:00Z --timezone Asia/Shanghai
-npm run pa -- tokens create --name laptop --scopes read,write
+npm run pa -- reminders edit <id> "喝两杯水"
+npm run pa -- tokens create --name laptop --scopes read,write --ttl-days 30
 ```
 
 `npm link` 后可执行 `pa ...`。`pa approve` 必须先显示参数/nonce/binding，再要求 `--yes`；没有 `--yes` 不发送写请求。
@@ -150,6 +152,7 @@ npm run pa -- tui
 | `j`/`k` 或上下 | 选择 |
 | `tab` | Tasks → Approvals → Reminders → Tasks |
 | `n` + 文本 + Enter + ISO 到期时间 | 创建提醒（本地时区） |
+| `e` + 新文本 + Enter | 修改 pending 提醒文本 |
 | `x` + `y` | 取消选中提醒 |
 | `s` + 文本 + Enter | 增补任务输入 |
 | `v` + 新目标 + Enter | 修订选中任务目标（带当前 revision） |
@@ -167,7 +170,7 @@ TUI 只通过 Client API，每 2 秒刷新；显示任务状态、目标、Actio
 - `apps/agent/test/client-api.test.ts`：auth/scope/revocation、token 过期、速率限制、任务幂等、修订冲突、补充幂等、审批绑定、并发审批单次消费、错误 owner。
 - `apps/agent/test/client-http.test.ts`：真实 HTTP mount、Bearer 鉴权、token 不进入日志。
 - `apps/agent/test/cli.test.ts`：CLI/SDK header/idempotency、SSE 数据帧、错误映射、approve 必须有 `--yes`。
-- `apps/agent/test/tui.test.ts`：帧渲染、任务/审批绑定、增补/提醒输入、短终端底部提示。
+- `apps/agent/test/tui.test.ts`：帧渲染、任务/审批绑定、增补/提醒输入/编辑提示、短终端底部提示。
 - 本地 Node PTY smoke：`pa tui` 进入 alternate screen 并由 `q` 干净退出。
 - 全量 `npm test`：267 个确定性测试通过（2026-11-19）。
 
@@ -176,4 +179,4 @@ TUI 只通过 Client API，每 2 秒刷新；显示任务状态、目标、Actio
 - 远程 TLS/设备配对、token 轮换 UI；当前速率限制是单进程内存窗口；
 - SSE 断线重连/重放上限的跨进程实测；WebSocket 未实现；
 - macOS Terminal/iTerm2、Windows Terminal/ConPTY 的真实键盘/窄屏验收；
-- CLI/TUI 的 E3 真实操作证据；TUI 已支持任务取消/审批/增补/修订目标和提醒创建/取消，仍不覆盖提醒内容编辑。
+- CLI/TUI 的 E3 真实操作证据；TUI 已支持任务取消/审批/增补/修订目标和提醒创建/文本编辑/取消，仍不覆盖提醒到期时间编辑。

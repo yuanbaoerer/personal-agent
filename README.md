@@ -28,7 +28,7 @@
 | 提醒 / 记忆 | 一次性提醒、runKey、TTL、聊天取消/列表；显式记忆查改删；project 作用域（全局/项目）与 Worker 按 Mandate.project 注入；模型解读的记忆/提醒先进入最长 10 分钟确认（提醒以到期时间为上限），owner 校验，取消/过期不写入 | 真实模型误触发/提示注入负例、语义检索与周期提醒未做 |
 | 备份/校验 | `npm run backup`：`VACUUM INTO` 复制 agent/pi SQLite，manifest SHA-256 + integrity_check，目录/文件 700/600；`--verify` 重新校验 | 恢复/升级自动化、加密与保留期策略未做 |
 | 本地服务 | `POST /webhooks/feishu`、`GET /healthz`、Node SQLite + 进程内 pi-durable | 配置 `OPENCODE_API_KEY` 后本地执行模型任务；未配置时模型任务明确失败 |
-| 本地 Client API / CLI / TUI | `/api/v1` 鉴权控制面，device token（hash + scope + revoke + TTL + 限流），任务/审批/记忆/提醒/诊断/事件游标+SSE；`pa` CLI；`pa tui` 任务/审批/提醒/增补/修订面板 | E1 本地；远程 TLS/设备配对、SSE/WS、Windows Terminal/ConPTY 与 E3 未验证；客户端不直接读 SQLite |
+| 本地 Client API / CLI / TUI | `/api/v1` 鉴权控制面，device token（hash + scope + revoke + TTL + 限流），任务/审批/记忆/提醒/诊断/事件游标+SSE；`pa` CLI；`pa tui` 任务/审批/提醒/增补/修订/提醒文本编辑面板 | E1 本地；远程 TLS/设备配对、SSE/WS、Windows Terminal/ConPTY 与 E3 未验证；客户端不直接读 SQLite |
 | Cloudflare DO | `Assistant` + PiHarness + Lifecycle、DO SQLite 中的 `pa_*`、webhook、jobs | 已真实部署；飞书回调入口超时待解；驱逐恢复未验证 |
 | 本地真实模型 | `opencode-go/deepseek-v4.1-flash`，本地 key；`apps/agent/src/runtime/node-pi.ts` 是 Node 运行时 | spike 单会话/三会话并发通过；应用侧目前只有 faux provider 的确定性测试，真实模型端到端待验证 |
 | Cloudflare DO 运行 | 真实部署 + 真实模型 | `/healthz`、`/admin/*` 鉴权、`/ask` 真实模型通过；飞书侧未切到 Worker |

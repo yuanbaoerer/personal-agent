@@ -187,6 +187,42 @@ export class ReminderService {
     return fired;
   }
 
+  async update(
+    scheduleId: string,
+    ownerId: string,
+    text: string,
+  ): Promise<{ ok: boolean; reason?: string; schedule?: ScheduleRecord }> {
+    const normalized = text.trim();
+    if (normalized.length === 0 || normalized.length > 1_000) {
+      return { ok: false, reason: "invalid_text" };
+    }
+    const schedule = this.#schedules.get(scheduleId);
+    if (schedule === undefined) {
+      return { ok: false, reason: "schedule_not_found" };
+    }
+    if (schedule.ownerId !== ownerId) {
+      return { ok: false, reason: "not_owner" };
+    }
+    if (schedule.status !== "pending") {
+      return { ok: false, reason: `schedule_${schedule.status}` };
+    }
+    const now = this.#now().toISOString();
+    const updated = this.#schedules.updateText(scheduleId, ownerId, normalized, now);
+    if (updated === undefined) {
+      return { ok: false, reason: "schedule_not_pending" };
+    }
+    this.#store.recordAudit({
+      event: "schedule.updated",
+      subjectType: "schedule",
+      subjectId: updated.id,
+      after: { runKey: updated.runKey },
+      traceId: `schedule:${updated.id}`,
+      occurredAt: now,
+    });
+    this.#reply(updated, "status", "提醒已更新。", `updated:${randomUUID()}`);
+    return { ok: true, schedule: updated };
+  }
+
   async cancel(
     scheduleId: string,
     ownerId: string,

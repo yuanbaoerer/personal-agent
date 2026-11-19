@@ -102,6 +102,7 @@ describe("TUI frame", () => {
     assert.match(frame, /Reminders/);
     assert.match(frame, /drink water/);
     assert.match(frame, /\[n\] new/);
+    assert.match(frame, /\[e\] edit/);
     assert.match(frame, /\[x\] cancel/);
   });
 

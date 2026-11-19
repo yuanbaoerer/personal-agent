@@ -231,6 +231,14 @@ export class ClientApiClient {
     return result.reminder;
   }
 
+  async updateReminder(id: string, text: string): Promise<ScheduleRecord> {
+    const result = await this.#request<{ reminder: ScheduleRecord }>(
+      `/reminders/${encodeURIComponent(id)}`,
+      { method: "PATCH", body: { text } },
+    );
+    return result.reminder;
+  }
+
   async cancelReminder(id: string): Promise<ScheduleRecord> {
     const result = await this.#request<{ reminder: ScheduleRecord }>(
       `/reminders/${encodeURIComponent(id)}`,

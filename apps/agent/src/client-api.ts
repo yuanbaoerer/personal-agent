@@ -487,6 +487,10 @@ export class ClientApiService {
         this.#require(auth, "write");
         return this.#cancelReminder(id);
       }
+      if (id !== undefined && method === "PATCH") {
+        this.#require(auth, "write");
+        return this.#updateReminder(id, request);
+      }
     }
 
     if (resource === "events" && id === undefined && method === "GET") {
@@ -762,6 +766,16 @@ export class ClientApiService {
     } catch (error) {
       throw new ApiError(400, "invalid_reminder", error instanceof Error ? error.message : String(error));
     }
+  }
+
+  async #updateReminder(id: string, request: ClientApiRequest): Promise<ClientApiResponse> {
+    const body = parseJsonBody(request);
+    const text = parseString(body.text, "text", 1_000);
+    const result = await this.#services.reminders.update(id, this.#ownerId, text);
+    if (!result.ok) {
+      throw new ApiError(result.reason === "schedule_not_found" ? 404 : 409, result.reason ?? "reminder_failed");
+    }
+    return { status: 200, body: { reminder: result.schedule } };
   }
 
   async #cancelReminder(id: string): Promise<ClientApiResponse> {

@@ -188,6 +188,25 @@ export class ScheduleRepository {
     );
   }
 
+  /** Update text only while the reminder is still pending. */
+  updateText(
+    id: string,
+    ownerId: string,
+    text: string,
+    now: string,
+  ): ScheduleRecord | undefined {
+    const row = this.#db.all<ScheduleRow>(
+      `UPDATE pa_schedules SET text = ?, updated_at = ?
+       WHERE id = ? AND owner_id = ? AND status = 'pending'
+       RETURNING *`,
+      text,
+      now,
+      id,
+      ownerId,
+    )[0];
+    return row === undefined ? undefined : mapSchedule(row);
+  }
+
   nextDueAt(): string | undefined {
     const row = this.#db.all<{ next: string | null }>(
       `SELECT MIN(due_at) AS next FROM pa_schedules WHERE status = 'pending'`,

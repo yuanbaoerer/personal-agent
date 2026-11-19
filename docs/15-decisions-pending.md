@@ -17,7 +17,7 @@
 | 真实飞书验证修复 | 已提交 | `9f2e9a1` 裸 `ack`；`1ef8e81` 多行 slash 命令；短提醒投递通过 |
 | GitHub OAuth | E1 已实现，当前未配置 | `c0cf4d5` + `b83ca96`；OAuth App start/callback/status/disconnect、浏览器 admin 登录、AES-GCM token、执行时 provider；真实 OAuth/G1 pending |
 | PA-17 Client API / PA-18 CLI | E1 最小实现 | `b8fea74` + `6a89ad7` + `3851e93` + `ac44b91` + `d9a564c`；`/api/v1`、device token/scope/revoke/TTL、600 req/min 限流、幂等/修订/审批绑定、稳定 audit seq、轮询 + SSE 事件、`pa` CLI；远程 TLS/分布式限流/SSE 重连与 E3 pending |
-| PA-19 TUI | E1 最小实现 | `b8fea74` + `6a89ad7` + `3851e93` + `ac44b91` + `d9a564c`；Tasks/Approvals/Reminders、取消/批准/拒绝、增补/修订、提醒创建/取消、短终端底部提示、PTY smoke；平台终端与提醒内容编辑 pending |
+| PA-19 TUI | E1 最小实现 | `b8fea74` + `6a89ad7` + `3851e93` + `ac44b91` + `d9a564c`；Tasks/Approvals/Reminders、取消/批准/拒绝、增补/修订、提醒创建/文本编辑/取消、短终端底部提示、PTY smoke；平台终端与提醒到期时间编辑 pending |
 | PA-12/PA-13 部分 | E1/pending | 见路线图 |
 
 固定 40 场景分类为渠道 8、任务 10、权限 10、恢复 8、记忆 4。K01–K14 映射由 `evals/scenarios.ts` 维护；pending 不计入成功分母。报告命令：

@@ -37,6 +37,7 @@ Usage:
   pa memory forget <key> [--project NAME]
   pa reminders list
   pa reminders create <text> --at ISO --timezone ZONE
+  pa reminders edit <id> <text>
   pa reminders cancel <id>
   pa events [--after CURSOR] [--limit N] [--follow]
   pa tokens create --name NAME [--scopes read,write,approve] [--ttl-days N]
@@ -366,6 +367,15 @@ export async function runCli(
           else io.out(formatReminder(reminder));
           return 0;
         }
+        if (sub === "edit") {
+          const id = requirePositional(args, 1, "reminder id");
+          const text = args.positionals.slice(2).join(" ").trim();
+          if (text.length === 0) throw new Error("reminder text is required");
+          const reminder = await client.updateReminder(id, text);
+          if (json) printJson(io, { reminder });
+          else io.out(formatReminder(reminder));
+          return 0;
+        }
         if (sub === "cancel") {
           const id = requirePositional(args, 1, "reminder id");
           const reminder = await client.cancelReminder(id);
@@ -373,7 +383,7 @@ export async function runCli(
           else io.out(formatReminder(reminder));
           return 0;
         }
-        throw new Error("reminders subcommand must be list, create or cancel");
+        throw new Error("reminders subcommand must be list, create, edit or cancel");
       }
       case "events": {
         const cursor = flagNumber(args.flags, "after") ?? 0;

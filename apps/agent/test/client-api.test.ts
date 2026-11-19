@@ -322,6 +322,12 @@ describe("client API", () => {
     const reminders = await call(api, "GET", "/api/v1/reminders", { token: ADMIN });
     assert.equal((reminders.body.reminders as unknown[]).length, 1);
     const schedule = reminder.body.reminder as { id: string };
+    const edited = await call(api, "PATCH", `/api/v1/reminders/${schedule.id}`, {
+      token: ADMIN,
+      body: { text: "drink tea" },
+    });
+    assert.equal(edited.status, 200);
+    assert.equal((edited.body.reminder as { text: string }).text, "drink tea");
     assert.equal((await call(api, "DELETE", `/api/v1/reminders/${schedule.id}`, { token: ADMIN })).status, 200);
 
     const status = await call(api, "GET", "/api/v1/status", { token: ADMIN });

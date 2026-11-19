@@ -26,6 +26,12 @@ type InputState =
       label: string;
       value: string;
       reminderText?: string;
+    }
+  | {
+      kind: "reminder-edit";
+      label: string;
+      reminderId: string;
+      value: string;
     };
 
 export interface TuiState {
@@ -100,7 +106,7 @@ export function renderFrame(state: TuiState, width: number, height: number): str
       ? "Tasks  [tab] next  [j/k] select  [s] supplement  [v] revise  [c] cancel  [r] refresh  [q] quit"
       : state.mode === "approvals"
         ? "Approvals  [tab] next  [j/k] select  [a] approve  [d] deny  [r] refresh  [q] quit"
-        : "Reminders  [tab] next  [j/k] select  [n] new  [x] cancel  [r] refresh  [q] quit",
+        : "Reminders  [tab] next  [j/k] select  [n] new  [e] edit  [x] cancel  [r] refresh  [q] quit",
   );
   lines.push("─".repeat(widthSafe));
 
@@ -320,7 +326,10 @@ export async function runTui(client: ClientApiClient, io: TuiIo = {
     if (input.kind === "reminder") return;
     state.busy = true;
     try {
-      if (input.kind === "supplement") {
+      if (input.kind === "reminder-edit") {
+        await client.updateReminder(input.reminderId, input.value);
+        state.message = "Reminder updated.";
+      } else if (input.kind === "supplement") {
         await client.supplementTask(input.taskId, input.value, randomUUID());
         state.message = "Supplement accepted.";
       } else {
@@ -385,6 +394,13 @@ export async function runTui(client: ClientApiClient, io: TuiIo = {
     if (key.name === "return" || key.name === "enter") {
       if (input.value.trim().length === 0) {
         state.message = "Input cannot be empty.";
+        draw();
+        return true;
+      }
+      if (input.kind === "reminder-edit") {
+        state.input = undefined;
+        state.message = "Updating reminder…";
+        void submitInput(input);
         draw();
         return true;
       }
@@ -511,6 +527,19 @@ export async function runTui(client: ClientApiClient, io: TuiIo = {
       if (approval === undefined) return;
       pending = { kind: name === "a" ? "approve" : "deny", approval };
       state.message = `${name === "a" ? "Approve" : "Deny"} ${shortId(approval.id)}? Press y to confirm.`;
+      draw();
+      return;
+    }
+    if (name === "e" && state.mode === "reminders") {
+      const reminder = state.reminders[state.selected];
+      if (reminder === undefined || reminder.status !== "pending") return;
+      state.input = {
+        kind: "reminder-edit",
+        label: "New reminder text",
+        reminderId: reminder.id,
+        value: "",
+      };
+      state.message = "";
       draw();
       return;
     }
