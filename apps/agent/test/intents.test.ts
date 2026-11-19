@@ -330,6 +330,38 @@ describe("natural language state intents", () => {
     assert.doesNotMatch(text, /owner-level reminder/);
   });
 
+  it("answers a generic completion question as a summary, not a task lookup", async () => {
+    const services = setup();
+    insertTask(services, TASK_A, "completed looking task", {
+      status: "succeeded",
+    });
+    services.model.push({ action: "reply", text: "不知道" });
+    await sendText(services, "我的任务都完成了吗", "evt_intent_completion_summary");
+    const text = outbox(services);
+    assert.match(text, /任务：排队 0/);
+    assert.match(text, /完成 1/);
+    assert.doesNotMatch(text, /没有找到匹配该目标的任务/);
+  });
+
+  it("rejects two control mutations in one message", async () => {
+    const services = setup();
+    const first = insertTask(services, TASK_A, "first control");
+    const second = insertTask(services, TASK_B, "second control");
+    services.model.push({
+      action: "cancel_task",
+      text: "",
+      taskId: first.id.slice(0, 8),
+    });
+    await sendText(
+      services,
+      "取消第一个任务，然后删除第二个任务",
+      "evt_intent_two_controls",
+    );
+    assert.equal(services.tasks.get(first.id)?.status, "queued");
+    assert.equal(services.tasks.get(second.id)?.status, "queued");
+    assert.match(outbox(services), /复合请求/);
+  });
+
   it("redirects a read question misrouted as cancel instead of mutating", async () => {
     const services = setup();
     const task = insertTask(services, TASK_A, "must survive", {
