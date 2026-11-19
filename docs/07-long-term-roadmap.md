@@ -1,5 +1,7 @@
 # 07 · Personal Agent 长期产品与工程路线图
 
+> **2026-11-19 近期交付顺序调整**：在 v0.2 Reliable Core 中新增私有试用检查点 [MVP Functional Ready](21-mvp-functional-ready.md)，由 [#41](https://github.com/yuanbaoerer/personal-agent/issues/41) 跟踪。优先 #38 状态语义 → #39 自然语言 → 真实 GitHub/常驻 Node → 安全预算/主动工作 → 14 场景验收。既有 PA Issue 的 MVP-P0 子集先执行；其他原版本门槛、组织模式、ModelPolicy、跨平台及开源设计保留。私有 MVP 不等于 v0.2/v0.3 正式发布，不降低正式门槛。
+
 > 状态：2026-11-14 规划基线，适用代码 main@7199c48。本文定义目标和下一阶段优先级；不声称目标功能已经实现。实施事实以 README、测试和可复现实验记录为准。
 > 规划原则：先长期自用，再开源复用；单用户实例优先，单体模块化优先；以真实端到端证据取代“代码存在即完成”。
 

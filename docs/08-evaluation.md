@@ -1,5 +1,7 @@
 # 08 · 评测体系、关键契约与发布门槛
 
+> **2026-11-19 私有 MVP 验收补充**：新增 [21 · MVP Functional Ready §3](21-mvp-functional-ready.md#3-验收清单mvp-08) 的 M01–M14 场景和 [#41](https://github.com/yuanbaoerer/personal-agent/issues/41) checklist。每项记录真实环境、SHA、模型、trace、实际外部证据、成本与判定，失败/pending 不得当作通过。私有试用需全部 P0 真实通过；这不替代原 K01–K14、40 场景、G1–G3、10×3、7/30 天与正式发布门槛。DO 驱逐不阻断仅 Node 的私有 MVP；无真实外部写授权时写工具禁用，仍保留原正式安全验收。
+
 > 版本：2026-11-14。此文为实施规范，不代表 40 场景已实现，也不代表真实云端恢复已通过。与 docs/04-build-plan.md 中 K01–K12 兼容；新增 K13/K14 不替换既有条目。
 
 ## 1. 证据分层
