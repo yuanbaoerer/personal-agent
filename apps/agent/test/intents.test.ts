@@ -225,6 +225,19 @@ describe("task reference resolution", () => {
 });
 
 describe("natural language state intents", () => {
+  it("does not create a reminder when a list question is misrouted as remind", async () => {
+    const services = setup();
+    services.model.push({
+      action: "remind",
+      text: "不该创建的提醒",
+      dueAt: new Date(NOW.getTime() + 3_600_000).toISOString(),
+      timezone: "UTC",
+    });
+    await sendText(services, "我有哪些提醒", "evt_intent_misroute_remind");
+    assert.equal(services.confirmations.listPending(services.owner.id).length, 0);
+    assert.match(outbox(services), /当前没有待发送提醒/);
+  });
+
   it("returns only the requested reminder list and does not open a Worker", async () => {
     const services = setup();
     insertTask(services, TASK_A, "task should not be listed");
