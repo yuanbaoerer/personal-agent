@@ -1,5 +1,11 @@
-import type { Mandate, RouterDecision, RouterInput } from "../domain/types.ts";
+import type {
+  Mandate,
+  RouterDecision,
+  RouterInput,
+  ScheduleIntent,
+} from "../domain/types.ts";
 import { isStateToolName } from "../actions/state.ts";
+import { parseStateQuery } from "./state-query.ts";
 import type { Store } from "../storage/store.ts";
 import type { AgentRuntime } from "../runtime/types.ts";
 import type { RouterModel } from "./router.ts";
@@ -120,33 +126,51 @@ export class PiRouterModel implements RouterModel {
 }
 
 export function routerPrompt(input: RouterInput): string {
+  const taskLines = (input.taskContext ?? []).slice(0, 10).map(
+    (task) =>
+      `- id=${task.id} status=${task.status}${task.project === undefined ? "" : ` project=${task.project}`} goal=${task.goal.slice(0, 120)}`,
+  );
   return [
     "You are the Router for a personal assistant.",
     "Understand the owner's message and return one JSON object only.",
     "Allowed actions:",
-    '- {"action":"reply","text":"..."} for chat or clarification.',
-    '- {"action":"create_task","text":"ack","task":{"goal":"...","completionCriteria":"text or JSON {\\"requiredEvidenceKinds\\":[\\"...\\"]}","mandate":{"resources":["chat"],"tools":[]},"priority":0}}',
-    '- {"action":"supplement_task","taskId":"...","text":"..."} when the owner answers a waiting task question.',
-    '- {"action":"revise_task","taskId":"...","changes":{"goal":"...","completionCriteria":"..."}} when the owner explicitly changes an existing task.',
-    '- {"action":"cancel_task","taskId":"..."}',
-    '- {"action":"query_status"}',
+    '- {"action":"reply","text":"..."} for chat, clarification, or asking the owner to split a compound request.',
+    '- {"action":"create_task","text":"ack","task":{"goal":"...","completionCriteria":"text or JSON {\"requiredEvidenceKinds\":[\"...\"]}","mandate":{"resources":["chat"],"tools":[]},"priority":0}} for sustained background work.',
+    '- {"action":"supplement_task","taskId":"exact id","taskRef":"optional natural reference","text":"..."} when the owner answers a waiting task question or adds requirements.',
+    '- {"action":"revise_task","taskId":"exact id","taskRef":"optional natural reference","changes":{"goal":"...","completionCriteria":"..."}} when the owner explicitly changes an existing task.',
+    '- {"action":"cancel_task","taskId":"exact id","taskRef":"optional natural reference"}',
+    '- {"action":"query_status","query":{"target":"summary|tasks|task|reminders|memories|schedules","taskId":"optional","taskRef":"optional","project":"optional","status":"queued|running|waiting_user|waiting_external|succeeded|needs_review|failed|cancelling|cancelled","limit":5,"offset":0}}',
     '- {"action":"save_memory","key":"...","value":"...","project":"optional-project"}',
+    '- {"action":"forget_memory","key":"...","project":"optional-project"}',
     '- {"action":"remind","dueAt":"ISO-8601","timezone":"Asia/Shanghai","text":"..."}',
+    '- {"action":"cancel_reminder","reminderRef":"exact id or natural reference"}',
+    '- {"action":"draft_schedule","schedule":{"repo":"owner/name","localTime":"HH:MM","cadence":"daily|weekdays","goal":"...","timezone":"Area/City","until":"YYYY-MM-DD"}}',
+    '- {"action":"confirm_schedule","scheduleId":"exact id or unique prefix","scheduleRef":"optional natural reference"}',
+    '- {"action":"cancel_schedule","scheduleId":"exact id or unique prefix","scheduleRef":"optional natural reference"}',
     "Rules:",
     "- Do not approve or execute actions; the owner does that explicitly.",
     "- Include a tool in mandate.tools only when the owner explicitly asks for that capability.",
     "- Use a task when the request needs sustained work; use reply for chat.",
-    "- For questions about the owner's current tasks, reminders, memories, schedules or service status, use query_status. Do not create a task just to restate current state.",
-    "- Internal read-only state tools: state.summary, task.list, task.get, reminder.list, memory.list, schedule.list. They are owner-scoped; never use them for another person's data.",
-    "- Only when a task needs current state for further work, put the needed state tools in mandate.tools and include \"state\" in mandate.resources. For those tasks set completionCriteria to JSON with {\"verifier\":\"state-read\",\"requiredEvidenceKinds\":[\"state_snapshot\"]}.",
+    "- Read-only questions about current tasks, reminders, memories, schedules or service status must use query_status with the most specific target. Never answer state questions from memory or create a Worker just to restate state.",
+    "- query_status fields are validated by the program. Omit fields the target does not support; do not invent task ids or project names.",
+    "- For a specific task question, use target=task with an exact taskId or a short taskRef such as \"第二个\" or \"刚才那个\". For lists use target=tasks with optional status/limit/project.",
+    "- If a request combines independent mutations or a mutation plus a query, do not execute a partial plan: reply and ask the owner to split it.",
+    "- Task references must come from the real owner-scoped task list below or the current conversation. If several tasks match, the program will ask; do not guess.",
+    "- For 继续处理/接着做/先停一下/刚才那个引用, use supplement_task, cancel_task, or revise_task with taskRef; never create a duplicate task just to continue prior work.",
     "- Use revise_task only when the owner explicitly asks to change an existing task's goal, completion criteria, mandate, or priority.",
-    "- Use save_memory only when the owner explicitly asks you to remember something.",
-    "- Set save_memory/task mandate project only when the owner explicitly names a project (or uses --project=name); otherwise omit it. Project memories must not be mixed.",
-    "- Use remind only when the owner explicitly asks for a reminder.",
+    "- Use save_memory only when the owner explicitly asks you to remember something; use forget_memory only when the owner explicitly asks to forget it. Both require confirmation.",
+    "- Set save_memory/forget_memory/task mandate project only when the owner explicitly names a project (or uses --project=name); otherwise omit it. Project memories must not be mixed.",
+    "- Use remind only when the owner explicitly asks for a reminder; use cancel_reminder only when the owner explicitly asks to cancel one.",
+    "- For draft_schedule, use the existing GitHub schedule policy: repo, local wall-clock time, daily/weekdays cadence, goal, timezone and optional until. If any required field is missing or ambiguous, reply and ask instead of guessing. A draft never activates until the owner confirms.",
     "- For read-only GitHub requests, set mandate.resources to include \"github\" and mandate.tools to [\"github.read\"]; do not promise write access.",
     "- For github.read tasks, completionCriteria must be JSON with repo set to the exact owner/name requested (for example {\"repo\":\"owner/name\",\"requiredEvidenceKinds\":[\"github\"]}); never omit repo.",
+    "- Internal read-only state tools: state.summary, task.list, task.get, reminder.list, memory.list, schedule.list. They are owner-scoped; never use them for another person's data.",
+    "- Only when a task needs current state for further work, put the needed state tools in mandate.tools and include \"state\" in mandate.resources. For those tasks set completionCriteria to JSON with {\"verifier\":\"state-read\",\"requiredEvidenceKinds\":[\"state_snapshot\"]}.",
     "- Never infer personal facts, preferences, or plans; only remember what the owner explicitly asks to remember.",
-    "- If it is unclear whether the owner wants something remembered, a reminder set, or just a reply, reply and ask for confirmation.",
+    "- If it is unclear whether the owner wants something remembered, a reminder set, a schedule drafted, or just a reply, reply and ask for confirmation.",
+    ...(taskLines.length === 0
+      ? []
+      : ["Recent owner tasks (real, owner-scoped; newest first):", ...taskLines]),
     `Owner message: ${input.text}`,
   ].join("\n");
 }
@@ -177,7 +201,12 @@ export function parseRouterDecision(text: string): RouterDecision | undefined {
     action !== "cancel_task" &&
     action !== "query_status" &&
     action !== "save_memory" &&
-    action !== "remind"
+    action !== "forget_memory" &&
+    action !== "remind" &&
+    action !== "cancel_reminder" &&
+    action !== "draft_schedule" &&
+    action !== "confirm_schedule" &&
+    action !== "cancel_schedule"
   ) {
     return undefined;
   }
@@ -187,8 +216,34 @@ export function parseRouterDecision(text: string): RouterDecision | undefined {
     text: typeof record.text === "string" ? record.text : "",
   };
 
-  if (typeof record.taskId === "string") {
-    decision.taskId = record.taskId;
+  if (typeof record.taskId === "string" && record.taskId.trim().length > 0) {
+    decision.taskId = record.taskId.trim();
+  }
+  if (typeof record.taskRef === "string" && record.taskRef.trim().length > 0) {
+    decision.taskRef = record.taskRef.trim();
+  }
+  if (typeof record.reminderRef === "string" && record.reminderRef.trim().length > 0) {
+    decision.reminderRef = record.reminderRef.trim();
+  }
+  if (typeof record.scheduleId === "string" && record.scheduleId.trim().length > 0) {
+    decision.scheduleId = record.scheduleId.trim();
+  }
+  if (typeof record.scheduleRef === "string" && record.scheduleRef.trim().length > 0) {
+    decision.scheduleRef = record.scheduleRef.trim();
+  }
+  if (record.query !== undefined) {
+    const parsedQuery = parseStateQuery(record.query);
+    if (parsedQuery.ok) {
+      decision.query = parsedQuery.query;
+    } else {
+      decision.queryError = parsedQuery.reason;
+    }
+  }
+  if (typeof record.schedule === "object" && record.schedule !== null) {
+    const schedule = parseScheduleIntent(record.schedule);
+    if (schedule !== undefined) {
+      decision.schedule = schedule;
+    }
   }
   if (typeof record.changes === "object" && record.changes !== null) {
     const changes = record.changes as Record<string, unknown>;
@@ -246,6 +301,33 @@ export function parseRouterDecision(text: string): RouterDecision | undefined {
   }
 
   return decision;
+}
+
+function parseScheduleIntent(value: unknown): ScheduleIntent | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const intent: ScheduleIntent = {};
+  if (typeof record.repo === "string" && record.repo.trim().length > 0) {
+    intent.repo = record.repo.trim();
+  }
+  if (typeof record.localTime === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(record.localTime)) {
+    intent.localTime = record.localTime;
+  }
+  if (record.cadence === "daily" || record.cadence === "weekdays") {
+    intent.cadence = record.cadence;
+  }
+  if (typeof record.goal === "string" && record.goal.trim().length > 0) {
+    intent.goal = record.goal.trim();
+  }
+  if (typeof record.timezone === "string" && record.timezone.trim().length > 0) {
+    intent.timezone = record.timezone.trim();
+  }
+  if (typeof record.until === "string" && /^\d{4}-\d{2}-\d{2}$/.test(record.until)) {
+    intent.until = record.until;
+  }
+  return Object.keys(intent).length === 0 ? undefined : intent;
 }
 
 /** Derive required resources from the exact tool set; never trust model text. */

@@ -5,6 +5,7 @@ import type {
   SchedulePolicyRecord,
   RouterInput,
   ScheduleRecord,
+  StateQuery,
   TaskRecord,
 } from "../domain/types.ts";
 import type { ActionRepository } from "../storage/actions.ts";
@@ -27,11 +28,25 @@ import {
 } from "../observability/usage.ts";
 import type { BudgetService } from "../observability/magpie.ts";
 import {
-  formatStateSummary,
   isStateToolName,
   type StateReadService,
+  type StateToolName,
 } from "../actions/state.ts";
 import type { TaskService } from "./tasks.ts";
+import {
+  formatReminderCandidates,
+  formatScheduleCandidates,
+  formatStateQuery,
+  formatTaskCandidates,
+  formatTaskNotFound,
+  inferStateQuery,
+  resolveReminderReference,
+  resolveScheduleReference,
+  resolveTaskId,
+  resolveTaskReference,
+  type ScheduleAction,
+} from "./state-query.ts";
+export { resolveTaskId } from "./state-query.ts";
 import {
   RouterPendingError,
   ROUTER_MAX_ATTEMPTS,
@@ -83,47 +98,8 @@ export interface RouterDeps {
   defaultTimezone?: string;
 }
 
-/** How many recent tasks of an owner are scanned for a prefix match. */
-const PREFIX_SCAN_LIMIT = 1_000;
-
-export type TaskIdResolution =
-  | { status: "ok"; id: string }
-  | { status: "ambiguous"; ids: string[] }
-  | { status: "not_found" };
-
-/**
- * Task lists print only the first 8 characters of an id, so commands accept
- * either a full id or a unique prefix. Ownership is checked for both.
- */
-export function resolveTaskId(
-  ownerId: string,
-  input: string,
-  tasks: Pick<TaskRepository, "get" | "listByOwner">,
-): TaskIdResolution {
-  const value = input.trim();
-  if (value.length === 0) {
-    return { status: "not_found" };
-  }
-
-  const exact = tasks.get(value);
-  if (exact !== undefined && exact.ownerId === ownerId) {
-    return { status: "ok", id: exact.id };
-  }
-
-  const matches = tasks
-    .listByOwner(ownerId, PREFIX_SCAN_LIMIT)
-    .filter((task) => task.id.startsWith(value));
-  const [match] = matches;
-  if (matches.length === 1 && match !== undefined) {
-    return { status: "ok", id: match.id };
-  }
-  if (matches.length > 1) {
-    return { status: "ambiguous", ids: matches.map((task) => task.id) };
-  }
-  return { status: "not_found" };
-}
-
 const GITHUB_REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+const TASK_FOCUS_PREFIX = "router.task_focus:";
 
 /**
  * The router model supplies completion criteria, but a github.read task must
@@ -457,6 +433,11 @@ export class Router implements InboundHandler {
       // A deterministic state answer uses no model request; use it as the
       // budget-exhausted fallback instead of hiding real state behind a quota
       // message. Mutation requests still get the explicit budget stop.
+      const stateQuery = inferStateQuery(text);
+      if (stateQuery !== undefined) {
+        this.#answerStateQuery({ ownerId, conversationId, inboxId, text }, stateQuery);
+        return { status: "done" };
+      }
       if (isExplicitStateQuery(text)) {
         this.#answerStateQuery({ ownerId, conversationId, inboxId, text });
         return { status: "done" };
@@ -476,6 +457,13 @@ export class Router implements InboundHandler {
         conversationId,
         text,
         inboxId,
+        taskContext: this.#tasks.listByOwner(ownerId, 10).map((task) => ({
+          id: task.id,
+          status: task.status,
+          goal: task.goal,
+          conversationId: task.conversationId,
+          project: task.mandate.project,
+        })),
       });
     } catch (error) {
       if (error instanceof RouterPendingError) {
@@ -515,8 +503,17 @@ export class Router implements InboundHandler {
     const now = this.#now().toISOString();
     switch (decision.action) {
       case "reply": {
-        // A model reply must not invent current state. Explicit state
+        // A model reply must not invent current state. Explicit read
         // questions always come from the deterministic owner snapshot.
+        if (decision.queryError !== undefined) {
+          this.#reply(context, `查询参数无法使用：${decision.queryError}`, "failure");
+          return { status: "done" };
+        }
+        const stateQuery = inferStateQuery(context.text);
+        if (stateQuery !== undefined) {
+          this.#answerStateQuery(context, stateQuery);
+          return { status: "done" };
+        }
         if (isExplicitStateQuery(context.text)) {
           this.#answerStateQuery(context);
           return { status: "done" };
@@ -531,6 +528,20 @@ export class Router implements InboundHandler {
         }
         const ownerProject = extractProjectFlag(context.text);
         const requested = decision.task.mandate ?? { resources: ["chat"], tools: [] };
+        const directQuery = inferStateQuery(context.text);
+        const sustained = /(?:分析|报告|总结|后台|持续|定期|每天|每周|周期)/.test(
+          context.text,
+        );
+        if (
+          directQuery !== undefined &&
+          !sustained &&
+          requested.tools.every(isStateToolName)
+        ) {
+          // A simple state question must not create a Worker; answer from the
+          // owner-scoped snapshot instead.
+          this.#answerStateQuery(context, directQuery);
+          return { status: "done" };
+        }
         if (requested.tools.length === 0 && isExplicitStateQuery(context.text)) {
           // D19: never dispatch a state question to a Worker with no read
           // tools where structural checks could pass without real data.
@@ -565,6 +576,7 @@ export class Router implements InboundHandler {
           !/^(?:ack|ok|received|已收到|收到)[。.!！]?$/i.test(modelAck)
             ? modelAck
             : `已接单：${task.goal}`;
+        this.#rememberTaskFocus(context.conversationId, task.id);
         this.#reply(
           context,
           mandate.project === undefined
@@ -575,13 +587,13 @@ export class Router implements InboundHandler {
         return { status: "done" };
       }
       case "supplement_task": {
-        if (decision.taskId === undefined) {
-          this.#reply(context, "请提供要补充的任务编号。", "failure");
+        const target = this.#resolveDecisionTask(context, decision);
+        if (target === undefined) {
           return { status: "done" };
         }
         const result = this.#supplementTask(
           context.ownerId,
-          decision.taskId,
+          target.id,
           decision.text,
           context.inboxId,
         );
@@ -589,36 +601,59 @@ export class Router implements InboundHandler {
         return { status: "done" };
       }
       case "revise_task": {
-        if (decision.taskId === undefined || decision.changes === undefined) {
-          this.#reply(context, "请提供要修改的任务编号和新的目标或完成条件。", "failure");
+        if (decision.changes === undefined) {
+          this.#reply(context, "请提供新的目标、完成条件或授权范围。", "failure");
           return { status: "done" };
         }
-        const result = this.#reviseTask(context.ownerId, decision.taskId, decision.changes);
+        const target = this.#resolveDecisionTask(context, decision);
+        if (target === undefined) {
+          return { status: "done" };
+        }
+        const result = this.#reviseTask(context.ownerId, target.id, decision.changes);
         if (!result.ok) {
           this.#reply(context, result.reason, "failure");
         }
         return { status: "done" };
       }
       case "cancel_task": {
-        if (decision.taskId === undefined) {
-          this.#reply(context, "请提供要取消的任务编号。");
+        const target = this.#resolveDecisionTask(context, decision);
+        if (target === undefined) {
           return { status: "done" };
         }
-        const resolution = resolveTaskId(context.ownerId, decision.taskId, this.#tasks);
-        if (resolution.status !== "ok") {
+        if (
+          target.status === "succeeded" ||
+          target.status === "failed" ||
+          target.status === "cancelled"
+        ) {
           this.#reply(
             context,
-            resolution.status === "ambiguous"
-              ? "任务编号前缀匹配到多个任务，请给出更长的编号。"
-              : "找不到属于你的该任务。",
+            `任务 ${target.id.slice(0, 8)} 已结束（${target.status}），无需取消。`,
+            "status",
           );
           return { status: "done" };
         }
-        this.#taskService.cancel(resolution.id);
+        this.#taskService.cancel(target.id);
         return { status: "done" };
       }
       case "query_status": {
-        this.#answerStateQuery(context);
+        if (decision.queryError !== undefined) {
+          this.#reply(
+            context,
+            `查询参数无法使用：${decision.queryError} 请说明要查询的对象。`,
+            "failure",
+          );
+          return { status: "done" };
+        }
+        const query = decision.query ?? inferStateQuery(context.text);
+        if (query === undefined) {
+          this.#reply(
+            context,
+            "请说明要查询：整体状态、任务列表、指定任务、提醒、记忆或周期计划。",
+            "failure",
+          );
+          return { status: "done" };
+        }
+        this.#answerStateQuery(context, query);
         return { status: "done" };
       }
       case "save_memory": {
@@ -664,6 +699,55 @@ export class Router implements InboundHandler {
           this.#reply(
             context,
             `无法发起记忆确认：${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+        return { status: "done" };
+      }
+      case "forget_memory": {
+        if (decision.key === undefined) {
+          this.#reply(context, "请提供要忘记的记忆 key。");
+          return { status: "done" };
+        }
+        try {
+          const project = extractProjectFlag(context.text) ?? decision.project;
+          const existing = this.#memory.get(context.ownerId, decision.key, project);
+          if (existing === undefined) {
+            this.#reply(
+              context,
+              `没有找到${project === undefined ? "" : `[项目 ${project}] `}记忆：${decision.key}`,
+              "failure",
+            );
+            return { status: "done" };
+          }
+          const created = this.#confirmation.create({
+            ownerId: context.ownerId,
+            conversationId: context.conversationId,
+            sourceInboxId: context.inboxId,
+            kind: "memory_save",
+            payload: {
+              operation: "forget",
+              key: decision.key,
+              project,
+            },
+          });
+          const { confirmation } = created;
+          if (confirmation.status !== "pending") {
+            this.#reply(context, "该记忆确认已处理，无需重复确认。");
+            return { status: "done" };
+          }
+          this.#reply(
+            context,
+            `${created.inserted ? "" : "已存在同一消息的待确认项，展示原始内容：\n"}` +
+              `请确认是否忘记：${project === undefined ? "" : `[项目 ${project}] `}${decision.key}\n` +
+              `回复 /确认 ${confirmation.id.slice(0, 8)}（10 分钟内有效）；` +
+              `/取消确认 ${confirmation.id.slice(0, 8)} 可撤销。`,
+            "status",
+          );
+        } catch (error) {
+          this.#reply(
+            context,
+            `无法发起记忆删除确认：${error instanceof Error ? error.message : String(error)}`,
+            "failure",
           );
         }
         return { status: "done" };
@@ -733,6 +817,139 @@ export class Router implements InboundHandler {
             `无法发起提醒确认：${error instanceof Error ? error.message : String(error)}`,
           );
         }
+        return { status: "done" };
+      }
+      case "cancel_reminder": {
+        const ref = decision.reminderRef ?? decision.scheduleId;
+        const resolution = resolveReminderReference(
+          context.ownerId,
+          ref,
+          this.#reminders.list(context.ownerId),
+        );
+        if (resolution.status === "ambiguous") {
+          this.#reply(context, formatReminderCandidates(resolution.items), "failure");
+          return { status: "done" };
+        }
+        if (resolution.status === "not_found") {
+          this.#reply(context, resolution.reason, "failure");
+          return { status: "done" };
+        }
+        const result = await this.#reminders.cancel(
+          resolution.item.id,
+          context.ownerId,
+        );
+        if (!result.ok) {
+          this.#reply(
+            context,
+            `无法取消提醒：${describeReminderCancelFailure(result.reason)}`,
+            "failure",
+          );
+        }
+        return { status: "done" };
+      }
+      case "draft_schedule": {
+        const service = this.#schedulePolicy;
+        if (service === undefined) {
+          this.#reply(context, "当前运行未启用周期计划。", "failure");
+          return { status: "done" };
+        }
+        const spec = decision.schedule;
+        const missing = [
+          spec?.repo === undefined ? "仓库（owner/name）" : undefined,
+          spec?.localTime === undefined ? "本地时间（HH:MM）" : undefined,
+          spec?.cadence === undefined ? "频率（每天/工作日）" : undefined,
+          spec?.goal === undefined ? "汇报内容" : undefined,
+        ].filter((item): item is string => item !== undefined);
+        if (missing.length > 0) {
+          this.#reply(
+            context,
+            `请补充周期计划：${missing.join("、")}。例如：工作日 09:00 总结 owner/name 的 PR。`,
+            "failure",
+          );
+          return { status: "done" };
+        }
+        try {
+          const result = service.createDraft(context.ownerId, context.conversationId, {
+            repo: spec?.repo as string,
+            localTime: spec?.localTime as string,
+            cadence: spec?.cadence as "daily" | "weekdays",
+            goal: spec?.goal as string,
+            timezone: spec?.timezone,
+            until: spec?.until,
+          });
+          if (!result.ok) {
+            this.#reply(context, `无法创建计划草稿：${result.reason}`, "failure");
+            return { status: "done" };
+          }
+          const receiver =
+            this.#store.getConversation(context.conversationId)?.platformConversationId ??
+            context.conversationId;
+          this.#reply(
+            context,
+            [
+              "已创建计划草稿（未激活，不会触发任务）：",
+              formatSchedulePolicy(result.policy, true),
+              `收件人：当前会话（${receiver}）`,
+              "确认后才会按上述频率、仓库与内容创建任务并回传。",
+              `确认：/schedule confirm ${result.policy.id}`,
+              `或直接回复“确认计划 ${result.policy.id.slice(0, 8)}”。`,
+              `取消：/schedule cancel ${result.policy.id}`,
+            ].join("\n"),
+            "status",
+          );
+        } catch (error) {
+          this.#reply(
+            context,
+            `无法创建计划草稿：${error instanceof Error ? error.message : String(error)}`,
+            "failure",
+          );
+        }
+        return { status: "done" };
+      }
+      case "confirm_schedule":
+      case "cancel_schedule": {
+        const service = this.#schedulePolicy;
+        if (service === undefined) {
+          this.#reply(context, "当前运行未启用周期计划。", "failure");
+          return { status: "done" };
+        }
+        const action: ScheduleAction =
+          decision.action === "confirm_schedule" ? "confirm" : "cancel";
+        const ref = decision.scheduleId ?? decision.scheduleRef;
+        const resolution = resolveScheduleReference(
+          context.ownerId,
+          ref,
+          service.list(context.ownerId),
+          action,
+        );
+        if (resolution.status === "ambiguous") {
+          this.#reply(
+            context,
+            formatScheduleCandidates(resolution.items, action),
+            "failure",
+          );
+          return { status: "done" };
+        }
+        if (resolution.status === "not_found") {
+          this.#reply(context, resolution.reason, "failure");
+          return { status: "done" };
+        }
+        const result =
+          action === "confirm"
+            ? service.confirm(context.ownerId, resolution.item.id)
+            : service.cancel(context.ownerId, resolution.item.id);
+        if (!result.ok) {
+          this.#reply(context, `无法${action === "confirm" ? "确认" : "取消"}计划：${result.reason}`, "failure");
+          return { status: "done" };
+        }
+        if (action === "confirm") {
+          void this.#wake.wake();
+        }
+        this.#reply(
+          context,
+          `${action === "confirm" ? "已确认并激活" : "已取消"}。\n${formatSchedulePolicy(result.policy, true)}`,
+          "status",
+        );
         return { status: "done" };
       }
       default: {
@@ -837,15 +1054,42 @@ export class Router implements InboundHandler {
     try {
       if (confirmation.kind === "memory_save") {
         const key = confirmation.payload.key;
+        const project =
+          typeof confirmation.payload.project === "string"
+            ? confirmation.payload.project
+            : undefined;
+        if (confirmation.payload.operation === "forget") {
+          if (typeof key !== "string" || key.trim().length === 0) {
+            this.#confirmation.cancel(ownerId, confirmation.id);
+            return { purpose: "failure", text: "确认内容不完整，请重新发起。" };
+          }
+          const current = this.#memory.get(ownerId, key.trim(), project);
+          if (current === undefined) {
+            this.#confirmation.cancel(ownerId, confirmation.id);
+            return {
+              purpose: "status",
+              text: "该记忆已不存在，本次确认已失效。",
+            };
+          }
+          if (current.updatedAt > confirmation.createdAt) {
+            this.#confirmation.cancel(ownerId, confirmation.id);
+            return {
+              purpose: "status",
+              text: "该记忆在此确认之后已被修改，本次确认已失效。",
+            };
+          }
+          this.#memory.forget(ownerId, key.trim(), project);
+          this.#confirmation.markConfirmed(confirmation);
+          return {
+            purpose: "status",
+            text: `已忘记：${project === undefined ? "" : `[项目 ${project}] `}${key}`,
+          };
+        }
         const value = confirmation.payload.value;
         if (typeof key !== "string" || typeof value !== "string") {
           this.#confirmation.cancel(ownerId, confirmation.id);
           return { purpose: "failure", text: "确认内容不完整，请重新发起。" };
         }
-        const project =
-          typeof confirmation.payload.project === "string"
-            ? confirmation.payload.project
-            : undefined;
         const current = this.#memory.get(ownerId, key.trim(), project);
         if (current !== undefined && current.updatedAt > confirmation.createdAt) {
           this.#confirmation.cancel(ownerId, confirmation.id);
@@ -1535,19 +1779,59 @@ export class Router implements InboundHandler {
     return undefined;
   }
 
+  #rememberTaskFocus(conversationId: string, taskId: string): void {
+    this.#store.metaSet(`${TASK_FOCUS_PREFIX}${conversationId}`, taskId);
+  }
+
+  /**
+   * Resolve the model's task id/reference against the real owner task set.
+   * Ambiguity is reported, never guessed; no mutation runs without a target.
+   */
+  #resolveDecisionTask(
+    context: { ownerId: string; conversationId: string; inboxId: string },
+    decision: RouterDecision,
+  ): TaskRecord | undefined {
+    const ref = decision.taskId ?? decision.taskRef;
+    const resolution = resolveTaskReference(
+      context.ownerId,
+      context.conversationId,
+      ref,
+      this.#tasks,
+      {
+        activeOnly: true,
+        preferredTaskId: this.#store.metaGet(
+          `${TASK_FOCUS_PREFIX}${context.conversationId}`,
+        ),
+      },
+    );
+    if (resolution.status === "ok") {
+      this.#rememberTaskFocus(context.conversationId, resolution.task.id);
+      return resolution.task;
+    }
+    if (resolution.status === "ambiguous") {
+      this.#reply(context, formatTaskCandidates(resolution.candidates), "failure");
+    } else {
+      this.#reply(context, formatTaskNotFound(resolution.reason, ref), "failure");
+    }
+    return undefined;
+  }
+
   /**
    * Deterministic answer from the owner-scoped state service; no Worker and
    * no model-authored facts. The audit row keeps the snapshot receipt.
    */
-  #answerStateQuery(context: {
-    ownerId: string;
-    conversationId: string;
-    inboxId: string;
-    text?: string;
-  }): void {
+  #answerStateQuery(
+    context: {
+      ownerId: string;
+      conversationId: string;
+      inboxId: string;
+      text?: string;
+    },
+    requested?: StateQuery,
+  ): void {
     const text = context.text ?? "";
-    const project = extractProjectFlag(text);
-    if (invalidProjectFlag(text, project)) {
+    const flagProject = extractProjectFlag(text);
+    if (invalidProjectFlag(text, flagProject)) {
       this.#reply(
         context,
         "项目名无效：只允许 1–64 位字母、数字、点、下划线或连字符。",
@@ -1555,7 +1839,102 @@ export class Router implements InboundHandler {
       );
       return;
     }
-    const snapshot = this.#state.summary(context.ownerId, project);
+    const query = requested ?? inferStateQuery(text) ?? { target: "summary" };
+    // An explicit owner flag wins over a model-proposed scope.
+    const project = flagProject ?? query.project;
+
+    let taskId: string | undefined;
+    if (query.target === "task") {
+      const explicitRef = query.taskId ?? query.taskRef;
+      const textRef =
+        explicitRef ??
+        (/(?:第\s*(?:\d+|[一二两三四五六七八九十]+)|刚才|刚刚|之前|那个|这个|上一个)/.test(
+          text,
+        )
+          ? text
+          : undefined);
+      if (textRef === undefined) {
+        this.#reply(
+          context,
+          "请说明要查询哪一个任务：给出任务编号、序号或“刚才那个任务”。",
+          "failure",
+        );
+        return;
+      }
+      const resolution = resolveTaskReference(
+        context.ownerId,
+        context.conversationId,
+        textRef,
+        this.#tasks,
+        {
+          preferredTaskId: this.#store.metaGet(
+            `${TASK_FOCUS_PREFIX}${context.conversationId}`,
+          ),
+        },
+      );
+      if (resolution.status === "ambiguous") {
+        this.#reply(context, formatTaskCandidates(resolution.candidates), "failure");
+        return;
+      }
+      if (resolution.status === "not_found") {
+        this.#reply(
+          context,
+          formatTaskNotFound(resolution.reason, textRef),
+          "failure",
+        );
+        return;
+      }
+      taskId = resolution.task.id;
+      this.#rememberTaskFocus(context.conversationId, taskId);
+    }
+
+    const tool: StateToolName =
+      query.target === "summary"
+        ? "state.summary"
+        : query.target === "tasks"
+          ? "task.list"
+          : query.target === "task"
+            ? "task.get"
+            : query.target === "reminders"
+              ? "reminder.list"
+              : query.target === "memories"
+                ? "memory.list"
+                : "schedule.list";
+
+    const args: Record<string, unknown> = {};
+    if (query.target === "tasks") {
+      args.limit = query.limit ?? 5;
+      args.offset = query.offset ?? 0;
+      if (query.status !== undefined) {
+        args.status = query.status;
+      }
+    } else if (query.target === "task") {
+      args.taskId = taskId;
+    } else if (
+      query.target === "reminders" ||
+      query.target === "memories" ||
+      query.target === "schedules"
+    ) {
+      args.limit = query.limit ?? 5;
+      args.offset = query.offset ?? 0;
+    }
+
+    let snapshot;
+    try {
+      snapshot = this.#state.read(
+        tool,
+        { ownerId: context.ownerId, project },
+        args,
+      );
+    } catch (error) {
+      this.#reply(
+        context,
+        `无法读取状态：${error instanceof Error ? error.message : String(error)}`,
+        "failure",
+      );
+      return;
+    }
+
     this.#store.recordAudit({
       event: "state.query",
       subjectType: "owner",
@@ -1563,6 +1942,8 @@ export class Router implements InboundHandler {
       after: {
         source: "router.state_query",
         tool: snapshot.tool,
+        target: query.target,
+        args: snapshot.args,
         project: project ?? null,
         snapshotHash: snapshot.snapshotHash,
         snapshotAt: snapshot.snapshotAt,
@@ -1571,17 +1952,19 @@ export class Router implements InboundHandler {
       traceId: `inbox:${context.inboxId}`,
       occurredAt: this.#now().toISOString(),
     });
+
+    const body = formatStateQuery(snapshot, this.#timezone);
+    if (query.target !== "summary") {
+      this.#reply(context, body, "status");
+      return;
+    }
     const service = [
       `服务：受理 ${this.#store.countInbox("accepted")} 条，拒绝 ${this.#store.countInbox("rejected")} 条；`,
       `待发送 ${this.#store.countOutbox("pending")} 条，` +
         `待核对投递 ${this.#store.countOutbox("unknown")} 条，` +
         `需人工 ${this.#store.countOutbox("needs_manual")} 条。`,
     ].join("");
-    this.#reply(
-      context,
-      `${formatStateSummary(snapshot, this.#timezone)}\n${service}`,
-      "status",
-    );
+    this.#reply(context, `${body}\n${service}`, "status");
   }
 
   #reply(

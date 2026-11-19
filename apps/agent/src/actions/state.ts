@@ -95,6 +95,22 @@ interface ListArgs {
   offset: number;
 }
 
+interface TaskListArgs extends ListArgs {
+  status?: TaskStatus;
+}
+
+const TASK_STATUSES: readonly TaskStatus[] = [
+  "queued",
+  "running",
+  "waiting_user",
+  "waiting_external",
+  "succeeded",
+  "needs_review",
+  "failed",
+  "cancelling",
+  "cancelled",
+];
+
 interface TaskBrief {
   id: string;
   status: TaskStatus;
@@ -135,6 +151,19 @@ function readListArgs(raw: Record<string, unknown>): ListArgs {
   };
 }
 
+function readStatus(value: unknown): TaskStatus | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (
+    typeof value !== "string" ||
+    !(TASK_STATUSES as readonly string[]).includes(value)
+  ) {
+    throw new ToolRejectedError("status is not a supported task status");
+  }
+  return value as TaskStatus;
+}
+
 function taskProject(task: TaskRecord): string | undefined {
   return task.mandate.project;
 }
@@ -167,7 +196,13 @@ export class StateReadService {
     switch (tool) {
       case "state.summary":
         return {};
-      case "task.list":
+      case "task.list": {
+        const { limit, offset } = readListArgs(raw);
+        const status = readStatus(raw.status);
+        return status === undefined
+          ? { limit, offset }
+          : { limit, offset, status };
+      }
       case "reminder.list":
       case "memory.list":
       case "schedule.list": {
@@ -204,7 +239,7 @@ export class StateReadService {
         snapshot = this.#summary(tool, scope, snapshotAt);
         break;
       case "task.list":
-        snapshot = this.#taskList(tool, scope, args as unknown as ListArgs);
+        snapshot = this.#taskList(tool, scope, args as unknown as TaskListArgs);
         break;
       case "task.get":
         snapshot = this.#taskGet(tool, scope, args.taskId as string);
@@ -441,25 +476,46 @@ export class StateReadService {
   #taskList(
     tool: StateToolName,
     scope: StateReadScope,
-    args: ListArgs,
+    args: TaskListArgs,
   ): Record<string, unknown> {
     const project = scope.project;
+    const status = args.status;
     const total =
-      project === undefined
-        ? this.#tasks.countByOwner(scope.ownerId)
-        : this.#tasks.countByOwnerProject(scope.ownerId, project);
+      status === undefined
+        ? project === undefined
+          ? this.#tasks.countByOwner(scope.ownerId)
+          : this.#tasks.countByOwnerProject(scope.ownerId, project)
+        : project === undefined
+          ? this.#tasks.countByOwnerStatus(scope.ownerId, status)
+          : this.#tasks.countByOwnerProjectStatus(scope.ownerId, project, status);
     const tasks =
-      project === undefined
-        ? this.#tasks.listByOwner(scope.ownerId, args.limit, args.offset)
-        : this.#tasks.listByOwnerProject(
-            scope.ownerId,
-            project,
-            args.limit,
-            args.offset,
-          );
+      status === undefined
+        ? project === undefined
+          ? this.#tasks.listByOwner(scope.ownerId, args.limit, args.offset)
+          : this.#tasks.listByOwnerProject(
+              scope.ownerId,
+              project,
+              args.limit,
+              args.offset,
+            )
+        : project === undefined
+          ? this.#tasks.listByOwnerStatus(
+              scope.ownerId,
+              status,
+              args.limit,
+              args.offset,
+            )
+          : this.#tasks.listByOwnerProjectStatus(
+              scope.ownerId,
+              project,
+              status,
+              args.limit,
+              args.offset,
+            );
     return {
       tool,
       scope: { ownerId: scope.ownerId, project: project ?? null },
+      status: status ?? null,
       limit: args.limit,
       offset: args.offset,
       total,
