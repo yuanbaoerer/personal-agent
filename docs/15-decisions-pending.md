@@ -14,6 +14,7 @@
 | PA-13 扩展契约 | E1 部分 | `a6269b2`；Provider 配置校验、实验期 Tool/Runtime/Channel contract v1、ToolRegistry.describe；第二 Provider/入站 Channel pending |
 | PA-14 数据资产 | E1 部分 | `7fe4f07`；备份 manifest v2、双库校验/恢复、agent JSON 导出；加密/保留/Pi 修复 pending |
 | PA-15 开源治理 | E1 部分 | `7017ca4`；SECURITY/CONTRIBUTING/CHANGELOG/模板、工作树/history secret scan、许可清单；LICENSE/历史/visibility pending |
+| 真实飞书验证修复 | 已提交 | `9f2e9a1` 裸 `ack`；`1ef8e81` 多行 slash 命令；短提醒投递通过 |
 | PA-12/PA-13 部分 | E1/pending | 见路线图 |
 
 固定 40 场景分类为渠道 8、任务 10、权限 10、恢复 8、记忆 4。K01–K14 映射由 `evals/scenarios.ts` 维护；pending 不计入成功分母。报告命令：
@@ -153,6 +154,20 @@ npm run eval:report:critical  # CI 关键集
 - 现状：private；PA-15 明确不自动改 visibility。
 - 需决定：何时/由谁将仓库改为 public；是否先发布 private beta；main 分支保护/CODEOWNERS 要求。
 - 建议：在所有 D01–D17 关键项和真实 E3/E4 完成后，由仓库所有者手动执行；CI 永不修改 visibility。
+- [ ] 已审核：________________
+
+### D19 Worker 读取任务/提醒状态的权限
+
+- 实测问题：任务“用三点总结当前任务和提醒状态”拿到 `tools: []`，Worker 无法读取真实提醒，仍以 structural verifier 标记 succeeded；实际提醒存在。
+- 需决定：新增内置只读 `state.summary`/`reminder.list` 工具并自动批准，还是每次读取都走审批，或不允许 Worker 读取状态并强制 `needs_review`。
+- 建议：新增 owner-scope 只读工具，自动批准但不允许写；增加 `state-read` verifier，要求 succeeded Action 和状态快照；任务结果必须引用快照。先以 owner-only 自托管验证，不扩大资源。
+- [ ] 已审核：________________
+
+### D20 是否先修语义再进入 PA-16
+
+- 现状：真实 Feishu/模型/提醒链路可用；任务内容可完成但状态类任务可能未读取真实数据。
+- 需决定：是先实现 D19 并重跑真实任务，还是接受已知限制直接进入 PA-16 安装/发布候选。
+- 建议：先完成 D19 与一次真实复测，再进入 PA-16；否则发布候选会带着已验证的语义缺口。
 - [ ] 已审核：________________
 
 ## 3. 决策后的实施顺序
