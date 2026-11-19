@@ -75,6 +75,7 @@ describe("persistent model-call budget", () => {
     upstreamOk = true;
     assert.equal((await budget.check({ role: "worker", taskId: "task-a" })).ok, true);
     assert.equal((await budget.check({ role: "worker", taskId: "task-a" })).ok, false);
+    assert.match(await budget.summaryText(), /upstream/);
   });
 
   it("requeues a timed budget pause without consuming an attempt", async () => {

@@ -92,7 +92,11 @@ export class CallBudget implements BudgetService {
       this.#maxCallsPerDay === undefined
         ? `今日 ${used} 次（每日上限未配置）`
         : `今日 ${used}/${this.#maxCallsPerDay} 次`;
-    return `模型请求预算（本地持久计数，UTC 日）：${daily}；单任务上限 ${this.#maxCallsPerTask} 次。`;
+    const local = `模型请求预算（本地持久计数，UTC 日）：${daily}；单任务上限 ${this.#maxCallsPerTask} 次。`;
+    if (this.#upstream === undefined) {
+      return local;
+    }
+    return `${await this.#upstream.summaryText()}\n${local}`;
   }
 
   #count(key: string): number {
