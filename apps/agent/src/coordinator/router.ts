@@ -136,7 +136,6 @@ function extractGithubRepo(text: string): string | undefined {
     : undefined;
 }
 
-
 const STATE_QUERY_PATTERNS = [
   /当前(?:的)?任务/,
   /任务(?:和|与|及)提醒/,
