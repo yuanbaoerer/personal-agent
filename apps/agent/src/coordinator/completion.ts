@@ -7,6 +7,8 @@ import type {
 import { hashArgs } from "../actions/tooling.ts";
 import {
   hashSnapshot,
+  isListStateTool,
+  isOwnerLevelStateTool,
   isStateToolName,
   parseStateEvidence,
   snapshotScope,
@@ -33,6 +35,8 @@ export interface CompletionContext {
   actions: readonly ActionRecord[];
   structural: { checked: string[]; criteria: Criteria };
   at: string;
+  /** Created-at of the newest owner input; state receipts must be newer. */
+  latestInputAt?: string;
 }
 
 export type CompletionVerifierFn = (context: CompletionContext) => CompletionVerdict;
@@ -261,11 +265,29 @@ export class TaskCompletionVerifier {
         at,
       ),
     );
-    this.register("github-read", ({ task, report, actions, structural, at }) =>
-      this.#verifyGithub(task, report, actions, structural, at),
+    this.register(
+      "github-read",
+      ({ task, report, actions, structural, at, latestInputAt }) =>
+        this.#verifyGithub(
+          task,
+          report,
+          actions,
+          structural,
+          at,
+          latestInputAt,
+        ),
     );
-    this.register("state-read", ({ task, report, actions, structural, at }) =>
-      this.#verifyState(task, report, actions, structural, at),
+    this.register(
+      "state-read",
+      ({ task, report, actions, structural, at, latestInputAt }) =>
+        this.#verifyState(
+          task,
+          report,
+          actions,
+          structural,
+          at,
+          latestInputAt,
+        ),
     );
     this.register("action-receipt", ({ structural, actions, at }) => {
       const succeeded = actions.filter((action) => action.status === "succeeded");
@@ -304,7 +326,11 @@ export class TaskCompletionVerifier {
     this.#verifiers.set(name, verifier);
   }
 
-  verify(task: TaskRecord, report: WorkerReport): CompletionVerdict {
+  verify(
+    task: TaskRecord,
+    report: WorkerReport,
+    options: { latestInputAt?: string } = {},
+  ): CompletionVerdict {
     const structural = structuralCheck(task, report);
     const at = this.#now().toISOString();
     if (!structural.ok) {
@@ -364,6 +390,7 @@ export class TaskCompletionVerifier {
       actions,
       structural: { checked: structural.checked, criteria: structural.criteria },
       at,
+      latestInputAt: options.latestInputAt,
     });
   }
 
@@ -377,6 +404,7 @@ export class TaskCompletionVerifier {
     task: TaskRecord,
     report: WorkerReport,
     actions: readonly ActionRecord[],
+    minSnapshotAt?: string,
   ): {
     receipts: { action: ActionRecord; hash: string }[];
     checked: string[];
@@ -409,10 +437,15 @@ export class TaskCompletionVerifier {
         continue;
       }
       checked.push(`execution:state_action:${toolName}`);
-      const latest = [...candidates].sort((left, right) =>
-        right.updatedAt.localeCompare(left.updatedAt),
-      )[0] as ActionRecord;
-      const validation = this.#validateStateEvidence(task, latest);
+      // Prefer the newest receipt. listByTask is created_at ASC, so a later
+      // row wins an updatedAt tie instead of the older one being selected.
+      let latest = candidates[0] as ActionRecord;
+      for (const candidate of candidates.slice(1)) {
+        if (candidate.updatedAt.localeCompare(latest.updatedAt) >= 0) {
+          latest = candidate;
+        }
+      }
+      const validation = this.#validateStateEvidence(task, latest, minSnapshotAt);
       checked.push(...validation.checked);
       if (!validation.ok) {
         missing.push(...validation.missing);
@@ -434,6 +467,7 @@ export class TaskCompletionVerifier {
   #validateStateEvidence(
     task: TaskRecord,
     action: ActionRecord,
+    minSnapshotAt?: string,
   ):
     | { ok: true; hash: string; checked: string[] }
     | { ok: false; missing: string[]; checked: string[] } {
@@ -466,10 +500,13 @@ export class TaskCompletionVerifier {
       missing.push("provenance:project_scope_mismatch");
     }
     const scope = snapshotScope(evidence);
+    const expectedSnapshotProject = isOwnerLevelStateTool(evidence.tool)
+      ? null
+      : expectedProject;
     if (
       scope === undefined ||
       scope.ownerId !== task.ownerId ||
-      scope.project !== expectedProject
+      scope.project !== expectedSnapshotProject
     ) {
       missing.push("provenance:snapshot_scope_mismatch");
     }
@@ -493,6 +530,29 @@ export class TaskCompletionVerifier {
       snapshotAt > executed + 1_000
     ) {
       missing.push("provenance:snapshot_time_outside_action");
+    }
+    if (minSnapshotAt !== undefined) {
+      const inputAt = Date.parse(minSnapshotAt);
+      if (Number.isNaN(inputAt) || snapshotAt < inputAt) {
+        missing.push("provenance:snapshot_before_latest_input");
+      }
+    }
+    if (isListStateTool(evidence.tool)) {
+      // A tail or empty page can satisfy entity checks while hiding the rest
+      // of the owner's state. Receipts must start at the first page.
+      if (evidence.args.offset !== 0) {
+        missing.push("provenance:page_not_first");
+      }
+      const total = evidence.snapshot.total;
+      const returned = evidence.snapshot.returned;
+      if (
+        typeof total === "number" &&
+        total > 0 &&
+        typeof returned === "number" &&
+        returned === 0
+      ) {
+        missing.push("provenance:empty_page");
+      }
     }
     const entities = this.#state.auditSnapshot(evidence.tool, evidence.snapshot);
     if (entities.length > 0) {
@@ -518,8 +578,14 @@ export class TaskCompletionVerifier {
     actions: readonly ActionRecord[],
     structural: { checked: string[]; criteria: Criteria },
     at: string,
+    latestInputAt?: string,
   ): CompletionVerdict {
-    const state = this.#checkStateReceipts(task, report, actions);
+    const state = this.#checkStateReceipts(
+      task,
+      report,
+      actions,
+      latestInputAt,
+    );
     const checked = [...structural.checked, ...state.checked];
     const missing = [...state.missing];
     for (const toolName of task.mandate.tools.filter(
@@ -570,6 +636,7 @@ export class TaskCompletionVerifier {
     actions: readonly ActionRecord[],
     structural: { checked: string[]; criteria: Criteria },
     at: string,
+    latestInputAt?: string,
   ): CompletionVerdict {
     if (!task.mandate.tools.includes("github.read")) {
       return this.#verdict(
@@ -656,9 +723,14 @@ export class TaskCompletionVerifier {
       );
     }
 
-    const otherTools = task.mandate.tools.filter((tool) => tool !== "github.read");
+    const otherTools = task.mandate.tools.filter(
+      (tool) => tool !== "github.read" && !isStateToolName(tool),
+    );
     const missingTools = otherTools.filter(
-      (tool) => !succeeded.some((action) => action.tool === tool),
+      (tool) =>
+        !actions.some(
+          (action) => action.tool === tool && action.status === "succeeded",
+        ),
     );
     if (missingTools.length > 0) {
       return this.#verdict(
@@ -683,7 +755,7 @@ export class TaskCompletionVerifier {
 
     const hasStateTools = task.mandate.tools.some(isStateToolName);
     const stateCheck = hasStateTools
-      ? this.#checkStateReceipts(task, report, actions)
+      ? this.#checkStateReceipts(task, report, actions, latestInputAt)
       : { receipts: [], checked: [], missing: [] };
     if (stateCheck.missing.length > 0) {
       return this.#verdict(

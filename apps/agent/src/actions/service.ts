@@ -620,6 +620,22 @@ export class ActionService {
       return { status: "done" };
     }
 
+    const unauthorized = this.#executionGuard(action);
+    if (unauthorized !== undefined) {
+      const at = this.#now().toISOString();
+      if (!this.#actions.markSuperseded(action.id, "action is no longer authorized", at)) {
+        this.#actions.markNeedsManual(action.id, "action is no longer authorized", at);
+        this.#auditAction(action, "action.needs_manual", {
+          reason: "unauthorized",
+        });
+      } else {
+        this.#auditAction(action, "action.superseded", { reason: "unauthorized" });
+      }
+      this.#reply(action, "failure", "该动作已不再被授权，未核对。", "superseded");
+      this.#onSettled(action.taskId);
+      return { status: "done" };
+    }
+
     this.#actions.markReconciling(action.id, this.#now().toISOString());
     let verification;
     try {
@@ -655,10 +671,16 @@ export class ActionService {
       if (marked) {
         this.#auditAction(action, "action.reconciled");
       }
+      const internalStateRead =
+        tool.resource === STATE_RESOURCE &&
+        isStateToolName(tool.name) &&
+        tool.readOnly === true;
       this.#reply(
         action,
         "result",
-        `动作已核对为完成：${JSON.stringify(verification.evidence)}`,
+        internalStateRead
+          ? `状态读取已核对完成（${action.tool}）。`
+          : `动作已核对为完成：${JSON.stringify(verification.evidence)}`,
         "reconciled",
       );
       this.#onSettled(action.taskId);

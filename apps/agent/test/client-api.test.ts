@@ -224,6 +224,41 @@ describe("client API", () => {
     assert.ok(["cancelled", "cancelling"].includes((cancelled.body.task as { status: string }).status));
   });
 
+  it("rejects an invalid mandate project before creating a task", async () => {
+    const { services, api } = fixture();
+    const invalid = await call(api, "POST", "/api/v1/tasks", {
+      token: ADMIN,
+      headers: { "idempotency-key": "bad-project" },
+      body: {
+        goal: "state task",
+        completionCriteria: "done",
+        mandate: {
+          resources: ["chat", "state"],
+          tools: ["state.summary"],
+          project: "team alpha",
+        },
+      },
+    });
+    assert.equal(invalid.status, 400);
+    assert.equal(invalid.body.error, "invalid_mandate");
+    assert.equal(services.tasks.countByOwner(services.owner.id), 0);
+
+    const valid = await call(api, "POST", "/api/v1/tasks", {
+      token: ADMIN,
+      headers: { "idempotency-key": "good-project" },
+      body: {
+        goal: "state task",
+        completionCriteria: "done",
+        mandate: {
+          resources: ["chat", "state"],
+          tools: ["state.summary"],
+          project: "team-alpha",
+        },
+      },
+    });
+    assert.equal(valid.status, 201);
+  });
+
   it("lists, binds and decides approvals without changing conversation identity", async () => {
     const { services, api } = fixture();
     const created = await call(api, "POST", "/api/v1/tasks", {

@@ -848,7 +848,12 @@ export class TaskService {
 
     switch (report.status) {
       case "ready": {
-        const completion = this.#completion.verify(task, report);
+        const latestInput = this.#tasks
+          .listInputsAfter(task.id, 0)
+          .at(-1);
+        const completion = this.#completion.verify(task, report, {
+          latestInputAt: latestInput?.createdAt,
+        });
         if (completion.verdict === "failed") {
           const updated = this.#tasks.updateTask(task.id, task.revision, {
             status: "failed",
