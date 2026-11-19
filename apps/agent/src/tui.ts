@@ -3,27 +3,37 @@ import { emitKeypressEvents } from "node:readline";
 
 import { ClientApiClient } from "./client/sdk.ts";
 import type { TaskDetail } from "./client/sdk.ts";
-import type { ActionRecord, TaskRecord } from "./domain/types.ts";
+import type { ActionRecord, ScheduleRecord, TaskRecord } from "./domain/types.ts";
 
-type Mode = "tasks" | "approvals";
+type Mode = "tasks" | "approvals" | "reminders";
 type PendingAction =
   | { kind: "cancel"; taskId: string }
   | { kind: "approve" | "deny"; approval: ActionRecord }
+  | { kind: "cancel-reminder"; reminderId: string }
   | undefined;
 
-interface InputState {
-  kind: "supplement" | "revise";
-  label: string;
-  taskId: string;
-  revision: number;
-  value: string;
-}
+type InputState =
+  | {
+      kind: "supplement" | "revise";
+      label: string;
+      taskId: string;
+      revision: number;
+      value: string;
+    }
+  | {
+      kind: "reminder";
+      step: "text" | "due";
+      label: string;
+      value: string;
+      reminderText?: string;
+    };
 
 export interface TuiState {
   mode: Mode;
   selected: number;
   tasks: TaskRecord[];
   approvals: ActionRecord[];
+  reminders: ScheduleRecord[];
   detail?: TaskDetail;
   status?: unknown;
   input?: InputState;
@@ -37,6 +47,7 @@ export function initialTuiState(): TuiState {
     selected: 0,
     tasks: [],
     approvals: [],
+    reminders: [],
     message: "Loading…",
     busy: true,
   };
@@ -86,15 +97,28 @@ export function renderFrame(state: TuiState, width: number, height: number): str
   lines.push(truncate(diagnosticsSummary(state.status), widthSafe));
   lines.push(
     state.mode === "tasks"
-      ? "Tasks  [tab] approvals  [j/k] select  [s] supplement  [v] revise  [c] cancel  [r] refresh  [q] quit"
-      : "Approvals  [tab] tasks  [j/k] select  [a] approve  [d] deny  [r] refresh  [q] quit",
+      ? "Tasks  [tab] next  [j/k] select  [s] supplement  [v] revise  [c] cancel  [r] refresh  [q] quit"
+      : state.mode === "approvals"
+        ? "Approvals  [tab] next  [j/k] select  [a] approve  [d] deny  [r] refresh  [q] quit"
+        : "Reminders  [tab] next  [j/k] select  [n] new  [x] cancel  [r] refresh  [q] quit",
   );
   lines.push("─".repeat(widthSafe));
 
-  const items = state.mode === "tasks" ? state.tasks : state.approvals;
+  const items =
+    state.mode === "tasks"
+      ? state.tasks
+      : state.mode === "approvals"
+        ? state.approvals
+        : state.reminders;
   const maxRows = Math.max(3, Math.min(items.length, Math.floor(height * 0.45)));
   if (items.length === 0) {
-    lines.push(state.mode === "tasks" ? "No tasks." : "No pending approvals.");
+    lines.push(
+      state.mode === "tasks"
+        ? "No tasks."
+        : state.mode === "approvals"
+          ? "No pending approvals."
+          : "No reminders.",
+    );
   } else {
     const selected = Math.min(state.selected, items.length - 1);
     const start = Math.max(0, Math.min(selected - maxRows + 1, items.length - maxRows));
@@ -110,12 +134,21 @@ export function renderFrame(state: TuiState, width: number, height: number): str
             widthSafe,
           ),
         );
-      } else {
+      } else if (state.mode === "approvals") {
         const action = item as ActionRecord;
         lines.push(
           truncate(
             `${index === selected ? ">" : " "} ${shortId(action.id)}  ${action.tool.padEnd(20)} ` +
               `task ${shortId(action.taskId)}  ${JSON.stringify(action.args)}`,
+            widthSafe,
+          ),
+        );
+      } else {
+        const reminder = item as ScheduleRecord;
+        lines.push(
+          truncate(
+            `${index === selected ? ">" : " "} ${shortId(reminder.id)}  ${reminder.status.padEnd(8)} ` +
+              `${reminder.dueAt}  ${reminder.text}`,
             widthSafe,
           ),
         );
@@ -140,6 +173,13 @@ export function renderFrame(state: TuiState, width: number, height: number): str
         );
       }
     }
+  } else if (state.mode === "reminders" && state.reminders.length > 0) {
+    const reminder = state.reminders[Math.min(state.selected, state.reminders.length - 1)];
+    if (reminder !== undefined) {
+      lines.push(truncate(`Selected ${reminder.id}  ${reminder.status}`, widthSafe));
+      lines.push(truncate(`due: ${reminder.dueAt}  timezone: ${reminder.timezone}`, widthSafe));
+      lines.push(truncate(`text: ${reminder.text}`, widthSafe));
+    }
   } else if (state.mode === "approvals" && state.approvals.length > 0) {
     const action = state.approvals[Math.min(state.selected, state.approvals.length - 1)];
     if (action !== undefined) {
@@ -150,12 +190,15 @@ export function renderFrame(state: TuiState, width: number, height: number): str
       lines.push(truncate(`binding: ${action.argsHash} rev ${action.taskRevision}`, widthSafe));
     }
   }
-  if (state.input !== undefined) {
-    lines.push(truncate(`> ${state.input.label}: ${state.input.value}█`, widthSafe));
-  } else {
-    lines.push(truncate(state.message, widthSafe));
-  }
-  return lines.slice(0, Math.max(1, height)).join("\n");
+  const footer =
+    state.input !== undefined
+      ? truncate(`> ${state.input.label}: ${state.input.value}█`, widthSafe)
+      : truncate(state.message, widthSafe);
+  // Reserve the last row for the prompt/message; a short terminal must not
+  // hide the input line behind task details.
+  const body = lines.slice(0, Math.max(0, Math.max(1, height) - 1));
+  body.push(footer);
+  return body.join("\n");
 }
 
 export interface TuiIo {
@@ -198,10 +241,17 @@ export async function runTui(client: ClientApiClient, io: TuiIo = {
       const status = await client.status();
       const tasks = await client.listTasks({ limit: 50 });
       const approvals = await client.listApprovals();
+      const reminders = await client.listReminders();
       state.status = status;
       state.tasks = tasks;
       state.approvals = approvals;
-      const selected = state.mode === "tasks" ? tasks[state.selected] : approvals[state.selected];
+      state.reminders = reminders;
+      const selected =
+        state.mode === "tasks"
+          ? tasks[state.selected]
+          : state.mode === "approvals"
+            ? approvals[state.selected]
+            : reminders[state.selected];
       if (state.mode === "tasks" && selected !== undefined) {
         state.detail = await client.getTask(selected.id);
       } else if (state.mode === "tasks") {
@@ -242,6 +292,9 @@ export async function runTui(client: ClientApiClient, io: TuiIo = {
       if (action.kind === "cancel") {
         await client.cancelTask(action.taskId);
         state.message = "Task cancellation requested.";
+      } else if (action.kind === "cancel-reminder") {
+        await client.cancelReminder(action.reminderId);
+        state.message = "Reminder cancelled.";
       } else {
         const binding = {
           nonce: action.approval.nonce,
@@ -264,6 +317,7 @@ export async function runTui(client: ClientApiClient, io: TuiIo = {
   };
 
   const submitInput = async (input: InputState) => {
+    if (input.kind === "reminder") return;
     state.busy = true;
     try {
       if (input.kind === "supplement") {
@@ -276,6 +330,29 @@ export async function runTui(client: ClientApiClient, io: TuiIo = {
         });
         state.message = "Task revised.";
       }
+    } catch (error) {
+      state.message = error instanceof Error ? error.message : String(error);
+    } finally {
+      state.busy = false;
+      await refresh();
+    }
+  };
+
+  const submitReminder = async (text: string, dueAt: string) => {
+    const due = new Date(dueAt);
+    if (Number.isNaN(due.getTime())) {
+      state.message = "Due time must be a valid ISO timestamp.";
+      draw();
+      return;
+    }
+    state.busy = true;
+    try {
+      await client.createReminder({
+        text,
+        dueAt: due.toISOString(),
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+      });
+      state.message = "Reminder created.";
     } catch (error) {
       state.message = error instanceof Error ? error.message : String(error);
     } finally {
@@ -311,9 +388,32 @@ export async function runTui(client: ClientApiClient, io: TuiIo = {
         draw();
         return true;
       }
+      if (input.kind === "reminder" && input.step === "text") {
+        state.input = {
+          kind: "reminder",
+          step: "due",
+          label: "Due at (ISO)",
+          value: "",
+          reminderText: input.value,
+        };
+        state.message = `Timezone: ${Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"}`;
+        draw();
+        return true;
+      }
+      if (input.kind === "reminder" && Number.isNaN(new Date(input.value).getTime())) {
+        state.message = "Due time must be a valid ISO timestamp.";
+        draw();
+        return true;
+      }
       state.input = undefined;
-      state.message = input.kind === "supplement" ? "Submitting supplement…" : "Submitting revision…";
-      void submitInput(input);
+      if (input.kind === "reminder") {
+        state.message = "Creating reminder…";
+        void submitReminder(input.reminderText ?? "", input.value);
+      } else {
+        state.message =
+          input.kind === "supplement" ? "Submitting supplement…" : "Submitting revision…";
+        void submitInput(input);
+      }
       draw();
       return true;
     }
@@ -340,7 +440,9 @@ export async function runTui(client: ClientApiClient, io: TuiIo = {
       return;
     }
     if (name === "tab") {
-      state.mode = state.mode === "tasks" ? "approvals" : "tasks";
+      const modes: Mode[] = ["tasks", "approvals", "reminders"];
+      const next = (modes.indexOf(state.mode) + 1) % modes.length;
+      state.mode = modes[next] ?? "tasks";
       state.selected = 0;
       state.detail = undefined;
       state.message = "Switched view.";
@@ -349,7 +451,12 @@ export async function runTui(client: ClientApiClient, io: TuiIo = {
       return;
     }
     if (name === "j" || name === "down") {
-      const length = state.mode === "tasks" ? state.tasks.length : state.approvals.length;
+      const length =
+        state.mode === "tasks"
+          ? state.tasks.length
+          : state.mode === "approvals"
+            ? state.approvals.length
+            : state.reminders.length;
       if (length > 0) state.selected = Math.min(length - 1, state.selected + 1);
       draw();
       void refresh();
@@ -371,7 +478,7 @@ export async function runTui(client: ClientApiClient, io: TuiIo = {
       void executePending();
       return;
     }
-    if (name === "n" || name === "escape") {
+    if ((name === "n" || name === "escape") && pending !== undefined) {
       pending = undefined;
       state.message = "Cancelled pending confirmation.";
       draw();
@@ -404,6 +511,20 @@ export async function runTui(client: ClientApiClient, io: TuiIo = {
       if (approval === undefined) return;
       pending = { kind: name === "a" ? "approve" : "deny", approval };
       state.message = `${name === "a" ? "Approve" : "Deny"} ${shortId(approval.id)}? Press y to confirm.`;
+      draw();
+      return;
+    }
+    if (name === "n" && state.mode === "reminders") {
+      state.input = { kind: "reminder", step: "text", label: "Reminder text", value: "" };
+      state.message = "";
+      draw();
+      return;
+    }
+    if (name === "x" && state.mode === "reminders") {
+      const reminder = state.reminders[state.selected];
+      if (reminder === undefined) return;
+      pending = { kind: "cancel-reminder", reminderId: reminder.id };
+      state.message = `Cancel reminder ${shortId(reminder.id)}? Press y to confirm.`;
       draw();
     }
   };

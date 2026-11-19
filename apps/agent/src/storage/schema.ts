@@ -424,6 +424,11 @@ const migrations: readonly (readonly string[])[] = [
     `UPDATE pa_audit SET seq = rowid`,
     `CREATE UNIQUE INDEX pa_audit_seq_idx ON pa_audit (seq)`,
   ],
+  [
+    // Optional device-token lifetime. Null means the owner must revoke it.
+    `ALTER TABLE pa_client_tokens ADD COLUMN expires_at TEXT`,
+    `CREATE INDEX pa_client_tokens_expiry_idx ON pa_client_tokens (expires_at)`,
+  ],
 ];
 
 /** Highest schema version this build can read/migrate. */

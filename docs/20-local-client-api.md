@@ -21,7 +21,7 @@ future  ─┘                                      │
 | 层 | 文件 |
 | --- | --- |
 | API 路由/鉴权 | `apps/agent/src/client-api.ts` |
-| Token 表 | `apps/agent/src/storage/client-tokens.ts`、schema v14/v15（v15 增加稳定 audit seq） |
+| Token 表 | `apps/agent/src/storage/client-tokens.ts`、schema v14/v16（v15 稳定 audit seq，v16 token 过期） |
 | SDK | `apps/agent/src/client/sdk.ts` |
 | CLI | `apps/agent/src/cli.ts`、`bin/pa` |
 | TUI | `apps/agent/src/tui.ts` |
@@ -43,8 +43,8 @@ admin token 等同全部 scope，且只能通过 Bearer header 发送；**不接
 ### 2.2 设备 token
 
 ```bash
-npm run pa -- tokens create --name laptop --scopes read,write
-# 输出一次 pa_...；服务端只保存 SHA-256 hash
+npm run pa -- tokens create --name laptop --scopes read,write --ttl-days 30
+# 输出一次 pa_...；服务端只保存 SHA-256 hash；到期返回 401
 export PA_API_TOKEN=pa_...
 ```
 
@@ -56,6 +56,8 @@ export PA_API_TOKEN=pa_...
 | admin token | 全部 + token 管理 |
 
 - token 可撤销（`pa tokens revoke <id>`），撤销立即生效。
+- 可选 `ttlDays`（1–365）；到期返回 401，`expiresAt` 在 token 列表可见。
+- 每个 credential 固定窗口 600 请求/分钟；超限返回 429 `rate_limited`。该限制是进程内保护，不是分布式配额。
 - 默认 token scope 为 `read`；CLI 日常本地可继续用 `ADMIN_TOKEN`，远程设备必须用窄 scope token。
 - 当前没有 HTTPS/设备配对/mTLS；远程使用必须放在 TLS 反向代理后，不能把 API 明文暴露到 LAN/公网。`HOST=0.0.0.0` 只应配合防火墙/TLS 使用。
 - 日志只记录 method/path/status；不记录 token、body 或 query string。
@@ -146,7 +148,9 @@ npm run pa -- tui
 | 键 | 作用 |
 | --- | --- |
 | `j`/`k` 或上下 | 选择 |
-| `tab` | Tasks ↔ Approvals |
+| `tab` | Tasks → Approvals → Reminders → Tasks |
+| `n` + 文本 + Enter + ISO 到期时间 | 创建提醒（本地时区） |
+| `x` + `y` | 取消选中提醒 |
 | `s` + 文本 + Enter | 增补任务输入 |
 | `v` + 新目标 + Enter | 修订选中任务目标（带当前 revision） |
 | `c` + `y` | 取消选中任务 |
@@ -154,22 +158,22 @@ npm run pa -- tui
 | `r` | 刷新 |
 | `q` / Ctrl-C | 退出并恢复终端 |
 
-TUI 只通过 Client API，每 2 秒刷新；显示任务状态、目标、Action 参数/nonce/binding、unknown/confirm/effects 计数。非 TTY 直接报错；没有动画、鼠标或后台常驻。
+TUI 只通过 Client API，每 2 秒刷新；显示任务状态、目标、Action 参数/nonce/binding、提醒状态、unknown/confirm/effects 计数。输入提示固定在最后一行，短终端不会遮住；非 TTY 直接报错。没有动画、鼠标或后台常驻。
 
 ## 6. 验证与边界
 
 已执行：
 
-- `apps/agent/test/client-api.test.ts`：auth/scope/revocation、任务幂等、修订冲突、补充幂等、审批绑定、并发审批单次消费、错误 owner。
+- `apps/agent/test/client-api.test.ts`：auth/scope/revocation、token 过期、速率限制、任务幂等、修订冲突、补充幂等、审批绑定、并发审批单次消费、错误 owner。
 - `apps/agent/test/client-http.test.ts`：真实 HTTP mount、Bearer 鉴权、token 不进入日志。
 - `apps/agent/test/cli.test.ts`：CLI/SDK header/idempotency、SSE 数据帧、错误映射、approve 必须有 `--yes`。
-- `apps/agent/test/tui.test.ts`：帧渲染、任务/审批绑定、增补输入模式。
+- `apps/agent/test/tui.test.ts`：帧渲染、任务/审批绑定、增补/提醒输入、短终端底部提示。
 - 本地 Node PTY smoke：`pa tui` 进入 alternate screen 并由 `q` 干净退出。
-- 全量 `npm test`：264 个确定性测试通过（2026-11-19）。
+- 全量 `npm test`：267 个确定性测试通过（2026-11-19）。
 
 仍 pending：
 
-- 远程 TLS/设备配对、token 轮换 UI、速率限制；
+- 远程 TLS/设备配对、token 轮换 UI；当前速率限制是单进程内存窗口；
 - SSE 断线重连/重放上限的跨进程实测；WebSocket 未实现；
 - macOS Terminal/iTerm2、Windows Terminal/ConPTY 的真实键盘/窄屏验收；
-- CLI/TUI 的 E3 真实操作证据；TUI 已支持任务取消/审批/增补/修订目标，仍不覆盖提醒编辑。
+- CLI/TUI 的 E3 真实操作证据；TUI 已支持任务取消/审批/增补/修订目标和提醒创建/取消，仍不覆盖提醒内容编辑。

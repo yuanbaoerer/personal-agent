@@ -322,7 +322,7 @@ export class ClientApiClient {
     }
   }
 
-  async createToken(input: { name: string; scopes?: string[] }): Promise<{
+  async createToken(input: { name: string; scopes?: string[]; ttlDays?: number }): Promise<{
     token: string;
     record: ClientTokenView;
   }> {

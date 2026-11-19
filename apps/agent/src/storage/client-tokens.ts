@@ -13,6 +13,7 @@ export interface ClientTokenRecord {
   createdAt: string;
   lastUsedAt?: string;
   revokedAt?: string;
+  expiresAt?: string;
 }
 
 interface ClientTokenRow {
@@ -24,6 +25,7 @@ interface ClientTokenRow {
   created_at: string;
   last_used_at: string | null;
   revoked_at: string | null;
+  expires_at: string | null;
 }
 
 function parseScopes(raw: string): ClientScope[] {
@@ -47,6 +49,7 @@ function mapToken(row: ClientTokenRow): ClientTokenRecord {
     createdAt: row.created_at,
     lastUsedAt: row.last_used_at ?? undefined,
     revokedAt: row.revoked_at ?? undefined,
+    expiresAt: row.expires_at ?? undefined,
   };
 }
 
@@ -63,11 +66,12 @@ export class ClientTokenRepository {
     tokenHash: string;
     scopes: ClientScope[];
     createdAt: string;
+    expiresAt?: string;
   }): ClientTokenRecord {
     const row = this.#db.all<ClientTokenRow>(
       `INSERT INTO pa_client_tokens
-        (id, owner_id, name, token_hash, scopes_json, created_at, last_used_at, revoked_at)
-       VALUES (?, ?, ?, ?, ?, ?, NULL, NULL)
+        (id, owner_id, name, token_hash, scopes_json, created_at, last_used_at, revoked_at, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?)
        RETURNING *`,
       randomUUID(),
       input.ownerId,
@@ -75,6 +79,7 @@ export class ClientTokenRepository {
       input.tokenHash,
       JSON.stringify(input.scopes),
       input.createdAt,
+      input.expiresAt ?? null,
     )[0];
     if (row === undefined) {
       throw new Error("client token was not inserted");

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import type { ActionRecord, TaskRecord } from "../src/domain/types.ts";
+import type { ActionRecord, ScheduleRecord, TaskRecord } from "../src/domain/types.ts";
 import { initialTuiState, renderFrame } from "../src/tui.ts";
 
 const task = {
@@ -37,6 +37,21 @@ const action = {
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:00:00.000Z",
 } as ActionRecord;
+
+const reminder = {
+  id: "reminder-1",
+  ownerId: "owner",
+  conversationId: "conversation",
+  runKey: "run-1",
+  dueAt: "2026-11-20T09:00:00.000Z",
+  timezone: "Asia/Shanghai",
+  text: "drink water",
+  purpose: "reminder",
+  expiresAt: "2026-11-20T10:00:00.000Z",
+  status: "pending",
+  createdAt: "2026-01-01T00:00:00.000Z",
+  updatedAt: "2026-01-01T00:00:00.000Z",
+} as ScheduleRecord;
 
 describe("TUI frame", () => {
   it("renders selected tasks and keeps the approval binding visible", () => {
@@ -75,6 +90,35 @@ describe("TUI frame", () => {
     state.message = "";
     const frame = renderFrame(state, 100, 30);
     assert.match(frame, /> Supplement: also check the plug/);
+  });
+
+  it("shows reminders and their create/cancel controls", () => {
+    const state = initialTuiState();
+    state.mode = "reminders";
+    state.reminders = [reminder];
+    state.status = { diagnostics: { effects: {} } };
+    state.message = "Ready.";
+    const frame = renderFrame(state, 100, 24);
+    assert.match(frame, /Reminders/);
+    assert.match(frame, /drink water/);
+    assert.match(frame, /\[n\] new/);
+    assert.match(frame, /\[x\] cancel/);
+  });
+
+  it("keeps the prompt visible when the terminal is short", () => {
+    const state = initialTuiState();
+    state.tasks = [task];
+    state.detail = { task, assignments: [], actions: [action], inputs: [] };
+    state.input = {
+      kind: "reminder",
+      step: "due",
+      label: "Due at (ISO)",
+      value: "2026-11-20T09:00:00Z",
+      reminderText: "drink water",
+    };
+    state.message = "";
+    const frame = renderFrame(state, 60, 8);
+    assert.match(frame, /> Due at \(ISO\): 2026-11-20T09:00:00Z/);
   });
 
   it("shows approval args and nonce without requiring another view", () => {

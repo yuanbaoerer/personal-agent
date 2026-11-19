@@ -69,6 +69,8 @@ export interface ClientApiDeps {
   ownerId: string;
   /** Local bootstrap credential; device token hashes are also accepted. */
   adminToken?: string;
+  /** Per-credential fixed-window request limit; defaults to 600/min. */
+  rateLimitPerMinute?: number;
   now?: () => Date;
 }
 
@@ -261,6 +263,7 @@ function tokenView(record: ClientTokenRecord): Record<string, unknown> {
     createdAt: record.createdAt,
     lastUsedAt: record.lastUsedAt,
     revokedAt: record.revokedAt,
+    expiresAt: record.expiresAt,
   };
 }
 
@@ -276,6 +279,8 @@ export class ClientApiService {
   readonly #adminToken?: string;
   readonly #now: () => Date;
   readonly #tokens: ClientTokenRepository;
+  readonly #rateLimit: number;
+  readonly #rateWindows = new Map<string, { startedAt: number; count: number }>();
 
   constructor(deps: ClientApiDeps) {
     this.#store = deps.store;
@@ -284,6 +289,7 @@ export class ClientApiService {
     this.#adminToken = deps.adminToken;
     this.#now = deps.now ?? (() => new Date());
     this.#tokens = new ClientTokenRepository(deps.store.db);
+    this.#rateLimit = Math.max(1, deps.rateLimitPerMinute ?? 600);
   }
 
   async handle(request: ClientApiRequest): Promise<ClientApiResponse> {
@@ -343,17 +349,36 @@ export class ClientApiService {
       throw new ApiError(401, "unauthorized");
     }
     if (this.#adminToken !== undefined && safeEqual(this.#adminToken, raw)) {
+      this.#checkRate("admin");
       return { kind: "admin" };
     }
     if (raw.startsWith(TOKEN_PREFIX)) {
       const record = this.#tokens.findByHash(tokenHash(raw));
-      if (record === undefined || record.ownerId !== this.#ownerId) {
+      if (
+        record === undefined ||
+        record.ownerId !== this.#ownerId ||
+        (record.expiresAt !== undefined && record.expiresAt <= this.#now().toISOString())
+      ) {
         throw new ApiError(401, "unauthorized");
       }
       this.#tokens.touch(record.id, this.#now().toISOString());
+      this.#checkRate(`token:${record.id}`);
       return { kind: "token", record };
     }
     throw new ApiError(401, "unauthorized");
+  }
+
+  #checkRate(key: string): void {
+    const now = this.#now().getTime();
+    const current = this.#rateWindows.get(key);
+    if (current === undefined || now - current.startedAt >= 60_000) {
+      this.#rateWindows.set(key, { startedAt: now, count: 1 });
+      return;
+    }
+    if (current.count >= this.#rateLimit) {
+      throw new ApiError(429, "rate_limited", `at most ${this.#rateLimit} requests/minute`);
+    }
+    current.count += 1;
   }
 
   #require(auth: Auth, scope: ClientScope): void {
@@ -804,12 +829,20 @@ export class ClientApiService {
     const scopes = this.#parseScopes(body.scopes);
     const raw = `${TOKEN_PREFIX}${randomBytes(32).toString("base64url")}`;
     const createdAt = this.#now().toISOString();
+    const ttlDays =
+      body.ttlDays === undefined
+        ? undefined
+        : this.#parseInteger(body.ttlDays, "ttlDays", 1, 365);
     const record = this.#tokens.create({
       ownerId: this.#ownerId,
       name,
       tokenHash: tokenHash(raw),
       scopes,
       createdAt,
+      expiresAt:
+        ttlDays === undefined
+          ? undefined
+          : new Date(this.#now().getTime() + ttlDays * 86_400_000).toISOString(),
     });
     this.#store.recordAudit({
       event: "client_token.created",

@@ -97,6 +97,47 @@ describe("client API", () => {
     assert.equal((await call(api, "GET", "/api/v1/tasks", { token: raw })).status, 401);
   });
 
+  it("expires device tokens and rate-limits each credential", async () => {
+    const services = createServices({ now: () => NOW });
+    const api = new ClientApiService({
+      store: services.store,
+      services,
+      ownerId: services.owner.id,
+      adminToken: ADMIN,
+      now: () => NOW,
+    });
+    const created = await call(api, "POST", "/api/v1/tokens", {
+      token: ADMIN,
+      body: { name: "short", scopes: ["read"], ttlDays: 1 },
+    });
+    const raw = created.body.token as string;
+    const record = created.body.record as { expiresAt?: string };
+    assert.equal(record.expiresAt, new Date(NOW.getTime() + 86_400_000).toISOString());
+    assert.equal((await call(api, "GET", "/api/v1/health", { token: raw })).status, 200);
+
+    const later = new ClientApiService({
+      store: services.store,
+      services,
+      ownerId: services.owner.id,
+      adminToken: ADMIN,
+      now: () => new Date(NOW.getTime() + 2 * 86_400_000),
+    });
+    assert.equal((await call(later, "GET", "/api/v1/health", { token: raw })).status, 401);
+
+    const limited = new ClientApiService({
+      store: services.store,
+      services,
+      ownerId: services.owner.id,
+      adminToken: ADMIN,
+      rateLimitPerMinute: 1,
+      now: () => NOW,
+    });
+    assert.equal((await call(limited, "GET", "/api/v1/health", { token: ADMIN })).status, 200);
+    const throttled = await call(limited, "GET", "/api/v1/health", { token: ADMIN });
+    assert.equal(throttled.status, 429);
+    assert.equal(throttled.body.error, "rate_limited");
+  });
+
   it("creates idempotent tasks and exposes detail/cancel", async () => {
     const { api } = fixture();
     const first = await createTask(api);

@@ -39,7 +39,7 @@ Usage:
   pa reminders create <text> --at ISO --timezone ZONE
   pa reminders cancel <id>
   pa events [--after CURSOR] [--limit N] [--follow]
-  pa tokens create --name NAME [--scopes read,write,approve]
+  pa tokens create --name NAME [--scopes read,write,approve] [--ttl-days N]
   pa tokens list
   pa tokens revoke <id>
 
@@ -426,7 +426,8 @@ export async function runCli(
         if (sub === "create") {
           const name = flagString(args.flags, "name") ?? "cli";
           const scopes = listValue(flagString(args.flags, "scopes"));
-          const result = await client.createToken({ name, scopes });
+          const ttlDays = flagNumber(args.flags, "ttl-days");
+          const result = await client.createToken({ name, scopes, ttlDays });
           if (json) printJson(io, result);
           else {
             io.out(`token: ${result.token}`);
