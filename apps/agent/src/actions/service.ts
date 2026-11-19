@@ -37,6 +37,8 @@ export interface ActionServiceDeps {
   maxExecutionAttempts?: number;
   /** Bounds concurrent external writes from a single agent instance. */
   maxConcurrentTools?: number;
+  /** Cumulative action proposals allowed for one task. */
+  maxToolCallsPerTask?: number;
   tasks?: TaskRepository;
   preauthorizations?: PreauthorizationService;
   schedulePolicies?: SchedulePolicyService;
@@ -69,6 +71,7 @@ export class ActionService {
   readonly #leaseMs: number;
   readonly #maxAttempts: number;
   readonly #maxConcurrentTools: number;
+  readonly #maxToolCallsPerTask: number;
   readonly #tasks?: TaskRepository;
   readonly #preauthorizations?: PreauthorizationService;
   readonly #schedulePolicies?: SchedulePolicyService;
@@ -87,6 +90,7 @@ export class ActionService {
     this.#leaseMs = deps.executionLeaseMs ?? 30_000;
     this.#maxAttempts = deps.maxExecutionAttempts ?? 3;
     this.#maxConcurrentTools = Math.max(1, deps.maxConcurrentTools ?? 2);
+    this.#maxToolCallsPerTask = Math.max(1, deps.maxToolCallsPerTask ?? 20);
     this.#tasks = deps.tasks;
     this.#preauthorizations = deps.preauthorizations;
     this.#schedulePolicies = deps.schedulePolicies;
@@ -104,12 +108,19 @@ export class ActionService {
     task: TaskRecord,
     assignment: AssignmentRecord,
     proposed: ProposedAction[],
-  ): { count: number; autoApprove: string[] } {
+  ): { count: number; autoApprove: string[]; rejected: number } {
     let count = 0;
+    let rejected = 0;
+    let remaining =
+      this.#maxToolCallsPerTask - this.#actions.listByTask(task.id).length;
     const autoApprove: string[] = [];
     for (const item of proposed) {
       const canonical = this.#canonicalProposal(task, item);
       if (canonical === undefined) {
+        continue;
+      }
+      if (remaining <= 0) {
+        rejected += 1;
         continue;
       }
       // A stable hash of the canonical tool call dedupes a retried report even
@@ -126,12 +137,13 @@ export class ActionService {
       );
       if (inserted?.created) {
         count += 1;
+        remaining -= 1;
         if (inserted.autoApprove) {
           autoApprove.push(inserted.action.id);
         }
       }
     }
-    return { count, autoApprove };
+    return { count, autoApprove, rejected };
   }
 
   /**
@@ -166,6 +178,9 @@ export class ActionService {
     proposed: ProposedAction,
     sourceKey?: string,
   ): ActionRecord | undefined {
+    if (this.#actions.listByTask(task.id).length >= this.#maxToolCallsPerTask) {
+      return undefined;
+    }
     const canonical = this.#canonicalProposal(task, proposed);
     if (canonical === undefined) {
       return undefined;

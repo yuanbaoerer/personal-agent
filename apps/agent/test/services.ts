@@ -72,6 +72,7 @@ export function createServices(options: {
   github?: GitHubReadConfig;
   reminderTimer?: ReminderTimer;
   maxConcurrentTools?: number;
+  maxToolCallsPerTask?: number;
   budget?: BudgetService;
   magpie?: MagpieConfig;
   wake?: WakeScheduler;
@@ -159,6 +160,7 @@ export function createServices(options: {
     now,
     actionTtlMs: options.actionTtlMs,
     maxConcurrentTools: options.maxConcurrentTools,
+    maxToolCallsPerTask: options.maxToolCallsPerTask,
     tasks,
     preauthorizations: preauthorization,
     schedulePolicies: schedulePolicy,
