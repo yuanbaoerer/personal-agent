@@ -204,6 +204,7 @@ export function normalizeGithubCriteria(
     verifier: "github-read",
     repo,
     requiredEvidenceKinds: [...required],
+    requireStructuredClaims: true,
   });
 }
 
@@ -243,6 +244,7 @@ export function normalizeStateCriteria(
     ...parsed,
     ...(verifier === undefined ? {} : { verifier }),
     requiredEvidenceKinds: [...required],
+    requireStructuredClaims: true,
   });
 }
 
