@@ -16,7 +16,8 @@
 | 飞书入口 | 真实 p2p 回调、签名/Token 校验、URL challenge、主人白名单；本地长连接已连上 Feishu | 本地 webhook 用临时 Tunnel；Worker 的 workers.dev 地址在飞书后台保存时超时，云端需自定义域或 WS 桥接 |
 | Inbox | `channel + account + message_id` 唯一，重复事件返回原受理 | 已接 Router；真实 p2p `/status` 已受理 |
 | Outbox | 业务键唯一、按 task 分组排序、租约、重试、unknown、崩溃后按业务键核对 | 真实平台已接受 `om_`；无查询接口时保持 unknown |
-| Router | 确定性命令优先；模型 JSON 决策；补充/回答、修改、提醒列表/取消、任务前缀解析 | 真实模型质量需重复评测 |
+| Router | 确定性命令优先；模型 JSON 决策；补充/回答、修改、提醒列表/取消、任务前缀解析；显式状态问题由确定性 owner 快照回答，避免空 Mandate 派工 | 真实模型质量需重复评测 |
+| 内部状态读取 | owner-scope 只读 `state.summary`/`task.list`/`task.get`/`reminder.list`/`memory.list`/`schedule.list`；条数/offset/8KB/字段截断；仅 `mandate.tools` + `state` resource 自动批准；`state-read` 校验当前 revision 执行回执、owner/project、快照完整性、实体存在和报告 snapshotHash citation | 仅内部只读；项目记忆按 `mandate.project` 隔离；owner 真实键入的 E3 验收仍 pending |
 | Task / Assignment | Task 状态机、Mandate、revision、租约、fencingToken、心跳、最多两个 Worker；不可变 TaskInput 序号，任何未覆盖新输入的旧 Worker 报告都不能推进任务；模型等待按 100ms 切片轮询，不长时间占用 Effect drain | 10 分钟 assignment lifetime；长任务跨轮恢复需真实部署验证；真实模型 G2 补充场景待验证 |
 | 审批 / 动作 | 参数绑定、nonce、一次性消费、原子审批、执行前重核 Task 状态/revision/Mandate、取消/修订后拒绝重试、unknown/reconcile、mock 灯；写工具须声明 `replayPolicy=verify` 才允许重试；succeeded/failed/unknown/expired/reconciled/needs_manual/superseded 均写审计（含 task cancel/revise 批量 supersede） | mock 灯是程序化工具；MCP 桥接与真机未接；真实外部 API 未验证 |
 | 工具扩展 | `createApp({registerTools})` seam（不可覆盖 built-in）；只读工具样例见 `docs/14-tool-capability.md`；工具名必检，声明了 `resource` 的工具还须满足 Mandate.resources | Provider/Channel 扩展契约与真实第三方工具未验证 |
@@ -43,7 +44,7 @@ cp .env.example .env   # 填入飞书应用凭据与主人 open_id
 npm start
 ```
 
-干净目录安装冒烟（不复制 `node_modules/.env/data/.git`，会执行 `npm ci`、typecheck、275 tests、CLI help、临时启动 + `/healthz`）：
+干净目录安装冒烟（不复制 `node_modules/.env/data/.git`，会执行 `npm ci`、typecheck、294 tests、CLI help、临时启动 + `/healthz`）：
 
 ```bash
 npm run install:smoke   # also run by the Ubuntu install-smoke CI job
@@ -128,7 +129,7 @@ curl -fsS http://127.0.0.1:8787/healthz
 - `pa_memories` 增加 `project` 作用域（空为全局）；`/remember [--project=名称] key=value`、`/memory [--project=名称]`、`/forget [--project=名称] key`；同一 key 可在不同项目并存。
 - Worker prompt 只注入全局 + 当前 Task `mandate.project` 的记忆，最多 20 条/每条 1000 字符，不注入其他项目；Router 不注入记忆。项目名只允许 1–64 位字母/数字/点/下划线/连字符。
 - 模型 `save_memory` 可带 project，确认卡显示项目后再写入；`/confirm` 仍按项目隔离复核。
-- `npm test`：275 个确定性测试通过（当前）；`npm run install:smoke` 在临时干净副本通过。包含 Client API/CLI/TUI 契约；macos-26-arm64 与 windows-2025-vs2026 CI 均已通过；SSE child/main SIGKILL/重启测试通过。
+- `npm test`：294 个确定性测试通过（当前）；`npm run install:smoke` 在临时干净副本通过。包含 Client API/CLI/TUI 契约；macos-26-arm64 与 windows-2025-vs2026 CI 均已通过；SSE child/main SIGKILL/重启测试通过。
 - 证据边界：E1；真实模型误触发/提示注入负例、语义检索与项目权限模型仍 pending。
 
 **2026-11-18 验证（PA-07 部分）：**
@@ -182,6 +183,15 @@ curl -fsS http://127.0.0.1:8787/healthz
 - 保留 `GITHUB_ALLOWED_REPOS` 白名单；OAuth 不等于全仓库访问。`repo` scope 较宽，应用只发 GET；私有仓库细粒度只读仍需 GitHub App。
 - 275 个确定性测试通过；本地 Client API/CLI/TUI 已接 HTTP seam；真实 OAuth App/回调/G1 仍需配置与验收。
 - 文档：[19 · GitHub OAuth](docs/19-github-oauth.md)。
+
+**2026-11-19 验证（MVP-01 内部状态感知，E1 + 真实模型/飞书投递）：**
+
+- 新增 owner-scope 只读状态工具（`state.summary`、`task.list`、`task.get`、`reminder.list`、`memory.list`、`schedule.list`）：信任上下文注入 owner/project，条数 1–20、offset、8KB 上限、字段截断，不返回 token/source event/内部 prompt；项目记忆只读全局 + 当前 `mandate.project`。
+- Router allowlist、Mandate `state` resource、ActionService 程序化守卫统一：只有任务 Mandate 明确包含的 state 工具才自动批准；任务 revision/owner/resource 在提案和执行时复核。
+- `state-read` verifier 要求当前 revision 的 succeeded Action 回执、owner/project 作用域、args 绑定、快照 hash 完整性、实体仍存在，以及 Worker 报告逐条引用 `snapshotHash`；缺证据进入 `needs_review`，不会用 structural 检查冒充事实完成。
+- 确定性：`npm test` 294 通过；覆盖空数据、真实提醒、任务状态变化、旧 revision、跨 owner/project、恶意文本、无权限和错误证据。
+- 真实模型/飞书：`opencode-go/deepseek-v4.1-flash` 对“用三点总结当前任务和提醒状态”选择 `query_status`，确定性快照回执被真实飞书 API 接受；显式后台任务正确生成 `resources:["chat","state"]`、`tools:["state.summary","reminder.list"]` 与 `state-read` criteria，两个回执自动执行，最终 `state-read` succeeded，报告引用两个 `snapshotHash`，真实飞书接受最终结果（修复前同类任务因 `reminder.list` 快照缺少 scope.project 正确进入 `needs_review`）。
+- 边界：真实运行使用 Node + 真实模型 + 真实飞书出站 API + 真实 webhook token/app_id/owner 校验，但入站事件由本地按 Feishu 2.0 结构注入，不是 owner 在飞书客户端键入；`.env` 未配置 `FEISHU_ENCRYPT_KEY`，签名头路径未执行。因此记为 E2+/E3-partial，不标记完整 E3/M02 通过。
 
 **2026-11-18 验证（PA-15 开源治理，E1 部分）：**
 
