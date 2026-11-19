@@ -195,7 +195,7 @@ curl -fsS http://127.0.0.1:8787/healthz
 - Review 复核（`db81e0c`）：修复 mixed GitHub+state 永远 `needs_review`、修订可移除项目 scope、补充后旧快照仍通过、tail/empty page 回执、reconcile 未复核授权并回传完整状态、项目查询 1000 行截断、Client API 项目名校验不一致，以及预算耗尽时 mutation 被确定性状态快照吞掉。
 - 真实模型/飞书（代码基线 `d359dc8`）：`opencode-go/deepseek-v4.1-flash` 对“用三点总结当前任务和提醒状态”选择 `query_status`，确定性快照回执被真实飞书 API 接受；显式后台任务正确生成 `resources:["chat","state"]`、`tools:["state.summary","reminder.list"]` 与 `state-read` criteria，两个回执自动执行，最终 `state-read` succeeded，报告引用两个 `snapshotHash`，真实飞书接受最终结果（修复前同类任务因 `reminder.list` 快照缺少 scope.project 正确进入 `needs_review`）。
 - 边界：真实运行使用 Node + 真实模型 + 真实飞书出站 API + 真实 webhook token/app_id/owner 校验，但入站事件由本地按 Feishu 2.0 结构注入，不是 owner 在飞书客户端键入；`.env` 未配置 `FEISHU_ENCRYPT_KEY`，签名头路径未执行。因此记为 E2+/E3-partial，不标记完整 E3/M02 通过。
-- 状态（2026-11-20）：MVP-01 PR #43、MVP-02 PR #44 与 Intent Handler PR #46 已合并；确定性测试 372 项与 typecheck 通过；state-read/GitHub 新增结构化 `stateClaims`/`githubClaims` 与回执字段对照；新增持久化模型请求预算（单任务/每日）与单任务累计工具调用上限。真实 E3 owner 键入仍 pending，MVP-01/M02 checklist 不勾选。
+- 状态（2026-11-20）：MVP-01、MVP-02、Intent Handler、结构化事实核验、请求/工具/周期预算与 SEC01–SEC08 威胁模型映射已合并；确定性测试 372 项、typecheck 与本地 install-smoke 通过。真实 E3 owner 键入仍 pending，MVP-01/M02 checklist 不勾选。
 
 **2026-11-18 验证（PA-15 开源治理，E1 部分）：**
 
