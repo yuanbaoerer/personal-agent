@@ -1791,7 +1791,31 @@ export class Router implements InboundHandler {
     context: { ownerId: string; conversationId: string; inboxId: string },
     decision: RouterDecision,
   ): TaskRecord | undefined {
-    const ref = decision.taskId ?? decision.taskRef;
+    if (decision.taskId !== undefined) {
+      const explicit = resolveTaskId(context.ownerId, decision.taskId, this.#tasks);
+      if (explicit.status === "ok") {
+        const task = this.#tasks.get(explicit.id);
+        if (task !== undefined) {
+          this.#rememberTaskFocus(context.conversationId, task.id);
+          return task;
+        }
+      }
+      if (explicit.status === "ambiguous") {
+        const candidates = explicit.ids
+          .map((id) => this.#tasks.get(id))
+          .filter((task): task is TaskRecord => task !== undefined);
+        this.#reply(context, formatTaskCandidates(candidates), "failure");
+      } else {
+        this.#reply(
+          context,
+          formatTaskNotFound("找不到属于你的该任务。", decision.taskId),
+          "failure",
+        );
+      }
+      return undefined;
+    }
+
+    const ref = decision.taskRef;
     const resolution = resolveTaskReference(
       context.ownerId,
       context.conversationId,
@@ -1861,17 +1885,47 @@ export class Router implements InboundHandler {
         );
         return;
       }
-      const resolution = resolveTaskReference(
-        context.ownerId,
-        context.conversationId,
-        textRef,
-        this.#tasks,
-        {
-          preferredTaskId: this.#store.metaGet(
-            `${TASK_FOCUS_PREFIX}${context.conversationId}`,
-          ),
-        },
-      );
+      const resolution =
+        query.taskId === undefined
+          ? resolveTaskReference(
+              context.ownerId,
+              context.conversationId,
+              textRef,
+              this.#tasks,
+              {
+                preferredTaskId: this.#store.metaGet(
+                  `${TASK_FOCUS_PREFIX}${context.conversationId}`,
+                ),
+              },
+            )
+          : (() => {
+              const explicit = resolveTaskId(
+                context.ownerId,
+                query.taskId,
+                this.#tasks,
+              );
+              if (explicit.status === "ok") {
+                const task = this.#tasks.get(explicit.id);
+                return task === undefined
+                  ? ({
+                      status: "not_found",
+                      reason: "找不到属于你的该任务。",
+                    } as const)
+                  : ({ status: "ok", task } as const);
+              }
+              if (explicit.status === "ambiguous") {
+                return {
+                  status: "ambiguous",
+                  candidates: explicit.ids
+                    .map((id) => this.#tasks.get(id))
+                    .filter((task): task is TaskRecord => task !== undefined),
+                } as const;
+              }
+              return {
+                status: "not_found",
+                reason: "找不到属于你的该任务。",
+              } as const;
+            })();
       if (resolution.status === "ambiguous") {
         this.#reply(context, formatTaskCandidates(resolution.candidates), "failure");
         return;

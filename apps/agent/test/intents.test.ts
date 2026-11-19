@@ -308,6 +308,25 @@ describe("natural language state intents", () => {
     assert.match(outbox(services), /summary reminder/);
   });
 
+  it("accepts an explicit task id prefix for reads and cancellation", async () => {
+    const services = setup();
+    const task = insertTask(services, TASK_A, "prefix target", {
+      status: "waiting_user",
+    });
+    const prefix = task.id.slice(0, 8);
+    services.model.push({
+      action: "query_status",
+      text: "",
+      query: { target: "task", taskId: prefix },
+    });
+    await sendText(services, "这个任务的详情", "evt_intent_explicit_detail");
+    assert.match(outbox(services), /prefix target/);
+
+    services.model.push({ action: "cancel_task", text: "", taskId: prefix });
+    await sendText(services, "取消这个任务", "evt_intent_explicit_cancel");
+    assert.equal(services.tasks.get(task.id)?.status, "cancelled");
+  });
+
   it("asks instead of guessing when a mutation reference is ambiguous", async () => {
     const services = setup();
     const alpha = insertTask(services, TASK_A, "alpha task");
