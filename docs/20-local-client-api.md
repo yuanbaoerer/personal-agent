@@ -153,7 +153,7 @@ TUI 只读 API，每 2 秒刷新；显示任务状态、目标、Action 参数/n
 
 已执行：
 
-- `apps/agent/test/client-api.test.ts`：auth/scope/revocation、任务幂等、修订冲突、补充幂等、审批绑定、错误 owner。
+- `apps/agent/test/client-api.test.ts`：auth/scope/revocation、任务幂等、修订冲突、补充幂等、审批绑定、并发审批单次消费、错误 owner。
 - `apps/agent/test/client-http.test.ts`：真实 HTTP mount、Bearer 鉴权、token 不进入日志。
 - `apps/agent/test/cli.test.ts`：CLI/SDK header/idempotency、错误映射、approve 必须有 `--yes`。
 - `apps/agent/test/tui.test.ts`：帧渲染、任务/审批绑定可见性。
