@@ -32,6 +32,27 @@ const TASK_STATUSES: readonly TaskStatus[] = [
   "cancelled",
 ];
 const PROJECT_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
+
+export const TASK_FOCUS_PREFIX = "router.task_focus:";
+
+export function taskFocusKey(conversationId: string): string {
+  return `${TASK_FOCUS_PREFIX}${conversationId}`;
+}
+
+export function extractProjectFlag(text: string): string | undefined {
+  const match = /(?:^|\s)--project=([A-Za-z0-9._-]{1,64})(?=$|\s)/.exec(text);
+  return match?.[1];
+}
+
+export function invalidProjectFlag(
+  text: string,
+  project: string | undefined,
+): boolean {
+  return (
+    text.includes("--project=") &&
+    (project === undefined || !PROJECT_PATTERN.test(project))
+  );
+}
 const PREFIX_SCAN_LIMIT = 1_000;
 const AMBIGUOUS_LIST_LIMIT = 5;
 

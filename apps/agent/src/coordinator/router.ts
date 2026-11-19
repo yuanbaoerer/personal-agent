@@ -27,27 +27,22 @@ import {
   formatUsage,
 } from "../observability/usage.ts";
 import type { BudgetService } from "../observability/magpie.ts";
-import {
-  isStateToolName,
-  type StateReadService,
-  type StateToolName,
-} from "../actions/state.ts";
+import { isStateToolName, type StateReadService } from "../actions/state.ts";
 import type { TaskService } from "./tasks.ts";
 import {
-  formatReminderCandidates,
-  formatScheduleCandidates,
-  formatStateQuery,
+  extractProjectFlag,
   formatTaskCandidates,
   formatTaskNotFound,
   inferStateQuery,
+  invalidProjectFlag,
   isCompoundControlRequest,
-  resolveReminderReference,
-  resolveScheduleReference,
   resolveTaskId,
   resolveTaskReference,
-  type ScheduleAction,
+  taskFocusKey,
 } from "./state-query.ts";
 export { resolveTaskId } from "./state-query.ts";
+import { PersonalIntentHandler } from "./personal-intents.ts";
+import { StateQueryHandler } from "./state-query-handler.ts";
 import {
   RouterPendingError,
   ROUTER_MAX_ATTEMPTS,
@@ -55,6 +50,16 @@ import {
   ROUTER_RETRY_MAX_MS,
   ensureMandateResources,
 } from "./pi-router.ts";
+import {
+  describeReminderCancelFailure,
+  formatSchedulePolicy,
+  formatSchedules,
+} from "./intent-format.ts";
+export {
+  describeReminderCancelFailure,
+  formatSchedulePolicy,
+  formatSchedules,
+} from "./intent-format.ts";
 import type { InboundHandler } from "./responder.ts";
 import type { WakeScheduler } from "../runtime/types.ts";
 
@@ -100,13 +105,15 @@ export interface RouterDeps {
 }
 
 const GITHUB_REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
-const TASK_FOCUS_PREFIX = "router.task_focus:";
 const REDIRECTABLE_CONTROL_ACTIONS: ReadonlySet<RouterDecision["action"]> = new Set([
   "supplement_task",
   "revise_task",
   "cancel_task",
+  "save_memory",
   "forget_memory",
+  "remind",
   "cancel_reminder",
+  "draft_schedule",
   "confirm_schedule",
   "cancel_schedule",
 ]);
@@ -128,8 +135,6 @@ function extractGithubRepo(text: string): string | undefined {
     ? candidate.toLowerCase()
     : undefined;
 }
-
-const PROJECT_NAME_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
 
 const STATE_QUERY_PATTERNS = [
   /当前(?:的)?任务/,
@@ -155,18 +160,6 @@ export function isExplicitStateQuery(text: string): boolean {
     return false;
   }
   return STATE_QUERY_PATTERNS.some((pattern) => pattern.test(value));
-}
-
-export function extractProjectFlag(text: string): string | undefined {
-  const match = /(?:^|\s)--project=([A-Za-z0-9._-]{1,64})(?=$|\s)/.exec(text);
-  return match?.[1];
-}
-
-function invalidProjectFlag(text: string, project: string | undefined): boolean {
-  return (
-    text.includes("--project=") &&
-    (project === undefined || !PROJECT_NAME_PATTERN.test(project))
-  );
 }
 
 export function normalizeGithubCriteria(
@@ -251,36 +244,6 @@ export function normalizeStateCriteria(
   });
 }
 
-export function formatSchedules(schedules: readonly ScheduleRecord[]): string {
-  if (schedules.length === 0) {
-    return "当前没有提醒。";
-  }
-  return schedules
-    .map((schedule) => `- ${schedule.id} ${schedule.status} ${schedule.dueAt} ${schedule.text}`)
-    .join("\n");
-}
-
-export function describeReminderCancelFailure(reason: string | undefined): string {
-  if (reason === "schedule_not_found" || reason === "not_owner") {
-    return "找不到属于你的该提醒。";
-  }
-  if (reason !== undefined && reason.startsWith("schedule_")) {
-    return `该提醒当前状态为 ${reason.slice("schedule_".length)}，无法取消。`;
-  }
-  return reason ?? "未知原因";
-}
-
-export function formatSchedulePolicy(policy: SchedulePolicyRecord, full = false): string {
-  const id = full ? policy.id : policy.id.slice(0, 8);
-  const cadence = policy.cadence === "weekdays" ? "工作日" : "每天";
-  const next = policy.nextRunAt === undefined ? "未排期" : policy.nextRunAt;
-  return [
-    `- ${id} [${policy.status}] ${cadence} ${policy.localTime} ${policy.timezone} ${policy.repo}`,
-    `  下次 ${next}，截止 ${policy.expiresAt}，版本 ${policy.version}`,
-    `  内容：${policy.goal}`,
-  ].join("\n");
-}
-
 export interface ParsedScheduleSpec {
   repo: string;
   localTime: string;
@@ -348,6 +311,8 @@ export class Router implements InboundHandler {
   readonly #preauthorization: PreauthorizationService;
   readonly #schedulePolicy?: SchedulePolicyService;
   readonly #state: StateReadService;
+  readonly #stateQuery: StateQueryHandler;
+  readonly #personalIntents: PersonalIntentHandler;
   readonly #budget?: BudgetService;
   readonly #model: RouterModel;
   readonly #wake: WakeScheduler;
@@ -372,6 +337,22 @@ export class Router implements InboundHandler {
     this.#wake = deps.wake;
     this.#now = deps.now ?? (() => new Date());
     this.#timezone = deps.defaultTimezone ?? "Asia/Shanghai";
+    this.#stateQuery = new StateQueryHandler({
+      tasks: deps.tasks,
+      state: deps.state,
+      store: deps.store,
+      now: this.#now,
+      timezone: this.#timezone,
+    });
+    this.#personalIntents = new PersonalIntentHandler({
+      store: deps.store,
+      memory: deps.memory,
+      confirmation: deps.confirmation,
+      reminders: deps.reminders,
+      schedulePolicy: deps.schedulePolicy,
+      now: this.#now,
+      timezone: this.#timezone,
+    });
   }
 
   install(dispatcher: EffectDispatcher): void {
@@ -531,6 +512,21 @@ export class Router implements InboundHandler {
         return { status: "done" };
       }
     }
+    if (this.#personalIntents.handles(decision.action)) {
+      const outcome = await this.#personalIntents.handle(decision, {
+        ownerId: context.ownerId,
+        conversationId: context.conversationId,
+        inboxId: context.inboxId,
+        text: context.text,
+      });
+      for (const item of outcome.replies) {
+        this.#reply(context, item.text, item.purpose);
+      }
+      if (outcome.wake === true) {
+        void this.#wake.wake();
+      }
+      return { status: "done" };
+    }
     switch (decision.action) {
       case "reply": {
         // A model reply must not invent current state. Explicit read
@@ -688,313 +684,6 @@ export class Router implements InboundHandler {
           return { status: "done" };
         }
         this.#answerStateQuery(context, query);
-        return { status: "done" };
-      }
-      case "save_memory": {
-        if (decision.key === undefined || decision.value === undefined) {
-          this.#reply(context, "请提供要记住的 key 和 value。");
-          return { status: "done" };
-        }
-        try {
-          const project = extractProjectFlag(context.text) ?? decision.project;
-          const created = this.#confirmation.create({
-            ownerId: context.ownerId,
-            conversationId: context.conversationId,
-            sourceInboxId: context.inboxId,
-            kind: "memory_save",
-            payload: { key: decision.key, value: decision.value, project },
-          });
-          const { confirmation } = created;
-          if (confirmation.status !== "pending") {
-            this.#reply(context, "该记忆确认已处理，无需重复确认。");
-            return { status: "done" };
-          }
-          const storedKey =
-            typeof confirmation.payload.key === "string"
-              ? confirmation.payload.key
-              : decision.key;
-          const storedValue =
-            typeof confirmation.payload.value === "string"
-              ? confirmation.payload.value
-              : decision.value;
-          const storedProject =
-            typeof confirmation.payload.project === "string"
-              ? confirmation.payload.project
-              : undefined;
-          this.#reply(
-            context,
-            `${created.inserted ? "" : "已存在同一消息的待确认项，展示原始内容：\n"}` +
-              `请确认是否记住：${storedProject === undefined ? "" : `[项目 ${storedProject}] `}${storedKey} = ${storedValue}\n` +
-              `回复 /确认 ${confirmation.id.slice(0, 8)}（10 分钟内有效）；` +
-              `/取消确认 ${confirmation.id.slice(0, 8)} 可撤销。`,
-            "status",
-          );
-        } catch (error) {
-          this.#reply(
-            context,
-            `无法发起记忆确认：${error instanceof Error ? error.message : String(error)}`,
-          );
-        }
-        return { status: "done" };
-      }
-      case "forget_memory": {
-        if (decision.key === undefined) {
-          this.#reply(context, "请提供要忘记的记忆 key。");
-          return { status: "done" };
-        }
-        try {
-          const project = extractProjectFlag(context.text) ?? decision.project;
-          const existing = this.#memory.get(context.ownerId, decision.key, project);
-          if (existing === undefined) {
-            this.#reply(
-              context,
-              `没有找到${project === undefined ? "" : `[项目 ${project}] `}记忆：${decision.key}`,
-              "failure",
-            );
-            return { status: "done" };
-          }
-          const created = this.#confirmation.create({
-            ownerId: context.ownerId,
-            conversationId: context.conversationId,
-            sourceInboxId: context.inboxId,
-            kind: "memory_save",
-            payload: {
-              operation: "forget",
-              key: decision.key,
-              project,
-            },
-          });
-          const { confirmation } = created;
-          if (confirmation.status !== "pending") {
-            this.#reply(context, "该记忆确认已处理，无需重复确认。");
-            return { status: "done" };
-          }
-          this.#reply(
-            context,
-            `${created.inserted ? "" : "已存在同一消息的待确认项，展示原始内容：\n"}` +
-              `请确认是否忘记：${project === undefined ? "" : `[项目 ${project}] `}${decision.key}\n` +
-              `回复 /确认 ${confirmation.id.slice(0, 8)}（10 分钟内有效）；` +
-              `/取消确认 ${confirmation.id.slice(0, 8)} 可撤销。`,
-            "status",
-          );
-        } catch (error) {
-          this.#reply(
-            context,
-            `无法发起记忆删除确认：${error instanceof Error ? error.message : String(error)}`,
-            "failure",
-          );
-        }
-        return { status: "done" };
-      }
-      case "remind": {
-        if (decision.dueAt === undefined || decision.text.trim().length === 0) {
-          this.#reply(context, "请提供提醒时间和内容。");
-          return { status: "done" };
-        }
-        try {
-          const timezone = decision.timezone ?? this.#timezone;
-          const parsed = new Date(decision.dueAt);
-          if (
-            Number.isNaN(parsed.getTime()) ||
-            parsed.getTime() <= this.#now().getTime()
-          ) {
-            this.#reply(context, "提醒时间无法解析或已经过去，请重新说明时间。");
-            return { status: "done" };
-          }
-          assertTimezone(timezone);
-          const minutes = Math.max(
-            1,
-            Math.min(10, Math.floor((parsed.getTime() - this.#now().getTime()) / 60_000)),
-          );
-          const created = this.#confirmation.create({
-            ownerId: context.ownerId,
-            conversationId: context.conversationId,
-            sourceInboxId: context.inboxId,
-            kind: "reminder_create",
-            payload: {
-              text: decision.text,
-              dueAt: parsed.toISOString(),
-              timezone,
-              runKey: `inbox:${context.inboxId}:reminder`,
-            },
-            expiresAt: parsed.toISOString(),
-          });
-          const { confirmation } = created;
-          if (confirmation.status !== "pending") {
-            this.#reply(context, "该提醒确认已处理，无需重复确认。");
-            return { status: "done" };
-          }
-          const storedDueAt =
-            typeof confirmation.payload.dueAt === "string"
-              ? confirmation.payload.dueAt
-              : parsed.toISOString();
-          const storedTimezone =
-            typeof confirmation.payload.timezone === "string"
-              ? confirmation.payload.timezone
-              : timezone;
-          const storedText =
-            typeof confirmation.payload.text === "string"
-              ? confirmation.payload.text
-              : decision.text;
-          const when = `${formatInTimezone(storedDueAt, storedTimezone)}（${storedTimezone}）`;
-          this.#reply(
-            context,
-            `${created.inserted ? "" : "已存在同一消息的待确认项，展示原始内容：\n"}` +
-              `请确认提醒：${when}\n${storedText}\n` +
-              `回复 /确认 ${confirmation.id.slice(0, 8)}（${minutes} 分钟内有效）；` +
-              `/取消确认 ${confirmation.id.slice(0, 8)} 可撤销。`,
-            "status",
-          );
-        } catch (error) {
-          this.#reply(
-            context,
-            `无法发起提醒确认：${error instanceof Error ? error.message : String(error)}`,
-          );
-        }
-        return { status: "done" };
-      }
-      case "cancel_reminder": {
-        const ref = decision.reminderRef ?? decision.scheduleId;
-        const resolution = resolveReminderReference(
-          context.ownerId,
-          ref,
-          this.#reminders.listPending(context.ownerId),
-        );
-        if (resolution.status === "ambiguous") {
-          this.#reply(context, formatReminderCandidates(resolution.items), "failure");
-          return { status: "done" };
-        }
-        if (resolution.status === "not_found") {
-          this.#reply(context, resolution.reason, "failure");
-          return { status: "done" };
-        }
-        const result = await this.#reminders.cancel(
-          resolution.item.id,
-          context.ownerId,
-        );
-        if (!result.ok) {
-          this.#reply(
-            context,
-            `无法取消提醒：${describeReminderCancelFailure(result.reason)}`,
-            "failure",
-          );
-        }
-        return { status: "done" };
-      }
-      case "draft_schedule": {
-        const service = this.#schedulePolicy;
-        if (service === undefined) {
-          this.#reply(context, "当前运行未启用周期计划。", "failure");
-          return { status: "done" };
-        }
-        const spec = decision.schedule;
-        const missing = [
-          spec?.repo === undefined ? "仓库（owner/name）" : undefined,
-          spec?.localTime === undefined ? "本地时间（HH:MM）" : undefined,
-          spec?.cadence === undefined ? "频率（每天/工作日）" : undefined,
-          spec?.goal === undefined ? "汇报内容" : undefined,
-        ].filter((item): item is string => item !== undefined);
-        if (missing.length > 0) {
-          this.#reply(
-            context,
-            `请补充周期计划：${missing.join("、")}。例如：工作日 09:00 总结 owner/name 的 PR。`,
-            "failure",
-          );
-          return { status: "done" };
-        }
-        try {
-          const result = service.createDraft(context.ownerId, context.conversationId, {
-            repo: spec?.repo as string,
-            localTime: spec?.localTime as string,
-            cadence: spec?.cadence as "daily" | "weekdays",
-            goal: spec?.goal as string,
-            timezone: spec?.timezone,
-            until: spec?.until,
-          });
-          if (!result.ok) {
-            this.#reply(context, `无法创建计划草稿：${result.reason}`, "failure");
-            return { status: "done" };
-          }
-          const receiver =
-            this.#store.getConversation(context.conversationId)?.platformConversationId ??
-            context.conversationId;
-          this.#reply(
-            context,
-            [
-              "已创建计划草稿（未激活，不会触发任务）：",
-              formatSchedulePolicy(result.policy, true),
-              `收件人：当前会话（${receiver}）`,
-              "确认后才会按上述频率、仓库与内容创建任务并回传。",
-              `确认：/schedule confirm ${result.policy.id}`,
-              `或直接回复“确认计划 ${result.policy.id.slice(0, 8)}”。`,
-              `取消：/schedule cancel ${result.policy.id}`,
-            ].join("\n"),
-            "status",
-          );
-        } catch (error) {
-          this.#reply(
-            context,
-            `无法创建计划草稿：${error instanceof Error ? error.message : String(error)}`,
-            "failure",
-          );
-        }
-        return { status: "done" };
-      }
-      case "confirm_schedule":
-      case "cancel_schedule": {
-        const service = this.#schedulePolicy;
-        if (service === undefined) {
-          this.#reply(context, "当前运行未启用周期计划。", "failure");
-          return { status: "done" };
-        }
-        const action: ScheduleAction =
-          decision.action === "confirm_schedule" ? "confirm" : "cancel";
-        if (
-          action === "confirm" &&
-          !/(?:确认|激活|启用|开启|同意|批准|可以|好的?|执行)/.test(context.text)
-        ) {
-          this.#reply(
-            context,
-            "激活周期计划需要明确确认。请回复“确认计划 <编号>”。",
-            "failure",
-          );
-          return { status: "done" };
-        }
-        const ref = decision.scheduleId ?? decision.scheduleRef;
-        const resolution = resolveScheduleReference(
-          context.ownerId,
-          ref,
-          service.list(context.ownerId),
-          action,
-        );
-        if (resolution.status === "ambiguous") {
-          this.#reply(
-            context,
-            formatScheduleCandidates(resolution.items, action),
-            "failure",
-          );
-          return { status: "done" };
-        }
-        if (resolution.status === "not_found") {
-          this.#reply(context, resolution.reason, "failure");
-          return { status: "done" };
-        }
-        const result =
-          action === "confirm"
-            ? service.confirm(context.ownerId, resolution.item.id)
-            : service.cancel(context.ownerId, resolution.item.id);
-        if (!result.ok) {
-          this.#reply(context, `无法${action === "confirm" ? "确认" : "取消"}计划：${result.reason}`, "failure");
-          return { status: "done" };
-        }
-        if (action === "confirm") {
-          void this.#wake.wake();
-        }
-        this.#reply(
-          context,
-          `${action === "confirm" ? "已确认并激活" : "已取消"}。\n${formatSchedulePolicy(result.policy, true)}`,
-          "status",
-        );
         return { status: "done" };
       }
       default: {
@@ -1839,7 +1528,7 @@ export class Router implements InboundHandler {
   }
 
   #rememberTaskFocus(conversationId: string, taskId: string): void {
-    this.#store.metaSet(`${TASK_FOCUS_PREFIX}${conversationId}`, taskId);
+    this.#store.metaSet(taskFocusKey(conversationId), taskId);
   }
 
   /**
@@ -1901,7 +1590,7 @@ export class Router implements InboundHandler {
       {
         activeOnly: true,
         preferredTaskId: this.#store.metaGet(
-          `${TASK_FOCUS_PREFIX}${context.conversationId}`,
+          taskFocusKey(context.conversationId),
         ),
         project: flagProject,
       },
@@ -1920,7 +1609,7 @@ export class Router implements InboundHandler {
 
   /**
    * Deterministic answer from the owner-scoped state service; no Worker and
-   * no model-authored facts. The audit row keeps the snapshot receipt.
+   * no model-authored facts. All resolution/audit lives in StateQueryHandler.
    */
   #answerStateQuery(
     context: {
@@ -1931,185 +1620,9 @@ export class Router implements InboundHandler {
     },
     requested?: StateQuery,
   ): void {
-    const text = context.text ?? "";
-    const flagProject = extractProjectFlag(text);
-    if (invalidProjectFlag(text, flagProject)) {
-      this.#reply(
-        context,
-        "项目名无效：只允许 1–64 位字母、数字、点、下划线或连字符。",
-        "failure",
-      );
-      return;
+    for (const item of this.#stateQuery.handle(context, requested)) {
+      this.#reply(context, item.text, item.purpose);
     }
-    const query = requested ?? inferStateQuery(text) ?? { target: "summary" };
-    // An explicit owner flag wins over a model-proposed scope.
-    const project = flagProject ?? query.project;
-    if (
-      project !== undefined &&
-      (query.target === "reminders" || query.target === "schedules")
-    ) {
-      this.#reply(
-        context,
-        "提醒和周期计划是 owner 级数据，不支持项目范围；请去掉项目筛选。",
-        "failure",
-      );
-      return;
-    }
-
-    let taskId: string | undefined;
-    if (query.target === "task") {
-      const explicitRef = query.taskId ?? query.taskRef;
-      const textRef =
-        explicitRef ??
-        (/(?:第\s*(?:\d+|[一二两三四五六七八九十]+)|刚才|刚刚|之前|那个|这个|上一个)/.test(
-          text,
-        )
-          ? text
-          : undefined);
-      if (textRef === undefined) {
-        this.#reply(
-          context,
-          "请说明要查询哪一个任务：给出任务编号、序号或“刚才那个任务”。",
-          "failure",
-        );
-        return;
-      }
-      const resolution =
-        query.taskId === undefined
-          ? resolveTaskReference(
-              context.ownerId,
-              context.conversationId,
-              textRef,
-              this.#tasks,
-              {
-                preferredTaskId: this.#store.metaGet(
-                  `${TASK_FOCUS_PREFIX}${context.conversationId}`,
-                ),
-                project,
-              },
-            )
-          : (() => {
-              const explicit = resolveTaskId(
-                context.ownerId,
-                query.taskId,
-                this.#tasks,
-              );
-              if (explicit.status === "ok") {
-                const task = this.#tasks.get(explicit.id);
-                return task === undefined ||
-                  (project !== undefined && task.mandate.project !== project)
-                  ? ({
-                      status: "not_found",
-                      reason: "找不到属于你的该任务。",
-                    } as const)
-                  : ({ status: "ok", task } as const);
-              }
-              if (explicit.status === "ambiguous") {
-                return {
-                  status: "ambiguous",
-                  candidates: explicit.ids
-                    .map((id) => this.#tasks.get(id))
-                    .filter((task): task is TaskRecord => task !== undefined),
-                } as const;
-              }
-              return {
-                status: "not_found",
-                reason: "找不到属于你的该任务。",
-              } as const;
-            })();
-      if (resolution.status === "ambiguous") {
-        this.#reply(context, formatTaskCandidates(resolution.candidates), "failure");
-        return;
-      }
-      if (resolution.status === "not_found") {
-        this.#reply(
-          context,
-          formatTaskNotFound(resolution.reason, textRef),
-          "failure",
-        );
-        return;
-      }
-      taskId = resolution.task.id;
-      this.#rememberTaskFocus(context.conversationId, taskId);
-    }
-
-    const tool: StateToolName =
-      query.target === "summary"
-        ? "state.summary"
-        : query.target === "tasks"
-          ? "task.list"
-          : query.target === "task"
-            ? "task.get"
-            : query.target === "reminders"
-              ? "reminder.list"
-              : query.target === "memories"
-                ? "memory.list"
-                : "schedule.list";
-
-    const args: Record<string, unknown> = {};
-    if (query.target === "tasks") {
-      args.limit = query.limit ?? 5;
-      args.offset = query.offset ?? 0;
-      if (query.status !== undefined) {
-        args.status = query.status;
-      }
-    } else if (query.target === "task") {
-      args.taskId = taskId;
-    } else if (
-      query.target === "reminders" ||
-      query.target === "memories" ||
-      query.target === "schedules"
-    ) {
-      args.limit = query.limit ?? 5;
-      args.offset = query.offset ?? 0;
-    }
-
-    let snapshot;
-    try {
-      snapshot = this.#state.read(
-        tool,
-        { ownerId: context.ownerId, project },
-        args,
-      );
-    } catch (error) {
-      this.#reply(
-        context,
-        `无法读取状态：${error instanceof Error ? error.message : String(error)}`,
-        "failure",
-      );
-      return;
-    }
-
-    this.#store.recordAudit({
-      event: "state.query",
-      subjectType: "owner",
-      subjectId: context.ownerId,
-      after: {
-        source: "router.state_query",
-        tool: snapshot.tool,
-        target: query.target,
-        args: snapshot.args,
-        project: project ?? null,
-        snapshotHash: snapshot.snapshotHash,
-        snapshotAt: snapshot.snapshotAt,
-        byteLength: snapshot.byteLength,
-      },
-      traceId: `inbox:${context.inboxId}`,
-      occurredAt: this.#now().toISOString(),
-    });
-
-    const body = formatStateQuery(snapshot, this.#timezone);
-    if (query.target !== "summary") {
-      this.#reply(context, body, "status");
-      return;
-    }
-    const service = [
-      `服务：受理 ${this.#store.countInbox("accepted")} 条，拒绝 ${this.#store.countInbox("rejected")} 条；`,
-      `待发送 ${this.#store.countOutbox("pending")} 条，` +
-        `待核对投递 ${this.#store.countOutbox("unknown")} 条，` +
-        `需人工 ${this.#store.countOutbox("needs_manual")} 条。`,
-    ].join("");
-    this.#reply(context, `${body}\n${service}`, "status");
   }
 
   #reply(
