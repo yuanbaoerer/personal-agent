@@ -1,5 +1,7 @@
 # Personal Agent
 
+> **当前优先交付（2026-11-19）：MVP Functional Ready**。在 v0.2 Reliable Core 主线内先实现可持续私有自用的主体功能，见 [21 · MVP 实施纲领](docs/21-mvp-functional-ready.md) 与 [#41 总任务](https://github.com/yuanbaoerer/personal-agent/issues/41)。首个实施任务为 [#38 状态感知](https://github.com/yuanbaoerer/personal-agent/issues/38)，随后 [#39 自然语言主入口](https://github.com/yuanbaoerer/personal-agent/issues/39)、真实 GitHub、常驻 Node、主动工作、预算安全与 14 条真实验收。现有 CLI/TUI 保留，暂停扩建非阻断能力。D19/D20 已记录部分真实飞书/模型/短提醒成功及状态类任务的语义缺陷；完整 G1–G3/E3/E4 和长期证明仍待验收。本文历史段落的 pending 以对应时点理解，不把 275 个确定性测试当真实业务通过。
+
 > **多端与跨平台规划（2026-11-14，2026-11-19 更新）**：长期支持 macOS（Apple Silicon / Intel）和 Windows 11 x64 的 CLI / TUI / Desktop，采用一个 Agent Core + 统一 Client API。**本地 Node 的最小 Client API / `pa` CLI / `pa tui` 已实现（E1）**；远程设备鉴权/TLS、SSE 重连与 WebSocket、真实 Terminal 验收和 Desktop 仍 pending。详见 [10 · 跨平台客户端规划](docs/10-client-platforms.md) 与 [20 · 本地 Client API](docs/20-local-client-api.md)。
 
 > **长期规划更新（2026-11-14）**：当前唯一工程主线为 v0.2 Reliable Core。完整的长期自用与开源规划见 [07 · 长期路线图](docs/07-long-term-roadmap.md)，评测门槛见 [08 · Evaluation](docs/08-evaluation.md)，开源与部署见 [09 · Open-source](docs/09-open-source-plan.md)，宿主选型见 [ADR-0001](docs/adr/0001-runtime-hosting.md)。这份规划不代表功能已经完成，下面的“当前阶段”仍为事实基线。实施任务以 GitHub Issues 为准。
