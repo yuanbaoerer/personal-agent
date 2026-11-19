@@ -105,6 +105,8 @@ export interface RouterDeps {
 }
 
 const GITHUB_REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+const REMIND_TIME_HINT =
+  /(?:\d{1,2}\s*[点:：时]|今天|明天|后天|大后天|下周|上午|下午|中午|晚上|早上)/;
 const REDIRECTABLE_CONTROL_ACTIONS: ReadonlySet<RouterDecision["action"]> = new Set([
   "supplement_task",
   "revise_task",
@@ -508,6 +510,19 @@ export class Router implements InboundHandler {
       // A read-only question misrouted as a control must not mutate anything.
       const query = inferStateQuery(context.text);
       if (query !== undefined) {
+        if (
+          decision.action === "remind" &&
+          REMIND_TIME_HINT.test(context.text)
+        ) {
+          // The message carries a time and a read phrase. Answering only the
+          // read would silently discard the reminder; ask for two steps.
+          this.#reply(
+            context,
+            "这条消息既包含提醒时间，又包含状态查询。请拆成两步：先说明要提醒的内容，再单独查询状态。",
+            "failure",
+          );
+          return { status: "done" };
+        }
         this.#answerStateQuery(context, query);
         return { status: "done" };
       }

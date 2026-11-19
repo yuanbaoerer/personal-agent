@@ -18,6 +18,7 @@ import {
   extractProjectFlag,
   formatReminderCandidates,
   formatScheduleCandidates,
+  invalidProjectFlag,
   resolveReminderReference,
   resolveScheduleReference,
   type ScheduleAction,
@@ -114,7 +115,14 @@ export class PersonalIntentHandler {
       return reply("请提供要记住的 key 和 value。");
     }
     try {
-      const project = extractProjectFlag(context.text) ?? decision.project;
+      const flagProject = extractProjectFlag(context.text);
+      if (invalidProjectFlag(context.text, flagProject)) {
+        return reply(
+          "项目名无效：只允许 1–64 位字母、数字、点、下划线或连字符。",
+          "failure",
+        );
+      }
+      const project = flagProject ?? decision.project;
       const created = this.#confirmation.create({
         ownerId: context.ownerId,
         conversationId: context.conversationId,
@@ -157,7 +165,14 @@ export class PersonalIntentHandler {
       return reply("请提供要忘记的记忆 key。");
     }
     try {
-      const project = extractProjectFlag(context.text) ?? decision.project;
+      const flagProject = extractProjectFlag(context.text);
+      if (invalidProjectFlag(context.text, flagProject)) {
+        return reply(
+          "项目名无效：只允许 1–64 位字母、数字、点、下划线或连字符。",
+          "failure",
+        );
+      }
+      const project = flagProject ?? decision.project;
       const existing = this.#memory.get(context.ownerId, decision.key, project);
       if (existing === undefined) {
         return reply(
@@ -352,9 +367,13 @@ export class PersonalIntentHandler {
     }
     const action: ScheduleAction =
       decision.action === "confirm_schedule" ? "confirm" : "cancel";
+    const questionLike =
+      /[?？]|(?:吗|呢|什么时候|何时|是否|能否|为什么|可以吗|行吗)/;
+    const explicitConfirmation =
+      /(?:确认|激活|启用|开启|同意|批准|执行)/;
     if (
       action === "confirm" &&
-      !/(?:确认|激活|启用|开启|同意|批准|可以|好的?|执行)/.test(context.text)
+      (questionLike.test(context.text) || !explicitConfirmation.test(context.text))
     ) {
       return reply(
         "激活周期计划需要明确确认。请回复“确认计划 <编号>”。",

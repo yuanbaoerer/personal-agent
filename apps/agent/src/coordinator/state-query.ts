@@ -604,7 +604,7 @@ export function inferStateQuery(text: string): StateQuery | undefined {
 }
 
 const CONTROL_MUTATION =
-  /(?:取消|停|修改|更新|改|补充|删除|移除|忘记|暂停|恢复|确认|拒绝|设置提醒|加提醒|记住|保存|发送|提交)/;
+  /(?:取消|停|修改|更新|改|补充|删除|移除|忘记|暂停|恢复|确认|拒绝|设置提醒|加提醒|记住(?!了)|保存|发送|提交)/;
 const CLAUSE_SPLIT = /[，,；;。]|(?:然后|接着|顺便|同时|之后)/;
 
 /**
