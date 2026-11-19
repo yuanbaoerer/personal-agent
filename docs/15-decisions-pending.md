@@ -168,14 +168,16 @@ npm run eval:report:critical  # CI 关键集
 - 实测问题：任务“用三点总结当前任务和提醒状态”拿到 `tools: []`，Worker 无法读取真实提醒，仍以 structural verifier 标记 succeeded；实际提醒存在。
 - 需决定：新增内置只读 `state.summary`/`reminder.list` 工具并自动批准，还是每次读取都走审批，或不允许 Worker 读取状态并强制 `needs_review`。
 - 建议：新增 owner-scope 只读工具，自动批准但不允许写；增加 `state-read` verifier，要求 succeeded Action 和状态快照；任务结果必须引用快照。先以 owner-only 自托管验证，不扩大资源。
-- [ ] 已审核：________________
+- 2026-11-19 已实施 #38 / PR #43：owner-scope 只读 `state.summary`/`task.list`/`task.get`/`reminder.list`/`memory.list`/`schedule.list`，窄范围自动批准，`state-read` verifier 校验当前 revision 回执、owner/project、快照完整性、实体存在和 citation。真实 E3（owner 在飞书客户端键入）仍 pending。
+- [x] 已审核：采用 owner-scope 只读 state 工具 + 窄范围自动批准
 
 ### D20 是否先修语义再进入 PA-16
 
 - 现状：真实 Feishu/模型/提醒链路可用；任务内容可完成但状态类任务可能未读取真实数据。
 - 需决定：是先实现 D19 并重跑真实任务，还是接受已知限制直接进入 PA-16 安装/发布候选。
 - 建议：先完成 D19 与一次真实复测，再进入 PA-16；否则发布候选会带着已验证的语义缺口。
-- [ ] 已审核：________________
+- 2026-11-19 已先完成 D19 语义修复与 E2+/E3-partial 复测；完整 E3 owner 键入仍 pending。
+- [x] 已审核：先修语义再进入后续
 
 ### D21 GitHub 授权模型（已选择：个人开发者 OAuth App）
 
