@@ -15,7 +15,7 @@
 | PA-14 数据资产 | E1 部分 | `7fe4f07`；备份 manifest v2、双库校验/恢复、agent JSON 导出；加密/保留/Pi 修复 pending |
 | PA-15 开源治理 | E1 部分 | `7017ca4`；SECURITY/CONTRIBUTING/CHANGELOG/模板、工作树/history secret scan、许可清单；LICENSE/历史/visibility pending |
 | 真实飞书验证修复 | 已提交 | `9f2e9a1` 裸 `ack`；`1ef8e81` 多行 slash 命令；短提醒投递通过 |
-| GitHub OAuth | E1 已实现，当前未配置 | `c0cf4d5`；OAuth App start/callback/status/disconnect、AES-GCM token、执行时 provider；真实 OAuth/G1 pending |
+| GitHub OAuth | E1 已实现，当前未配置 | `c0cf4d5` + `b83ca96`；OAuth App start/callback/status/disconnect、浏览器 admin 登录、AES-GCM token、执行时 provider；真实 OAuth/G1 pending |
 | PA-12/PA-13 部分 | E1/pending | 见路线图 |
 
 固定 40 场景分类为渠道 8、任务 10、权限 10、恢复 8、记忆 4。K01–K14 映射由 `evals/scenarios.ts` 维护；pending 不计入成功分母。报告命令：
