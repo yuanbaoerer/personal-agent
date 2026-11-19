@@ -30,7 +30,7 @@
 | Magpie 用量/预算：可选读取 quotas/usage/limit，OpenCode Go 窗口低于阈值或 key 限额时阻止新模型请求，`/usage` 附带订阅窗口 | 当前 Magpie 工作区无 OpenCode Go 卡；真实配额/重置未验证 |
 | 周期计划：草稿→确认、daily/weekdays、IANA 时区/DST、确定性 runKey、暂停/恢复/取消/修改、计划级 repo 只读授权、DO wake | 真实 Feishu/GitHub G3、生产 alarm 观察 |
 | 完成验证器：GitHub Action 回执/来源 URL、Action receipt、结构校验；needs_review 终态 + `/ack` | 真实 G1/G3 外部判据、文本人审质量 |
-| 274 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务；本地 API/CLI/TUI PTY smoke、SSE HTTP test、SQLite 重开 cursor；macos-26-arm64 + windows-2025-vs2026 CI 最新 run 44501584107（274 tests） | 远程 TLS/设备配对、分布式限流、完整 Agent/DO 重连、Windows 实机、真实中断演练 |
+| 275 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务；本地 API/CLI/TUI PTY smoke、SSE HTTP test、SQLite 重开 cursor；macos-26-arm64 + windows-2025-vs2026 CI 最新 run 44501584107（274 tests） | 远程 TLS/设备配对、分布式限流、完整 Agent/DO 重连、Windows 实机、真实中断演练 |
 
 
 ## 2. 下一步待办
@@ -406,7 +406,7 @@ npm run export:data -- --data ./data --out ./exports/agent.json
 | TUI | alternate screen、Tasks/Approvals/Reminders、j/k、cancel/approve/deny、增补/修订、提醒创建/文本/到期时间编辑/取消、换行/详情滚动、短终端底部提示、2s 刷新；只走 SDK | `tui.test.ts`；PTY 任务/提醒输入与 `q` 退出 |
 | 待定 | 远程 TLS/设备配对、代理层/分布式限流、SSE 跨进程重连/WS、macOS/Windows Terminal 实机、E3 | 需真实环境 |
 
-边界：E1；本地单 owner；TUI 覆盖任务取消、审批、增补、修订目标和提醒创建/文本/到期时间编辑/取消，并支持换行/详情滚动；完整平台验收仍 pending。全量 274 tests。
+边界：E1；本地单 owner；TUI 覆盖任务取消、审批、增补、修订目标和提醒创建/文本/到期时间编辑/取消，并支持换行/详情滚动；完整平台验收仍 pending。全量 275 tests。
 
 
 ## 3. 环境与密钥

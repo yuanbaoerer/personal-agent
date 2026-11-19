@@ -64,6 +64,8 @@ export PA_API_TOKEN=pa_...
 
 ## 3. HTTP 契约
 
+机器可读契约：[docs/api/openapi.json](api/openapi.json)（OpenAPI 3.1，`servers: /api/v1`，Bearer security，覆盖全部 21 条 path）。
+
 API 前缀 `/api/v1`，请求/响应 JSON，`cache-control: no-store`。
 
 | Method | Path | 说明 |
@@ -178,10 +180,11 @@ TUI 只通过 Client API，每 2 秒刷新；显示任务状态、目标、Actio
 - `apps/agent/test/sse-restart.test.ts`：SQLite 关闭/重开后 SSE cursor 继续。
 - `apps/agent/test/sse-kill.test.ts`：独立 child server SIGKILL/重启后 Last-Event-ID 继续。
 - `apps/agent/test/sse-main-kill.test.ts`：完整 `main.ts` 子进程 SIGKILL/重启后 API/SSE cursor 继续。
+- `apps/agent/test/openapi.test.ts`：OpenAPI path/method/security/ref 覆盖。
 - `apps/agent/test/cli.test.ts`：CLI/SDK header/idempotency、SSE 数据帧、错误映射、approve 必须有 `--yes`。
 - `apps/agent/test/tui.test.ts`：帧渲染、任务/审批绑定、增补/提醒输入/编辑提示、换行/详情滚动、短终端底部提示。
 - 本地 Node PTY smoke：`pa tui` 进入 alternate screen 并由 `q` 干净退出。
-- 全量 `npm test`：274 个确定性测试通过（2026-11-19）。
+- 全量 `npm test`：275 个确定性测试通过（2026-11-19）。
 
 仍 pending：
 
