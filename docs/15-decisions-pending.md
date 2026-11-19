@@ -16,8 +16,8 @@
 | PA-15 开源治理 | E1 部分 | `7017ca4`；SECURITY/CONTRIBUTING/CHANGELOG/模板、工作树/history secret scan、许可清单；LICENSE/历史/visibility pending |
 | 真实飞书验证修复 | 已提交 | `9f2e9a1` 裸 `ack`；`1ef8e81` 多行 slash 命令；短提醒投递通过 |
 | GitHub OAuth | E1 已实现，当前未配置 | `c0cf4d5` + `b83ca96`；OAuth App start/callback/status/disconnect、浏览器 admin 登录、AES-GCM token、执行时 provider；真实 OAuth/G1 pending |
-| PA-17 Client API / PA-18 CLI | E1 最小实现 | `b8fea74` + `6a89ad7` + `3851e93` + `ac44b91` + `d9a564c` + `a2f063e` + `85d5006` + `e88e7c9` + `044193c`；`/api/v1`、device token/scope/revoke/TTL、credential 600 + IP 1200 req/min 限流、幂等/修订/审批绑定、稳定 audit seq、轮询 + SSE 事件、`pa` CLI；远程 TLS/代理层限流/真实进程重连与 E3 pending |
-| PA-19 TUI | E1 最小实现 | `b8fea74` + `6a89ad7` + `3851e93` + `ac44b91` + `d9a564c` + `a2f063e` + `85d5006` + `e88e7c9` + `044193c`；Tasks/Approvals/Reminders、取消/批准/拒绝、增补/修订、提醒文本/到期编辑、换行/详情滚动、短终端底部提示、PTY smoke；平台终端与 E3 pending |
+| PA-17 Client API / PA-18 CLI | E1 最小实现 | `b8fea74` + `6a89ad7` + `3851e93` + `ac44b91` + `d9a564c` + `a2f063e` + `85d5006` + `e88e7c9` + `044193c` + `a1b488e`；`/api/v1`、device token/scope/revoke/TTL、credential 600 + IP 1200 req/min 限流、幂等/修订/审批绑定、稳定 audit seq、轮询 + SSE 事件、`pa` CLI；远程 TLS/代理层限流/真实进程重连与 E3 pending |
+| PA-19 TUI | E1 最小实现 | `b8fea74` + `6a89ad7` + `3851e93` + `ac44b91` + `d9a564c` + `a2f063e` + `85d5006` + `e88e7c9` + `044193c` + `a1b488e`；Tasks/Approvals/Reminders、取消/批准/拒绝、增补/修订、提醒文本/到期编辑、换行/详情滚动、短终端底部提示、PTY smoke；平台终端与 E3 pending |
 | PA-22 macOS CI | E1 部分 | `e88e7c9`；macos-26-arm64 job 首次成功（run `44495304676`，Node 26.12.0，271 tests、secret scan）；Windows、Intel、真实 Terminal 待验收 |
 | PA-12/PA-13 部分 | E1/pending | 见路线图 |
 
