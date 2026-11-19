@@ -18,7 +18,7 @@ import {
 } from "../actions/state.ts";
 import type { ActionRepository } from "../storage/actions.ts";
 
-export const VERIFIER_VERSION = "2026-11-19.1";
+export const VERIFIER_VERSION = "2026-11-20.3";
 
 export interface CompletionVerdict {
   verdict: TaskVerification["verdict"];
