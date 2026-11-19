@@ -1,5 +1,7 @@
 # 06 · 下一步待办与操作手册
 
+> **2026-11-19 当前执行队列**：以 [21 · MVP Functional Ready](21-mvp-functional-ready.md) 与 [#41](https://github.com/yuanbaoerer/personal-agent/issues/41) 为准，先修 #38（D19/D20）与 #39；并行配置真实飞书、模型、最小权限 GitHub、常驻 Node；验证双 Worker、重启、双库备份；后台预算和安全负例通过后激活周期汇报；按 14 条验收。已有 E1 功能不重复实现。本文后面的阶段性记录与旧优先级作为历史证据，新的近期顺序以上述检查点为准。
+
 > **2026-11-14 下一阶段索引**：PA-01～PA-16 Issue 为后续执行任务的权威清单，优先 PA-01/PA-02/PA-03。详见 [07 · 长期路线图](07-long-term-roadmap.md)、[08 · 评测标准](08-evaluation.md)、[09 · 开源复用](09-open-source-plan.md) 和 [ADR-0001](adr/0001-runtime-hosting.md)。本文件仍保存截至当前的操作手册与实际环境限制。
 
 
