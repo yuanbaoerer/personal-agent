@@ -30,7 +30,7 @@
 | Magpie 用量/预算：可选读取 quotas/usage/limit，OpenCode Go 窗口低于阈值或 key 限额时阻止新模型请求，`/usage` 附带订阅窗口 | 当前 Magpie 工作区无 OpenCode Go 卡；真实配额/重置未验证 |
 | 周期计划：草稿→确认、daily/weekdays、IANA 时区/DST、确定性 runKey、暂停/恢复/取消/修改、计划级 repo 只读授权、DO wake | 真实 Feishu/GitHub G3、生产 alarm 观察 |
 | 完成验证器：GitHub Action 回执/来源 URL、Action receipt、结构校验；needs_review 终态 + `/ack` | 真实 G1/G3 外部判据、文本人审质量 |
-| 272 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务；本地 API/CLI/TUI PTY smoke、SSE HTTP test、SQLite 重开 cursor；macos-26-arm64 CI 连续成功（最新 run 44497249108）；windows job 已加入待首次结果 | 远程 TLS/设备配对、分布式限流、真实进程/DO 重连、Windows 实机、真实中断演练 |
+| 272 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务；本地 API/CLI/TUI PTY smoke、SSE HTTP test、SQLite 重开 cursor；macos-26-arm64 CI 连续成功（最新 run 44497249108）；windows-2025-vs2026 job 首次成功（win32 x64，272 tests） | 远程 TLS/设备配对、分布式限流、真实进程/DO 重连、Windows 实机、真实中断演练 |
 
 
 ## 2. 下一步待办
