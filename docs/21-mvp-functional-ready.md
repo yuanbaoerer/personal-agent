@@ -1,6 +1,6 @@
 # 21 · MVP Functional Ready：私有自用主体功能实施纲领
 
-> 2026-11-20 · 总跟踪 [#41](https://github.com/yuanbaoerer/personal-agent/issues/41) · 实施基线 `b93e0ad`（MVP-01 PR #43 已合并）；MVP-02 PR #44 与 Intent Handler PR #46 已合并；当前 main `2fcafd6`。
+> 2026-11-20 · 总跟踪 [#41](https://github.com/yuanbaoerer/personal-agent/issues/41) · 实施基线 `b93e0ad`（MVP-01 PR #43 已合并）；后续 MVP-02、Intent Handler、事实核验、预算与安全映射 PR 已合并；最新 main 以仓库为准。
 > 这是 v0.2 Reliable Core 主线内的近期私有试用检查点，**不是新版本发布或放宽 v0.2/v0.3/v0.4 的正式门槛**。本文优先决定近期任务顺序；长期设计保留。
 
 ## 1. 目标与边界
