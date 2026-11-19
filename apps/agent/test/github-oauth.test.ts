@@ -73,6 +73,20 @@ describe("GitHub OAuth", () => {
     assert.ok(row);
     assert.ok(!row.token_ciphertext.includes("gho_test_access_token"));
     assert.ok(!JSON.stringify(status).includes("gho_test_access_token"));
+    const wrongKey = new GitHubOAuthService({
+      db: fixture.store.db,
+      ownerId: fixture.owner.id,
+      config: {
+        clientId: "client",
+        clientSecret: "secret",
+        redirectUri: "http://127.0.0.1:8787/oauth/github/callback",
+        scopes: ["public_repo"],
+        encryptionKey: Buffer.alloc(32, 9).toString("base64"),
+      },
+      fetch: (async () => new Response()) as typeof fetch,
+    });
+    assert.equal(wrongKey.status().connected, false);
+    assert.throws(() => wrongKey.accessToken());
     assert.equal(fixture.service.disconnect(), true);
     assert.equal(fixture.service.status().connected, false);
   });

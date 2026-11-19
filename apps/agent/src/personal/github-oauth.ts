@@ -233,6 +233,13 @@ export class GitHubOAuthService {
     if (row === undefined) {
       return { connected: false };
     }
+    try {
+      // Do not advertise a credential that the current key cannot decrypt
+      // (for example after restoring a DB with a different key).
+      decryptToken(row.token_ciphertext, this.#key);
+    } catch {
+      return { connected: false };
+    }
     return {
       connected: true,
       login: row.login,

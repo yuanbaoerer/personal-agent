@@ -29,14 +29,20 @@ ADMIN_TOKEN=...
 
 ## 3. 连接
 
-服务启动后，用 admin token 打开授权入口：
+服务启动后，浏览器打开：
+
+```text
+http://127.0.0.1:8787/oauth/github
+```
+
+首次输入 `ADMIN_TOKEN`。登录只建立 **HttpOnly、SameSite=Strict、1 小时** 的页面会话，不把 admin token 写入 cookie、URL 或日志。随后点击 **Connect / re-authorize GitHub** 完成 GitHub 授权。
+
+管理 API 仍可用 Bearer header；不接受 URL query token：
 
 ```bash
 curl -i -H "Authorization: Bearer $ADMIN_TOKEN" \
   http://127.0.0.1:8787/oauth/github/start
 ```
-
-把响应中的 `Location` 复制到浏览器打开。管理 token 只放在 `Authorization: Bearer` 头中，不接受 URL query token，避免上游代理/浏览器历史泄漏。
 
 授权回调后应看到 `GitHub connected as <login>`。回调只接受一次性 state（10 分钟），重复/过期 state 会被拒绝。
 
@@ -63,6 +69,7 @@ curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" http://127.0.0.1:8787/oauth
 ## 5. 边界
 
 - 单 owner；不支持多用户各自绑定 GitHub。
+- OAuth App 的 client id/secret/加密 key 目前仍需一次性写入 env；网页只负责 owner 登录与 GitHub 授权，不是 OAuth App 配置向导（见 D22）。
 - 无 token 自动刷新/轮换；OAuth App token 失效后重新授权。
 - Worker/DO 未接 OAuth，继续用 PAT。
 - 未接 GitHub App，因此私有仓库的细粒度只读权限仍受 OAuth scope 限制。

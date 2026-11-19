@@ -174,9 +174,16 @@ npm run eval:report:critical  # CI 关键集
 ### D21 GitHub 授权模型（已选择：个人开发者 OAuth App）
 
 - 2026-11-19 主人决定：先以个人开发者为主，支持 GitHub OAuth。
-- 已实现 E1：单 owner OAuth App web flow、一次性 state、AES-256-GCM 加密 token、执行时 token provider；白名单继续强制。Worker 仍使用 PAT，GitHub App/多用户绑定未实现。
+- 已实现 E1：单 owner OAuth App web flow、浏览器 admin 登录页、一次性 state、AES-256-GCM 加密 token、执行时 token provider；白名单继续强制。Worker 仍使用 PAT，GitHub App/多用户绑定未实现。
 - 仍需验收：真实 OAuth App 凭据、回调、撤销和 G1。私有仓库细粒度只读后续用 GitHub App 解决；OAuth `repo` scope 较宽，应用只发 GET。
 - [x] 已审核：个人开发者 OAuth App
+
+### D22 OAuth App 配置向导
+
+- 现状：浏览器可以完成 admin 登录和 GitHub 授权，但 OAuth App 的 client id/secret 与加密 key 仍需一次性写入 env。
+- 需决定：保留 env 配置，还是做 setup 网页把 client id/secret 加密存入 DB（需要 bootstrap key/文件、权限与轮换设计）。
+- 建议：v0.3 保留 env（最简单、密钥不落仓库）；若面向非技术个人用户，再做受 admin 保护的 setup 向导，并明确密钥备份/恢复。
+- [ ] 已审核：________________
 
 ## 3. 决策后的实施顺序
 

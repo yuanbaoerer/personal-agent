@@ -374,18 +374,18 @@ npm run export:data -- --data ./data --out ./exports/agent.json
 
 ### 2.20 2026-11-19 实施进展（GitHub OAuth，E1）
 
-```bash
-# 配置 OAuth App 后
-curl -i -H "Authorization: Bearer $ADMIN_TOKEN" \
-  http://127.0.0.1:8787/oauth/github/start
-curl -H "Authorization: Bearer $ADMIN_TOKEN" http://127.0.0.1:8787/oauth/github/status
+```text
+浏览器：http://127.0.0.1:8787/oauth/github
+输入一次 ADMIN_TOKEN → Connect GitHub
 ```
+
+管理 API 仍可用 Bearer header；不接受 URL query token。
 
 | 内容 | 实现 | 证据 |
 | --- | --- | --- |
 | OAuth flow | start 302、callback 换 token、一次性 state 10 分钟 | `github-oauth.test.ts` |
 | Token 保护 | AES-256-GCM 密文入库；status/日志不返回 token | 加密/日志测试 |
-| 路由保护 | start/status/disconnect 需 admin token；回调校验 state | `oauth-http.test.ts` |
+| 路由保护 | start/status/disconnect 需 admin token；浏览器登录使用 HttpOnly/SameSite cookie；回调校验 state | `oauth-http.test.ts` |
 | GitHub 工具 | `tokenProvider` 执行时解密；白名单仍强制 | `github.test.ts` |
 | 配置 | client id/secret/key 必须成组；redirect/scope | `config.test.ts`、preflight |
 | 边界 | 单 owner；Worker 仍 PAT；无 token 刷新；私有细粒度只读需 GitHub App | docs/19 |

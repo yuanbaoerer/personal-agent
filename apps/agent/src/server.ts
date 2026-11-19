@@ -1,4 +1,4 @@
-import { timingSafeEqual } from "node:crypto";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 
 import type { FeishuAdapter } from "./channels/feishu/adapter.ts";
@@ -33,7 +33,15 @@ export interface HttpServerDeps {
 
 class BodyTooLargeError extends Error {}
 
+const OAUTH_SESSION_COOKIE = "pa_oauth_session";
+const OAUTH_SESSION_TTL_MS = 60 * 60_000;
+
+interface OAuthSession {
+  expiresAt: number;
+}
+
 export function createHttpServer(deps: HttpServerDeps): Server {
+  const sessions = new Map<string, OAuthSession>();
   return createServer(async (request, response) => {
     const startedAt = Date.now();
     let status = 500;
@@ -48,7 +56,7 @@ export function createHttpServer(deps: HttpServerDeps): Server {
       }
 
       if (url.pathname.startsWith("/oauth/github")) {
-        status = await handleGitHubOAuth(request, response, url, deps);
+        status = await handleGitHubOAuth(request, response, url, deps, sessions);
         return;
       }
 
@@ -96,10 +104,53 @@ export function createHttpServer(deps: HttpServerDeps): Server {
   });
 }
 
+function parseCookies(request: IncomingMessage): Map<string, string> {
+  const cookies = new Map<string, string>();
+  const header = request.headers.cookie;
+  if (typeof header !== "string") {
+    return cookies;
+  }
+  for (const part of header.split(";")) {
+    const [name, ...values] = part.trim().split("=");
+    if (name !== undefined && name.length > 0) {
+      cookies.set(name, decodeURIComponent(values.join("=")));
+    }
+  }
+  return cookies;
+}
+
+function tokenMatches(expectedRaw: string, actual: string | undefined): boolean {
+  if (actual === undefined) {
+    return false;
+  }
+  const expected = Buffer.from(expectedRaw);
+  const provided = Buffer.from(actual);
+  return expected.length === provided.length && timingSafeEqual(expected, provided);
+}
+
+function hasValidSession(
+  request: IncomingMessage,
+  sessions: Map<string, OAuthSession>,
+): boolean {
+  const sessionId = parseCookies(request).get(OAUTH_SESSION_COOKIE);
+  if (sessionId === undefined) {
+    return false;
+  }
+  const session = sessions.get(sessionId);
+  if (session === undefined) {
+    return false;
+  }
+  if (session.expiresAt <= Date.now()) {
+    sessions.delete(sessionId);
+    return false;
+  }
+  return true;
+}
+
 function requestIsAuthorized(
   request: IncomingMessage,
-  _url: URL,
   adminToken: string | undefined,
+  sessions: Map<string, OAuthSession>,
 ): boolean {
   if (adminToken === undefined || adminToken.length === 0) {
     return false;
@@ -109,12 +160,7 @@ function requestIsAuthorized(
     typeof authorization === "string" && authorization.startsWith("Bearer ")
       ? authorization.slice("Bearer ".length)
       : undefined;
-  if (bearer === undefined) {
-    return false;
-  }
-  const expected = Buffer.from(adminToken);
-  const actual = Buffer.from(bearer);
-  return expected.length === actual.length && timingSafeEqual(expected, actual);
+  return tokenMatches(adminToken, bearer) || hasValidSession(request, sessions);
 }
 
 async function handleGitHubOAuth(
@@ -122,13 +168,69 @@ async function handleGitHubOAuth(
   response: ServerResponse,
   url: URL,
   deps: HttpServerDeps,
+  sessions: Map<string, OAuthSession>,
 ): Promise<number> {
   if (deps.oauth === undefined) {
     sendJson(response, 404, { error: "github_oauth_not_configured" });
     return 404;
   }
+  if (url.pathname === "/oauth/github") {
+    if (request.method !== "GET") {
+      sendJson(response, 405, { error: "method_not_allowed" });
+      return 405;
+    }
+    if (!requestIsAuthorized(request, deps.adminToken, sessions)) {
+      sendHtml(response, 200, oauthLoginPage(false));
+      return 200;
+    }
+    const status = deps.oauth.status();
+    sendHtml(response, 200, oauthDashboardPage(status));
+    return 200;
+  }
+  if (url.pathname === "/oauth/github/login") {
+    if (request.method !== "POST" || deps.adminToken === undefined) {
+      sendHtml(response, 401, "OAuth admin login is not available.");
+      return 401;
+    }
+    const body = new URLSearchParams(await readRawBody(request));
+    if (!tokenMatches(deps.adminToken, body.get("token") ?? undefined)) {
+      sendHtml(response, 401, oauthLoginPage(true));
+      return 401;
+    }
+    const sessionId = randomBytes(24).toString("base64url");
+    sessions.set(sessionId, { expiresAt: Date.now() + OAUTH_SESSION_TTL_MS });
+    const secure =
+      (request.socket as { encrypted?: boolean }).encrypted === true ||
+      request.headers["x-forwarded-proto"] === "https";
+    response.setHeader(
+      "set-cookie",
+      `${OAUTH_SESSION_COOKIE}=${encodeURIComponent(sessionId)}; Path=/oauth/github; HttpOnly; SameSite=Strict; Max-Age=${OAUTH_SESSION_TTL_MS / 1000}${secure ? "; Secure" : ""}`,
+    );
+    response.statusCode = 302;
+    response.setHeader("location", "/oauth/github");
+    response.end();
+    return 302;
+  }
+  if (url.pathname === "/oauth/github/logout") {
+    if (request.method !== "POST") {
+      sendJson(response, 405, { error: "method_not_allowed" });
+      return 405;
+    }
+    const sessionId = parseCookies(request).get(OAUTH_SESSION_COOKIE);
+    if (sessionId !== undefined) {
+      sessions.delete(sessionId);
+    }
+    response.setHeader(
+      "set-cookie",
+      `${OAUTH_SESSION_COOKIE}=; Path=/oauth/github; HttpOnly; SameSite=Strict; Max-Age=0`,
+    );
+    response.statusCode = 302;
+    response.setHeader("location", "/oauth/github");
+    response.end();
+    return 302;
+  }
   if (url.pathname === "/oauth/github/start") {
-    if (request.method !== "GET" || !requestIsAuthorized(request, url, deps.adminToken)) {
+    if (request.method !== "GET" || !requestIsAuthorized(request, deps.adminToken, sessions)) {
       sendJson(response, 401, { error: "unauthorized" });
       return 401;
     }
@@ -166,7 +268,7 @@ async function handleGitHubOAuth(
     }
   }
   if (url.pathname === "/oauth/github/status") {
-    if (request.method !== "GET" || !requestIsAuthorized(request, url, deps.adminToken)) {
+    if (request.method !== "GET" || !requestIsAuthorized(request, deps.adminToken, sessions)) {
       sendJson(response, 401, { error: "unauthorized" });
       return 401;
     }
@@ -174,7 +276,7 @@ async function handleGitHubOAuth(
     return 200;
   }
   if (url.pathname === "/oauth/github/disconnect") {
-    if (request.method !== "POST" || !requestIsAuthorized(request, url, deps.adminToken)) {
+    if (request.method !== "POST" || !requestIsAuthorized(request, deps.adminToken, sessions)) {
       sendJson(response, 401, { error: "unauthorized" });
       return 401;
     }
@@ -183,6 +285,29 @@ async function handleGitHubOAuth(
   }
   sendJson(response, 404, { error: "not_found" });
   return 404;
+}
+
+function oauthLoginPage(failed: boolean): string {
+  return `<!doctype html><meta charset="utf-8"><title>GitHub connection</title>
+<h1>Connect GitHub</h1>
+${failed ? "<p>Admin token was incorrect.</p>" : "<p>Enter the admin token once to open the GitHub connection page. It is kept in an HttpOnly session cookie for one hour.</p>"}
+<form method="post" action="/oauth/github/login">
+  <label>Admin token <input type="password" name="token" autocomplete="current-password" required></label>
+  <button type="submit">Continue</button>
+</form>`;
+}
+
+function oauthDashboardPage(status: GitHubOAuthStatus): string {
+  const connected = status.connected
+    ? `<p>Connected as <strong>${escapeHtml(status.login ?? "unknown")}</strong> (${escapeHtml(status.scopes ?? "")}).</p>
+       <form method="post" action="/oauth/github/disconnect"><button type="submit">Disconnect locally</button></form>`
+    : "<p>No GitHub account is connected.</p>";
+  return `<!doctype html><meta charset="utf-8"><title>GitHub connection</title>
+<h1>GitHub connection</h1>
+${connected}
+<p><a href="/oauth/github/start">Connect / re-authorize GitHub</a></p>
+<form method="post" action="/oauth/github/logout"><button type="submit">Log out of this page</button></form>
+${status.connected ? "<p>Disconnect deletes the local encrypted token only; revoke the grant in GitHub settings if needed.</p>" : ""}`;
 }
 
 function escapeHtml(value: string): string {

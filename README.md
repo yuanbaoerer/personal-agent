@@ -158,7 +158,7 @@ curl -fsS http://127.0.0.1:8787/healthz
 **2026-11-19 验证（GitHub OAuth，个人开发者 E1）：**
 
 - Node 入口新增 GitHub OAuth App 流程：`/oauth/github/start`、`/oauth/github/callback`、`/oauth/github/status`、`/oauth/github/disconnect`；admin token 保护 start/status/disconnect，state 一次性 10 分钟，回调只换 token。
-- OAuth token 使用 AES-256-GCM 加密写入 `pa_github_credentials`，`github.read` 每次执行时解密；不写日志、不返回 status。
+- OAuth token 使用 AES-256-GCM 加密写入 `pa_github_credentials`，`github.read` 每次执行时解密；不写日志、不返回 status。浏览器打开 `/oauth/github`，输入一次 `ADMIN_TOKEN` 后即可点击连接，无需 curl/URL query token。
 - 保留 `GITHUB_ALLOWED_REPOS` 白名单；OAuth 不等于全仓库访问。`repo` scope 较宽，应用只发 GET；私有仓库细粒度只读仍需 GitHub App。
 - 249 个确定性测试通过；真实 OAuth App/回调/G1 仍需配置与验收。
 - 文档：[19 · GitHub OAuth](docs/19-github-oauth.md)。
