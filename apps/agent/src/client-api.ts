@@ -127,6 +127,8 @@ function safeEqual(expected: string, actual: string): boolean {
   return left.length === right.length && timingSafeEqual(left, right);
 }
 
+const MANDATE_PROJECT_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
+
 function parseMandate(value: unknown): Mandate {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new ApiError(400, "invalid_mandate", "mandate must be an object");
@@ -136,7 +138,19 @@ function parseMandate(value: unknown): Mandate {
   const tools = parseStringArray(object.tools, "mandate.tools");
   const notes = object.notes === undefined ? undefined : parseString(object.notes, "mandate.notes", 2_000);
   const project =
-    object.project === undefined ? undefined : parseString(object.project, "mandate.project", 64);
+    object.project === undefined
+      ? undefined
+      : parseString(object.project, "mandate.project", 64);
+  if (
+    project !== undefined &&
+    !MANDATE_PROJECT_PATTERN.test(project)
+  ) {
+    throw new ApiError(
+      400,
+      "invalid_mandate",
+      "mandate.project must be 1-64 letters, digits, dot, underscore or dash",
+    );
+  }
   return { resources, tools, notes, project };
 }
 

@@ -37,6 +37,24 @@ export function isStateToolName(name: string): name is StateToolName {
   return (STATE_TOOL_NAMES as readonly string[]).includes(name);
 }
 
+/**
+ * Reminders and schedule policies have no project column. Their snapshots are
+ * intentionally owner-level even when the calling task is project-scoped.
+ */
+export function isOwnerLevelStateTool(name: string): boolean {
+  return name === "reminder.list" || name === "schedule.list";
+}
+
+/** Paginated list tools; receipts must cover the first page. */
+export function isListStateTool(name: string): boolean {
+  return (
+    name === "task.list" ||
+    name === "reminder.list" ||
+    name === "memory.list" ||
+    name === "schedule.list"
+  );
+}
+
 /** Hard caps: one receipt must fit comfortably in one model turn. */
 export const STATE_MAX_ITEMS = 20;
 export const STATE_DEFAULT_ITEMS = 5;
@@ -46,18 +64,6 @@ const TEXT_LIMIT = 200;
 const MEMORY_VALUE_LIMIT = 300;
 const RESULT_LIMIT = 500;
 const PROJECT_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
-
-const TASK_STATUSES: TaskStatus[] = [
-  "queued",
-  "running",
-  "waiting_user",
-  "waiting_external",
-  "succeeded",
-  "needs_review",
-  "failed",
-  "cancelling",
-  "cancelled",
-];
 
 export interface StateReadScope {
   ownerId: string;
@@ -127,21 +133,6 @@ function readListArgs(raw: Record<string, unknown>): ListArgs {
     limit: readInteger(raw.limit, "limit", 1, STATE_MAX_ITEMS, STATE_DEFAULT_ITEMS),
     offset: readInteger(raw.offset, "offset", 0, STATE_MAX_OFFSET, 0),
   };
-}
-
-function emptyTaskCounts(): Record<TaskStatus, number> {
-  return Object.fromEntries(TASK_STATUSES.map((status) => [status, 0])) as Record<
-    TaskStatus,
-    number
-  >;
-}
-
-function countTasks(tasks: readonly TaskRecord[]): Record<TaskStatus, number> {
-  const counts = emptyTaskCounts();
-  for (const task of tasks) {
-    counts[task.status] += 1;
-  }
-  return counts;
 }
 
 function taskProject(task: TaskRecord): string | undefined {
@@ -415,20 +406,14 @@ export class StateReadService {
   ): Record<string, unknown> {
     const ownerId = scope.ownerId;
     const project = scope.project;
-    const visibleTasks =
-      project === undefined
-        ? undefined
-        : this.#tasks
-            .listByOwner(ownerId, 1_000, 0)
-            .filter((task) => taskProject(task) === project);
     const counts =
-      visibleTasks === undefined
+      project === undefined
         ? this.#tasks.countsByOwner(ownerId)
-        : countTasks(visibleTasks);
+        : this.#tasks.countsByOwnerProject(ownerId, project);
     const recentSource =
-      visibleTasks === undefined
+      project === undefined
         ? this.#tasks.listByOwner(ownerId, 3, 0)
-        : visibleTasks.slice(0, 3);
+        : this.#tasks.listByOwnerProject(ownerId, project, 3, 0);
     const reminderNext = this.#schedules.listPendingByOwner(ownerId, 3, 0);
     const policyCounts = this.#schedulePolicies.countsByOwner(ownerId);
     return {
@@ -459,31 +444,27 @@ export class StateReadService {
     args: ListArgs,
   ): Record<string, unknown> {
     const project = scope.project;
-    if (project === undefined) {
-      const total = this.#tasks.countByOwner(scope.ownerId);
-      const tasks = this.#tasks.listByOwner(scope.ownerId, args.limit, args.offset);
-      return {
-        tool,
-        scope: { ownerId: scope.ownerId, project: null },
-        limit: args.limit,
-        offset: args.offset,
-        total,
-        returned: tasks.length,
-        tasks: tasks.map(taskBrief),
-      };
-    }
-    const visible = this.#tasks
-      .listByOwner(scope.ownerId, 1_000, 0)
-      .filter((task) => taskProject(task) === project);
-    const page = visible.slice(args.offset, args.offset + args.limit);
+    const total =
+      project === undefined
+        ? this.#tasks.countByOwner(scope.ownerId)
+        : this.#tasks.countByOwnerProject(scope.ownerId, project);
+    const tasks =
+      project === undefined
+        ? this.#tasks.listByOwner(scope.ownerId, args.limit, args.offset)
+        : this.#tasks.listByOwnerProject(
+            scope.ownerId,
+            project,
+            args.limit,
+            args.offset,
+          );
     return {
       tool,
-      scope: { ownerId: scope.ownerId, project },
+      scope: { ownerId: scope.ownerId, project: project ?? null },
       limit: args.limit,
       offset: args.offset,
-      total: visible.length,
-      returned: page.length,
-      tasks: page.map(taskBrief),
+      total,
+      returned: tasks.length,
+      tasks: tasks.map(taskBrief),
     };
   }
 
@@ -498,9 +479,15 @@ export class StateReadService {
       (scope.project === undefined || taskProject(task) === scope.project);
     let task = exact !== undefined && visible(exact) ? exact : undefined;
     if (task === undefined) {
-      const matches = this.#tasks
-        .listByOwner(scope.ownerId, 1_000, 0)
-        .filter((candidate) => candidate.id.startsWith(input) && visible(candidate));
+      const matches =
+        scope.project === undefined
+          ? this.#tasks.findByOwnerPrefix(scope.ownerId, input, 2)
+          : this.#tasks.findByOwnerProjectPrefix(
+              scope.ownerId,
+              scope.project,
+              input,
+              2,
+            );
       if (matches.length > 1) {
         throw new ToolRejectedError("taskId prefix matches more than one task");
       }
@@ -745,6 +732,9 @@ function trimSnapshot(
   maxBytes: number,
 ): Record<string, unknown> {
   const working = JSON.parse(JSON.stringify(snapshot)) as Record<string, unknown>;
+  // Include the marker in every size measurement so a trimmed page cannot
+  // land just over the cap after the marker is added.
+  working.truncated = true;
   const lists: { owner: Record<string, unknown>; key: string; countKey?: string }[] = [
     { owner: working, key: "memories", countKey: "returned" },
     { owner: working, key: "tasks", countKey: "returned" },
@@ -759,7 +749,6 @@ function trimSnapshot(
   if (typeof reminders === "object" && reminders !== null) {
     lists.push({ owner: reminders as Record<string, unknown>, key: "next" });
   }
-  let changed = false;
   while (new TextEncoder().encode(JSON.stringify(working)).length > maxBytes) {
     let trimmed = false;
     for (const list of lists) {
@@ -770,16 +759,12 @@ function trimSnapshot(
           list.owner[list.countKey] = value.length;
         }
         trimmed = true;
-        changed = true;
         break;
       }
     }
     if (!trimmed) {
       break;
     }
-  }
-  if (changed) {
-    working.truncated = true;
   }
   return working;
 }
@@ -941,8 +926,12 @@ export function formatStateSummary(
   const counts = body.tasks?.counts ?? {};
   const recent = body.tasks?.recent ?? [];
   const reminders = body.reminders?.next ?? [];
+  const scope =
+    body.scope?.project === null || body.scope?.project === undefined
+      ? "全局"
+      : `项目 ${body.scope.project}`;
   const lines: string[] = [
-    `状态快照（${snapshot.snapshotAt.slice(0, 19).replace("T", " ")}Z，${timezone}）：`,
+    `状态快照（${snapshot.snapshotAt.slice(0, 19).replace("T", " ")}Z，${timezone}，范围：${scope}）：`,
     `任务：排队 ${counts.queued ?? 0}，运行 ${counts.running ?? 0}，` +
       `等待 ${(counts.waiting_user ?? 0) + (counts.waiting_external ?? 0)}，` +
       `完成 ${counts.succeeded ?? 0}，待核对 ${counts.needs_review ?? 0}，` +

@@ -152,9 +152,12 @@ const STATE_QUERY_PATTERNS = [
   /(?:有哪些|有什么|查看|列出).{0,6}(?:任务|提醒)/,
   /(?:总结|汇总).{0,16}(?:任务|提醒)/,
   /(?:任务|提醒).{0,10}(?:总结|汇总)/,
+  /(?:任务|提醒).{0,8}(?:完成|进展|情况|怎么样|如何|多少|做完|未完成)/,
+  /(?:任务|提醒).{0,6}(?:吗|呢)/,
+  /最近.{0,6}(?:任务|提醒)/,
 ];
 const STATE_ACTION_VERBS =
-  /(?:创建|新建|添加|设置|修改|取消|删除|关闭|提醒我|安排|执行|做一个|帮我做)/;
+  /(?:创建|新建|添加|设置|修改|更新|改|结束|停|删除|取消|关闭|打开|清除|移除|重命名|调整|更换|记住|保存|记录|安排|执行|开始|暂停|恢复|批准|拒绝|补充|回答|发送|发给|提交|提醒(?:一下|下)?我|设(?:置|个)提醒|加(?:个)?提醒|做一个|帮我做)/;
 
 /**
  * Narrow, deterministic detection for explicit "what is my current state"
@@ -451,6 +454,13 @@ export class Router implements InboundHandler {
     // just because the window crossed the threshold while it was in flight.
     const budget = attempts <= 1 ? await this.#budget?.check() : undefined;
     if (budget !== undefined && !budget.ok) {
+      // A deterministic state answer uses no model request; use it as the
+      // budget-exhausted fallback instead of hiding real state behind a quota
+      // message. Mutation requests still get the explicit budget stop.
+      if (isExplicitStateQuery(text)) {
+        this.#answerStateQuery({ ownerId, conversationId, inboxId, text });
+        return { status: "done" };
+      }
       this.#reply(
         { ownerId, conversationId, inboxId },
         `模型请求已暂停：${budget.reason ?? "订阅额度不足"}。`,
@@ -781,15 +791,17 @@ export class Router implements InboundHandler {
       // completion verifier for already-authorized work.
       const nextTools = new Set(mandate.tools);
       const nextResources = new Set(mandate.resources);
+      const nextProject = mandate.project ?? null;
+      const currentProject = current.mandate.project ?? null;
       if (
-        (mandate.project !== undefined &&
-          mandate.project !== current.mandate.project) ||
+        nextProject !== currentProject ||
         current.mandate.tools.some((tool) => !nextTools.has(tool)) ||
         current.mandate.resources.some((resource) => !nextResources.has(resource))
       ) {
         return {
           ok: false,
-          reason: "修订不能缩小任务授权范围；需要更小范围时请新建任务。",
+          reason:
+            "修订不能改变项目范围或缩小任务授权；需要更换项目时请新建任务。",
         };
       }
     }
@@ -1531,8 +1543,19 @@ export class Router implements InboundHandler {
     ownerId: string;
     conversationId: string;
     inboxId: string;
+    text?: string;
   }): void {
-    const snapshot = this.#state.summary(context.ownerId);
+    const text = context.text ?? "";
+    const project = extractProjectFlag(text);
+    if (invalidProjectFlag(text, project)) {
+      this.#reply(
+        context,
+        "项目名无效：只允许 1–64 位字母、数字、点、下划线或连字符。",
+        "failure",
+      );
+      return;
+    }
+    const snapshot = this.#state.summary(context.ownerId, project);
     this.#store.recordAudit({
       event: "state.query",
       subjectType: "owner",
@@ -1540,6 +1563,7 @@ export class Router implements InboundHandler {
       after: {
         source: "router.state_query",
         tool: snapshot.tool,
+        project: project ?? null,
         snapshotHash: snapshot.snapshotHash,
         snapshotAt: snapshot.snapshotAt,
         byteLength: snapshot.byteLength,
@@ -1547,9 +1571,15 @@ export class Router implements InboundHandler {
       traceId: `inbox:${context.inboxId}`,
       occurredAt: this.#now().toISOString(),
     });
+    const service = [
+      `服务：受理 ${this.#store.countInbox("accepted")} 条，拒绝 ${this.#store.countInbox("rejected")} 条；`,
+      `待发送 ${this.#store.countOutbox("pending")} 条，` +
+        `待核对投递 ${this.#store.countOutbox("unknown")} 条，` +
+        `需人工 ${this.#store.countOutbox("needs_manual")} 条。`,
+    ].join("");
     this.#reply(
       context,
-      formatStateSummary(snapshot, this.#timezone),
+      `${formatStateSummary(snapshot, this.#timezone)}\n${service}`,
       "status",
     );
   }

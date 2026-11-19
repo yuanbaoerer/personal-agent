@@ -8,6 +8,7 @@ import {
   parseStateEvidence,
   snapshotEvidence,
   type StateReadScope,
+  type StateToolName,
 } from "../src/actions/state.ts";
 import { TaskCompletionVerifier } from "../src/coordinator/completion.ts";
 import { isExplicitStateQuery } from "../src/coordinator/router.ts";
@@ -128,12 +129,16 @@ function insertSucceededStateAction(
     ownerId?: string;
     taskRevision?: number;
     scope?: StateReadScope;
+    tool?: StateToolName;
+    args?: Record<string, unknown>;
     tamperSnapshot?: boolean;
     evidenceOwnerId?: string;
   } = {},
 ) {
   const scope = options.scope ?? ownerScope(services);
-  const snapshot = services.state.read("state.summary", scope, {});
+  const tool = options.tool ?? "state.summary";
+  const args = options.args ?? {};
+  const snapshot = services.state.read(tool, scope, args);
   const evidence = snapshotEvidence(snapshot) as Record<string, unknown>;
   if (options.evidenceOwnerId !== undefined) {
     evidence.ownerId = options.evidenceOwnerId;
@@ -150,9 +155,9 @@ function insertSucceededStateAction(
     taskId: task.id,
     taskRevision: options.taskRevision ?? task.revision,
     fencingToken: 1,
-    tool: "state.summary",
-    args: {},
-    argsHash: hashArgs("state.summary", {}),
+    tool,
+    args,
+    argsHash: hashArgs(tool, args),
     expiresAt: new Date(NOW.getTime() + 600_000).toISOString(),
     nonce: `nonce-${Math.random()}`,
     createdAt: NOW.toISOString(),
@@ -161,11 +166,42 @@ function insertSucceededStateAction(
     `UPDATE pa_actions SET status = 'succeeded', evidence_json = ?,
        external_ref = ?, updated_at = ? WHERE id = ?`,
     JSON.stringify(evidence),
-    `state:state.summary:${snapshot.snapshotHash.slice(0, 16)}`,
+    `state:${tool}:${snapshot.snapshotHash.slice(0, 16)}`,
     NOW.toISOString(),
     action.id,
   );
   return { action, snapshot, evidence };
+}
+
+function insertSucceededGithubAction(
+  services: TestServices,
+  task: TaskRecord,
+  repo = "owner/repo",
+) {
+  const args = { operation: "repo", repo };
+  const { action } = services.actions.insert({
+    ownerId: services.owner.id,
+    conversationId: services.conversation.id,
+    taskId: task.id,
+    taskRevision: task.revision,
+    fencingToken: 1,
+    tool: "github.read",
+    args,
+    argsHash: hashArgs("github.read", args),
+    expiresAt: new Date(NOW.getTime() + 600_000).toISOString(),
+    nonce: `nonce-${Math.random()}`,
+    createdAt: NOW.toISOString(),
+  });
+  const source = `https://github.com/${repo}`;
+  services.store.db.run(
+    `UPDATE pa_actions SET status = 'succeeded', evidence_json = ?,
+       external_ref = ?, updated_at = ? WHERE id = ?`,
+    JSON.stringify({ ...args, source }),
+    source,
+    NOW.toISOString(),
+    action.id,
+  );
+  return action;
 }
 
 function readBody(
@@ -235,6 +271,67 @@ describe("owner-scoped state tools", () => {
     );
   });
 
+  it("does not truncate project tasks behind the first 1000 owner rows", () => {
+    const services = setup();
+    const { task: alpha } = services.tasks.insert({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "project-cap:alpha",
+      goal: "old alpha task",
+      completionCriteria: "done",
+      mandate: {
+        resources: ["chat"],
+        tools: [],
+        project: "alpha",
+      },
+      createdAt: NOW.toISOString(),
+    });
+    for (let index = 0; index < 1_000; index += 1) {
+      services.tasks.insert({
+        ownerId: services.owner.id,
+        conversationId: services.conversation.id,
+        sourceKey: `project-cap:beta:${index}`,
+        goal: `beta task ${index}`,
+        completionCriteria: "done",
+        mandate: {
+          resources: ["chat"],
+          tools: [],
+          project: "beta",
+        },
+        createdAt: new Date(NOW.getTime() + (index + 1) * 1_000).toISOString(),
+      });
+    }
+
+    const summary = services.state.summary(services.owner.id, "alpha");
+    const body = summary.snapshot as {
+      tasks: { counts: Record<string, number>; recent: { id: string }[] };
+    };
+    assert.equal(body.tasks.counts.queued, 1);
+    assert.equal(body.tasks.recent[0]?.id, alpha.id);
+
+    const list = services.state.read(
+      "task.list",
+      ownerScope(services, "alpha"),
+      {},
+    );
+    const listBody = list.snapshot as {
+      total: number;
+      tasks: { id: string }[];
+    };
+    assert.equal(listBody.total, 1);
+    assert.equal(listBody.tasks[0]?.id, alpha.id);
+
+    const found = services.state.read(
+      "task.get",
+      ownerScope(services, "alpha"),
+      { taskId: alpha.id.slice(0, 8) },
+    );
+    assert.equal(
+      (found.snapshot as { task: { id: string } }).task.id,
+      alpha.id,
+    );
+  });
+
   it("reflects task status changes in a fresh snapshot", () => {
     const services = setup();
     const task = createStateTask(services, { tools: [], resources: ["chat"] });
@@ -277,7 +374,7 @@ describe("owner-scoped state tools", () => {
       kind: "p2p",
       createdAt: NOW.toISOString(),
     });
-    services.taskService.create({
+    const otherTask = services.taskService.create({
       ownerId: otherOwner.id,
       conversationId: otherConversation.id,
       sourceKey: "other:task",
@@ -335,6 +432,31 @@ describe("owner-scoped state tools", () => {
           { taskId: betaTask.id },
         ),
       ToolRejectedError,
+    );
+    assert.throws(
+      () =>
+        services.state.read(
+          "task.get",
+          ownerScope(services),
+          { taskId: otherTask.id },
+        ),
+      ToolRejectedError,
+    );
+    const ownerTasks = services.state.read("task.list", ownerScope(services), {});
+    assert.ok(
+      !(ownerTasks.snapshot as { tasks: { goal: string }[] }).tasks.some(
+        (item) => item.goal === "other task",
+      ),
+    );
+    const alphaTasks = services.state.read(
+      "task.list",
+      ownerScope(services, "alpha"),
+      {},
+    );
+    assert.ok(
+      !(alphaTasks.snapshot as { tasks: { goal: string }[] }).tasks.some(
+        (item) => item.goal === "beta task",
+      ),
     );
   });
 
@@ -524,6 +646,302 @@ describe("state read authorization and receipts", () => {
     );
   });
 
+  it("accepts owner-level list snapshots from a project-scoped task", async () => {
+    const services = setup();
+    await services.reminders.create({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      text: "project task reminder",
+      dueAt: new Date(NOW.getTime() + 3_600_000).toISOString(),
+      timezone: "UTC",
+    });
+    const task = createStateTask(services, {
+      tools: ["reminder.list", "schedule.list"],
+      project: "alpha",
+      key: "state:project-lists",
+    });
+    const assignment = claim(services);
+    services.taskService.report(
+      assignment.id,
+      assignment.fencingToken,
+      assignment.taskRevision,
+      {
+        status: "ready",
+        summary: "reading owner-level lists from a project task",
+        evidence: [{ kind: "state_snapshot", value: "pending" }],
+        proposedActions: [
+          { tool: "reminder.list", args: {} },
+          { tool: "schedule.list", args: {} },
+        ],
+      },
+    );
+    const actions = await settleAllActions(services, task.id, 2);
+    const citations = actions.map((action) => {
+      const evidence = parseStateEvidence(action.evidence);
+      assert.ok(evidence);
+      assert.equal(evidence.project, "alpha");
+      return { kind: "state_snapshot", value: evidence.snapshotHash };
+    });
+    services.runtime.defaultAnswer = {
+      status: "answered",
+      text: JSON.stringify(readyReport(citations)),
+    };
+    await services.effectDispatcher.drain(20);
+
+    const current = services.tasks.get(task.id);
+    assert.equal(current?.status, "succeeded");
+    assert.equal(current?.verification?.missing.length, 0);
+  });
+
+  it("verifies a mixed GitHub and state mandate", () => {
+    const services = setup();
+    const task = services.taskService.create({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "state:mixed-github",
+      goal: "read repo and current state",
+      completionCriteria: JSON.stringify({
+        repo: "owner/repo",
+        requiredEvidenceKinds: ["github", "state_snapshot"],
+      }),
+      mandate: {
+        resources: ["chat", "github", "state"],
+        tools: ["github.read", "state.summary"],
+      },
+    });
+    const state = insertSucceededStateAction(services, task);
+    insertSucceededGithubAction(services, task);
+    const verifier = new TaskCompletionVerifier({
+      actions: services.actions,
+      state: services.state,
+      now: () => NOW,
+    });
+    const verdict = verifier.verify(
+      task,
+      readyReport([
+        { kind: "github", value: "https://github.com/owner/repo" },
+        { kind: "state_snapshot", value: state.snapshot.snapshotHash },
+      ]),
+    );
+    assert.equal(verdict.verdict, "succeeded");
+    assert.equal(verdict.verification.verifier, "github-read");
+    assert.ok(
+      verdict.verification.checked.includes(
+        "claim:snapshot_cited:state.summary",
+      ),
+    );
+  });
+
+  it("uses the newest receipt when one state tool ran twice in a revision", () => {
+    const services = setup();
+    const task = createStateTask(services, {
+      tools: ["state.summary"],
+      key: "state:two-receipts",
+    });
+    const first = insertSucceededStateAction(services, task);
+    services.tasks.insert({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "state:two-receipts:extra",
+      goal: "extra task for a new snapshot",
+      completionCriteria: "done",
+      mandate: { resources: ["chat"], tools: [] },
+      createdAt: new Date(NOW.getTime() + 1_000).toISOString(),
+    });
+    const second = insertSucceededStateAction(services, task);
+    assert.notEqual(first.snapshot.snapshotHash, second.snapshot.snapshotHash);
+
+    const verifier = new TaskCompletionVerifier({
+      actions: services.actions,
+      state: services.state,
+      now: () => NOW,
+    });
+    const verdict = verifier.verify(
+      task,
+      readyReport([
+        { kind: "state_snapshot", value: second.snapshot.snapshotHash },
+      ]),
+    );
+    assert.equal(verdict.verdict, "succeeded");
+  });
+
+  it("rejects a snapshot timestamp outside the action execution window", () => {
+    const services = setup();
+    const task = createStateTask(services, {
+      tools: ["state.summary"],
+      key: "state:time-window",
+    });
+    const state = insertSucceededStateAction(services, task);
+    services.store.db.run(
+      "UPDATE pa_actions SET updated_at = ? WHERE id = ?",
+      new Date(NOW.getTime() - 10_000).toISOString(),
+      state.action.id,
+    );
+    const verifier = new TaskCompletionVerifier({
+      actions: services.actions,
+      state: services.state,
+      now: () => NOW,
+    });
+    const verdict = verifier.verify(
+      task,
+      readyReport([
+        { kind: "state_snapshot", value: state.snapshot.snapshotHash },
+      ]),
+    );
+    assert.equal(verdict.verdict, "needs_review");
+    assert.ok(
+      verdict.verification.missing.includes(
+        "provenance:snapshot_time_outside_action",
+      ),
+    );
+  });
+
+  it("rejects a snapshot whose memory entity was removed", () => {
+    const services = setup();
+    services.memory.save(services.owner.id, "temporary", "value");
+    const task = createStateTask(services, {
+      tools: ["memory.list"],
+      key: "state:entity-removed",
+    });
+    const state = insertSucceededStateAction(services, task, {
+      tool: "memory.list",
+    });
+    services.memory.forget(services.owner.id, "temporary");
+    const verifier = new TaskCompletionVerifier({
+      actions: services.actions,
+      state: services.state,
+      now: () => NOW,
+    });
+    const verdict = verifier.verify(
+      task,
+      readyReport([
+        { kind: "state_snapshot", value: state.snapshot.snapshotHash },
+      ]),
+    );
+    assert.equal(verdict.verdict, "needs_review");
+    assert.ok(
+      verdict.verification.missing.some((item) =>
+        item.startsWith("provenance:snapshot_memory_missing"),
+      ),
+    );
+  });
+
+  it("rejects a tail or empty list page as a completion receipt", () => {
+    const services = setup();
+    const task = createStateTask(services, {
+      tools: ["task.list"],
+      key: "state:empty-page",
+    });
+    const state = insertSucceededStateAction(services, task, {
+      tool: "task.list",
+      args: { limit: 5, offset: 10_000 },
+    });
+    const verifier = new TaskCompletionVerifier({
+      actions: services.actions,
+      state: services.state,
+      now: () => NOW,
+    });
+    const verdict = verifier.verify(
+      task,
+      readyReport([
+        { kind: "state_snapshot", value: state.snapshot.snapshotHash },
+      ]),
+    );
+    assert.equal(verdict.verdict, "needs_review");
+    assert.ok(verdict.verification.missing.includes("provenance:page_not_first"));
+    assert.ok(verdict.verification.missing.includes("provenance:empty_page"));
+  });
+
+  it("rejects a receipt read before the latest owner supplement", () => {
+    let clock = NOW;
+    const services = createServices({ now: () => clock });
+    const { task } = services.tasks.insert({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "state:stale-input",
+      goal: "state task with later input",
+      completionCriteria: "done",
+      mandate: { resources: ["chat", "state"], tools: ["state.summary"] },
+      createdAt: NOW.toISOString(),
+    });
+    const first = claim(services);
+    assert.equal(first.taskRevision, task.revision);
+    const state = insertSucceededStateAction(services, task);
+    services.taskService.report(
+      first.id,
+      first.fencingToken,
+      first.taskRevision,
+      { status: "working", summary: "continuing", evidence: [] },
+    );
+
+    clock = new Date(NOW.getTime() + 60_000);
+    services.taskService.supplement(task.id, "new owner input", "inbox:later");
+    const next = services.tasks.claimNext(
+      clock.toISOString(),
+      60_000,
+      2,
+    );
+    assert.ok(next);
+    services.taskService.report(
+      next.assignment.id,
+      next.assignment.fencingToken,
+      next.assignment.taskRevision,
+      readyReport([
+        { kind: "state_snapshot", value: state.snapshot.snapshotHash },
+      ]),
+    );
+    const current = services.tasks.get(task.id);
+    assert.equal(current?.status, "needs_review");
+    assert.ok(
+      current?.verification?.missing.includes(
+        "provenance:snapshot_before_latest_input",
+      ),
+    );
+  });
+
+  it("does not reconcile a state read after its task is cancelled", async () => {
+    const services = setup();
+    const { task } = services.tasks.insert({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "state:reconcile-cancel",
+      goal: "cancelled state task",
+      completionCriteria: "done",
+      mandate: { resources: ["chat", "state"], tools: ["state.summary"] },
+      createdAt: NOW.toISOString(),
+    });
+    const assignment = claim(services);
+    const { action } = services.actions.insert({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      taskId: task.id,
+      taskRevision: assignment.taskRevision,
+      fencingToken: assignment.fencingToken,
+      tool: "state.summary",
+      args: {},
+      argsHash: hashArgs("state.summary", {}),
+      expiresAt: new Date(NOW.getTime() + 600_000).toISOString(),
+      nonce: `nonce-${Math.random()}`,
+      createdAt: NOW.toISOString(),
+    });
+    services.store.db.run(
+      "UPDATE pa_actions SET status = 'unknown', updated_at = ? WHERE id = ?",
+      NOW.toISOString(),
+      action.id,
+    );
+    services.taskService.cancel(task.id);
+
+    await services.actionService.handleReconcile({ actionId: action.id }, 1);
+
+    assert.equal(services.actions.get(action.id)?.status, "superseded");
+    const text = services.store
+      .listRecentOutbox(20)
+      .map((row) => row.text)
+      .join("\n");
+    assert.match(text, /未核对/);
+    assert.doesNotMatch(text, /state_snapshot|ownerId/);
+  });
+
   it("does not accept a report that fails to cite the snapshot", async () => {
     const services = setup();
     const task = createStateTask(services, {
@@ -634,6 +1052,45 @@ describe("state read authorization and receipts", () => {
     assert.equal(verdict.verification.verifier, "state-read");
   });
 
+  it("rejects removing a project scope through revision", async () => {
+    const services = setup();
+    const { task } = services.tasks.insert({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "state:revise-project",
+      goal: "project task",
+      completionCriteria: "done",
+      mandate: {
+        resources: ["chat", "state"],
+        tools: ["state.summary"],
+        project: "alpha",
+      },
+      createdAt: NOW.toISOString(),
+    });
+    services.model.push({
+      action: "revise_task",
+      text: "",
+      taskId: task.id,
+      changes: {
+        mandate: {
+          resources: ["chat", "state"],
+          tools: ["state.summary"],
+        },
+      },
+    });
+    await sendText(services, `修改任务 ${task.id}`, "evt_revise_project");
+    const current = services.tasks.get(task.id);
+    assert.equal(current?.mandate.project, "alpha");
+    assert.equal(current?.revision, task.revision);
+    assert.match(
+      services.store
+        .listRecentOutbox(20)
+        .map((row) => row.text)
+        .join("\n"),
+      /不能改变项目范围/,
+    );
+  });
+
   it("keeps project memory reads inside the task's mandate project", async () => {
     const services = setup();
     services.memory.save(services.owner.id, "global", "g");
@@ -707,6 +1164,103 @@ describe("deterministic status answers", () => {
     );
   });
 
+  it("answers an explicit state question even when the model budget is exhausted", async () => {
+    const services = createServices({
+      now: () => NOW,
+      budget: {
+        async check() {
+          return { ok: false, reason: "quota exhausted" };
+        },
+        async summaryText() {
+          return "quota exhausted";
+        },
+      },
+    });
+    services.tasks.insert({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "status:budget-task",
+      goal: "budget guard task",
+      completionCriteria: "done",
+      mandate: { resources: ["chat"], tools: [] },
+      createdAt: NOW.toISOString(),
+    });
+    await sendText(services, "现在有哪些任务和提醒", "evt_state_budget");
+    const text = services.store
+      .listRecentOutbox(20)
+      .map((row) => row.text)
+      .join("\n");
+    assert.match(text, /budget guard task/);
+    assert.doesNotMatch(text, /模型请求已暂停/);
+  });
+
+  it("does not replace a mutation with a state snapshot when budget is exhausted", async () => {
+    const services = createServices({
+      now: () => NOW,
+      budget: {
+        async check() {
+          return { ok: false, reason: "quota exhausted" };
+        },
+        async summaryText() {
+          return "quota exhausted";
+        },
+      },
+    });
+    const { task } = services.tasks.insert({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "status:budget-mutation",
+      goal: "mutation target",
+      completionCriteria: "done",
+      mandate: { resources: ["chat"], tools: [] },
+      createdAt: NOW.toISOString(),
+    });
+    await sendText(services, "把当前任务的目标改一下", "evt_budget_mutation");
+    const text = services.store
+      .listRecentOutbox(20)
+      .map((row) => row.text)
+      .join("\n");
+    assert.match(text, /模型请求已暂停/);
+    assert.doesNotMatch(text, /状态快照/);
+    assert.equal(services.tasks.get(task.id)?.goal, "mutation target");
+  });
+
+  it("scopes deterministic status answers to an explicit project flag", async () => {
+    const services = setup();
+    services.tasks.insert({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "status:project-alpha",
+      goal: "alpha project task",
+      completionCriteria: "done",
+      mandate: { resources: ["chat"], tools: [], project: "alpha" },
+      createdAt: NOW.toISOString(),
+    });
+    services.tasks.insert({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "status:project-beta",
+      goal: "beta project task",
+      completionCriteria: "done",
+      mandate: { resources: ["chat"], tools: [], project: "beta" },
+      createdAt: new Date(NOW.getTime() + 1_000).toISOString(),
+    });
+    services.model.push({ action: "query_status", text: "" });
+    await sendText(
+      services,
+      "--project=alpha 当前任务和提醒",
+      "evt_project_status",
+    );
+    const text = services.store
+      .listRecentOutbox(20)
+      .map((row) => row.text)
+      .join("\n");
+    assert.match(text, /alpha project task/);
+    assert.doesNotMatch(text, /beta project task/);
+    assert.match(text, /范围：项目 alpha/);
+    assert.match(text, /服务：受理/);
+  });
+
   it("overrides a model reply or empty-mandate task for an explicit state question", async () => {
     const services = setup();
     services.tasks.insert({
@@ -761,6 +1315,13 @@ describe("deterministic status answers", () => {
     assert.equal(isExplicitStateQuery("提醒我明天上午十点开会"), false);
     assert.equal(isExplicitStateQuery("取消当前任务"), false);
     assert.equal(isExplicitStateQuery("创建一个任务提醒我交报告"), false);
+    assert.equal(isExplicitStateQuery("记住我的偏好，再总结当前任务和提醒"), false);
+    assert.equal(isExplicitStateQuery("把当前任务的目标改一下"), false);
+    assert.equal(isExplicitStateQuery("更新当前任务的完成条件"), false);
+    assert.equal(isExplicitStateQuery("结束当前任务"), false);
+    assert.equal(isExplicitStateQuery("明天提醒一下我查看任务"), false);
+    assert.equal(isExplicitStateQuery("我的任务都完成了吗"), true);
+    assert.equal(isExplicitStateQuery("最近任务进展如何"), true);
   });
 
   it("normalizes Router state mandates and completion criteria", async () => {

@@ -65,6 +65,10 @@ interface TaskInputRow {
   created_at: string;
 }
 
+function likePrefix(prefix: string): string {
+  return `${prefix.replace(/[\\%_]/g, (value) => `\\${value}`)}%`;
+}
+
 function mapTask(row: TaskRow): TaskRecord {
   return {
     id: row.id,
@@ -226,6 +230,107 @@ export class TaskRepository {
         ownerId,
         limit,
         offset,
+      )
+      .map(mapTask);
+  }
+
+  listByOwnerProject(
+    ownerId: string,
+    project: string,
+    limit = 20,
+    offset = 0,
+  ): TaskRecord[] {
+    return this.#db
+      .all<TaskRow>(
+        `SELECT * FROM pa_tasks
+         WHERE owner_id = ? AND json_extract(mandate_json, '$.project') = ?
+         ORDER BY created_at DESC, rowid DESC
+         LIMIT ? OFFSET ?`,
+        ownerId,
+        project,
+        limit,
+        offset,
+      )
+      .map(mapTask);
+  }
+
+  countByOwnerProject(ownerId: string, project: string): number {
+    const row = this.#db.all<{ count: number }>(
+      `SELECT COUNT(*) AS count FROM pa_tasks
+       WHERE owner_id = ? AND json_extract(mandate_json, '$.project') = ?`,
+      ownerId,
+      project,
+    )[0];
+    return Number(row?.count ?? 0);
+  }
+
+  countsByOwnerProject(
+    ownerId: string,
+    project: string,
+  ): Record<TaskStatus, number> {
+    const counts = Object.fromEntries(
+      [
+        "queued",
+        "running",
+        "waiting_user",
+        "waiting_external",
+        "succeeded",
+        "needs_review",
+        "failed",
+        "cancelling",
+        "cancelled",
+      ].map((status) => [status, 0]),
+    ) as Record<TaskStatus, number>;
+    const rows = this.#db.all<{ status: TaskStatus; needs_review: number; count: number }>(
+      `SELECT status, needs_review, COUNT(*) AS count
+       FROM pa_tasks
+       WHERE owner_id = ? AND json_extract(mandate_json, '$.project') = ?
+       GROUP BY status, needs_review`,
+      ownerId,
+      project,
+    );
+    for (const row of rows) {
+      const status =
+        row.status === "waiting_user" && Number(row.needs_review) === 1
+          ? "needs_review"
+          : row.status;
+      counts[status] += Number(row.count);
+    }
+    return counts;
+  }
+
+  findByOwnerPrefix(ownerId: string, prefix: string, limit = 2): TaskRecord[] {
+    return this.#db
+      .all<TaskRow>(
+        `SELECT * FROM pa_tasks
+         WHERE owner_id = ? AND id LIKE ? ESCAPE '\\'
+         ORDER BY created_at DESC, rowid DESC
+         LIMIT ?`,
+        ownerId,
+        likePrefix(prefix),
+        limit,
+      )
+      .map(mapTask);
+  }
+
+  findByOwnerProjectPrefix(
+    ownerId: string,
+    project: string,
+    prefix: string,
+    limit = 2,
+  ): TaskRecord[] {
+    return this.#db
+      .all<TaskRow>(
+        `SELECT * FROM pa_tasks
+         WHERE owner_id = ?
+           AND json_extract(mandate_json, '$.project') = ?
+           AND id LIKE ? ESCAPE '\\'
+         ORDER BY created_at DESC, rowid DESC
+         LIMIT ?`,
+        ownerId,
+        project,
+        likePrefix(prefix),
+        limit,
       )
       .map(mapTask);
   }
