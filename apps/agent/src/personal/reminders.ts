@@ -190,10 +190,21 @@ export class ReminderService {
   async update(
     scheduleId: string,
     ownerId: string,
-    text: string,
+    changes: { text?: string; dueAt?: string; timezone?: string },
   ): Promise<{ ok: boolean; reason?: string; schedule?: ScheduleRecord }> {
-    const normalized = text.trim();
-    if (normalized.length === 0 || normalized.length > 1_000) {
+    if (
+      changes.text === undefined &&
+      changes.dueAt === undefined &&
+      changes.timezone === undefined
+    ) {
+      return { ok: false, reason: "no_changes" };
+    }
+    const normalizedText =
+      changes.text === undefined ? undefined : changes.text.trim();
+    if (
+      normalizedText !== undefined &&
+      (normalizedText.length === 0 || normalizedText.length > 1_000)
+    ) {
       return { ok: false, reason: "invalid_text" };
     }
     const schedule = this.#schedules.get(scheduleId);
@@ -206,20 +217,105 @@ export class ReminderService {
     if (schedule.status !== "pending") {
       return { ok: false, reason: `schedule_${schedule.status}` };
     }
-    const now = this.#now().toISOString();
-    const updated = this.#schedules.updateText(scheduleId, ownerId, normalized, now);
+
+    const nowDate = this.#now();
+    const due =
+      changes.dueAt === undefined ? new Date(schedule.dueAt) : new Date(changes.dueAt);
+    if (Number.isNaN(due.getTime())) {
+      return { ok: false, reason: "invalid_due_at" };
+    }
+    if (changes.dueAt !== undefined && due.getTime() <= nowDate.getTime()) {
+      return { ok: false, reason: "due_at_not_future" };
+    }
+    const timezone = changes.timezone ?? schedule.timezone;
+    try {
+      assertTimezone(timezone);
+    } catch {
+      return { ok: false, reason: "invalid_timezone" };
+    }
+
+    const dueChanged = due.toISOString() !== schedule.dueAt;
+    const ttlMs = Math.max(
+      60_000,
+      new Date(schedule.expiresAt).getTime() - new Date(schedule.dueAt).getTime(),
+    );
+    const expiresAt = dueChanged
+      ? new Date(due.getTime() + ttlMs).toISOString()
+      : undefined;
+    const now = nowDate.toISOString();
+    const updated = this.#schedules.updatePending(
+      scheduleId,
+      ownerId,
+      {
+        text: normalizedText,
+        dueAt: dueChanged ? due.toISOString() : undefined,
+        timezone: changes.timezone,
+        expiresAt,
+      },
+      now,
+    );
     if (updated === undefined) {
       return { ok: false, reason: "schedule_not_pending" };
     }
+
+    if (dueChanged) {
+      try {
+        await this.#timer.cancel(scheduleId);
+        await this.#timer.schedule(updated);
+      } catch (error) {
+        // Restore the old row and timer; the owner must not be told a
+        // reschedule succeeded when the host timer rejected it.
+        this.#schedules.updatePending(
+          scheduleId,
+          ownerId,
+          {
+            text: schedule.text,
+            dueAt: schedule.dueAt,
+            timezone: schedule.timezone,
+            expiresAt: schedule.expiresAt,
+          },
+          now,
+        );
+        try {
+          await this.#timer.schedule(schedule);
+        } catch {
+          // Maintenance polling remains the fallback.
+        }
+        this.#store.recordAudit({
+          event: "schedule.timer_failed",
+          subjectType: "schedule",
+          subjectId: scheduleId,
+          after: {
+            runKey: schedule.runKey,
+            error: error instanceof Error ? error.message : String(error),
+          },
+          traceId: `schedule:${scheduleId}`,
+          occurredAt: now,
+        });
+        return { ok: false, reason: "timer_failed" };
+      }
+    }
+
     this.#store.recordAudit({
       event: "schedule.updated",
       subjectType: "schedule",
       subjectId: updated.id,
-      after: { runKey: updated.runKey },
+      after: {
+        runKey: updated.runKey,
+        dueAt: updated.dueAt,
+        timezone: updated.timezone,
+      },
       traceId: `schedule:${updated.id}`,
       occurredAt: now,
     });
-    this.#reply(updated, "status", "提醒已更新。", `updated:${randomUUID()}`);
+    this.#reply(
+      updated,
+      "status",
+      dueChanged
+        ? `提醒已更新：${formatInTimezone(updated.dueAt, updated.timezone)}（${updated.timezone}）。`
+        : "提醒已更新。",
+      `updated:${randomUUID()}`,
+    );
     return { ok: true, schedule: updated };
   }
 

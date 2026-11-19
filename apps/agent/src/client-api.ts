@@ -770,10 +770,23 @@ export class ClientApiService {
 
   async #updateReminder(id: string, request: ClientApiRequest): Promise<ClientApiResponse> {
     const body = parseJsonBody(request);
-    const text = parseString(body.text, "text", 1_000);
-    const result = await this.#services.reminders.update(id, this.#ownerId, text);
+    const changes: { text?: string; dueAt?: string; timezone?: string } = {};
+    if (body.text !== undefined) changes.text = parseString(body.text, "text", 1_000);
+    if (body.dueAt !== undefined) {
+      changes.dueAt = this.#parseFutureDateTime(body.dueAt, "dueAt");
+    }
+    if (body.timezone !== undefined) {
+      changes.timezone = parseString(body.timezone, "timezone", 100);
+    }
+    if (Object.keys(changes).length === 0) {
+      throw new ApiError(400, "no_changes");
+    }
+    const result = await this.#services.reminders.update(id, this.#ownerId, changes);
     if (!result.ok) {
-      throw new ApiError(result.reason === "schedule_not_found" ? 404 : 409, result.reason ?? "reminder_failed");
+      throw new ApiError(
+        result.reason === "schedule_not_found" ? 404 : 409,
+        result.reason ?? "reminder_failed",
+      );
     }
     return { status: 200, body: { reminder: result.schedule } };
   }

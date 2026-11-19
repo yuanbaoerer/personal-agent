@@ -37,7 +37,7 @@ Usage:
   pa memory forget <key> [--project NAME]
   pa reminders list
   pa reminders create <text> --at ISO --timezone ZONE
-  pa reminders edit <id> <text>
+  pa reminders edit <id> [text] [--at ISO] [--timezone ZONE]
   pa reminders cancel <id>
   pa events [--after CURSOR] [--limit N] [--follow]
   pa tokens create --name NAME [--scopes read,write,approve] [--ttl-days N]
@@ -370,8 +370,16 @@ export async function runCli(
         if (sub === "edit") {
           const id = requirePositional(args, 1, "reminder id");
           const text = args.positionals.slice(2).join(" ").trim();
-          if (text.length === 0) throw new Error("reminder text is required");
-          const reminder = await client.updateReminder(id, text);
+          const dueAt = flagString(args.flags, "at");
+          const timezone = flagString(args.flags, "timezone");
+          if (text.length === 0 && dueAt === undefined && timezone === undefined) {
+            throw new Error("provide reminder text, --at, or --timezone");
+          }
+          const reminder = await client.updateReminder(id, {
+            text: text.length === 0 ? undefined : text,
+            dueAt,
+            timezone,
+          });
           if (json) printJson(io, { reminder });
           else io.out(formatReminder(reminder));
           return 0;

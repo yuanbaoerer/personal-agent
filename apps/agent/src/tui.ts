@@ -32,6 +32,12 @@ type InputState =
       label: string;
       reminderId: string;
       value: string;
+    }
+  | {
+      kind: "reminder-due-edit";
+      label: string;
+      reminderId: string;
+      value: string;
     };
 
 export interface TuiState {
@@ -106,7 +112,7 @@ export function renderFrame(state: TuiState, width: number, height: number): str
       ? "Tasks  [tab] next  [j/k] select  [s] supplement  [v] revise  [c] cancel  [r] refresh  [q] quit"
       : state.mode === "approvals"
         ? "Approvals  [tab] next  [j/k] select  [a] approve  [d] deny  [r] refresh  [q] quit"
-        : "Reminders  [tab] next  [j/k] select  [n] new  [e] edit  [x] cancel  [r] refresh  [q] quit",
+        : "Reminders  [tab] next  [j/k] select  [n] new  [e] edit  [d] due  [x] cancel  [r] refresh  [q] quit",
   );
   lines.push("─".repeat(widthSafe));
 
@@ -327,8 +333,17 @@ export async function runTui(client: ClientApiClient, io: TuiIo = {
     state.busy = true;
     try {
       if (input.kind === "reminder-edit") {
-        await client.updateReminder(input.reminderId, input.value);
+        await client.updateReminder(input.reminderId, { text: input.value });
         state.message = "Reminder updated.";
+      } else if (input.kind === "reminder-due-edit") {
+        if (Number.isNaN(new Date(input.value).getTime())) {
+          state.message = "Due time must be a valid ISO timestamp.";
+          return;
+        }
+        await client.updateReminder(input.reminderId, {
+          dueAt: new Date(input.value).toISOString(),
+        });
+        state.message = "Reminder due time updated.";
       } else if (input.kind === "supplement") {
         await client.supplementTask(input.taskId, input.value, randomUUID());
         state.message = "Supplement accepted.";
@@ -397,7 +412,15 @@ export async function runTui(client: ClientApiClient, io: TuiIo = {
         draw();
         return true;
       }
-      if (input.kind === "reminder-edit") {
+      if (input.kind === "reminder-edit" || input.kind === "reminder-due-edit") {
+        if (
+          input.kind === "reminder-due-edit" &&
+          Number.isNaN(new Date(input.value).getTime())
+        ) {
+          state.message = "Due time must be a valid ISO timestamp.";
+          draw();
+          return true;
+        }
         state.input = undefined;
         state.message = "Updating reminder…";
         void submitInput(input);
@@ -536,6 +559,19 @@ export async function runTui(client: ClientApiClient, io: TuiIo = {
       state.input = {
         kind: "reminder-edit",
         label: "New reminder text",
+        reminderId: reminder.id,
+        value: "",
+      };
+      state.message = "";
+      draw();
+      return;
+    }
+    if (name === "d" && state.mode === "reminders") {
+      const reminder = state.reminders[state.selected];
+      if (reminder === undefined || reminder.status !== "pending") return;
+      state.input = {
+        kind: "reminder-due-edit",
+        label: "New due at (ISO)",
         reminderId: reminder.id,
         value: "",
       };

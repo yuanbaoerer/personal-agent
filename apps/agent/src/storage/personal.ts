@@ -188,18 +188,31 @@ export class ScheduleRepository {
     );
   }
 
-  /** Update text only while the reminder is still pending. */
-  updateText(
+  /** Update mutable fields only while the reminder is still pending. */
+  updatePending(
     id: string,
     ownerId: string,
-    text: string,
+    changes: {
+      text?: string;
+      dueAt?: string;
+      timezone?: string;
+      expiresAt?: string;
+    },
     now: string,
   ): ScheduleRecord | undefined {
     const row = this.#db.all<ScheduleRow>(
-      `UPDATE pa_schedules SET text = ?, updated_at = ?
+      `UPDATE pa_schedules SET
+         text = COALESCE(?, text),
+         due_at = COALESCE(?, due_at),
+         timezone = COALESCE(?, timezone),
+         expires_at = COALESCE(?, expires_at),
+         updated_at = ?
        WHERE id = ? AND owner_id = ? AND status = 'pending'
        RETURNING *`,
-      text,
+      changes.text ?? null,
+      changes.dueAt ?? null,
+      changes.timezone ?? null,
+      changes.expiresAt ?? null,
       now,
       id,
       ownerId,

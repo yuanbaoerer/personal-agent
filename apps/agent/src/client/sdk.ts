@@ -231,10 +231,13 @@ export class ClientApiClient {
     return result.reminder;
   }
 
-  async updateReminder(id: string, text: string): Promise<ScheduleRecord> {
+  async updateReminder(
+    id: string,
+    changes: { text?: string; dueAt?: string; timezone?: string },
+  ): Promise<ScheduleRecord> {
     const result = await this.#request<{ reminder: ScheduleRecord }>(
       `/reminders/${encodeURIComponent(id)}`,
-      { method: "PATCH", body: { text } },
+      { method: "PATCH", body: changes },
     );
     return result.reminder;
   }
