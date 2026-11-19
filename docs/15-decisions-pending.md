@@ -1,5 +1,7 @@
 # 15 · 实施进度与待决策事项
 
+> **2026-11-19 MVP 决策执行顺序**：采用 [21 · MVP Functional Ready](21-mvp-functional-ready.md) 作为当前实施优先级，跟踪 [#41](https://github.com/yuanbaoerer/personal-agent/issues/41)。D19/D20 的状态语义修复由 #38 承接，#39 补自然语言能力；D21 已选 OAuth App 保留，真实 GitHub 可先用 repo-scoped read-only PAT 验证。D01/D03 的 Provider/预算、真实凭据、常驻机器、副作用范围仍需 owner 配置或确认；D07 推荐长连接、D09 保持 provisional，D22 等扩展/发行后置。不能把仓库修改授权视为授权使用真实凭据或产生支出；未决项复选框不自动勾选。
+
 > 更新：2026-11-19。仅列需要主人/产品负责人决定的事项；工程可确定的内容仍直接实施。
 >
 > **全局状态**：本地 Node 核心闭环 + `/api/v1`/CLI/TUI + SSE + OpenAPI + macOS/Windows CI + clean-install smoke 均为 E1 可用；真实 Feishu/模型/DO 驱逐、第二开发者安装、真实 Terminal 和 E3 仍 pending。
