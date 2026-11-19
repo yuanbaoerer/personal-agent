@@ -182,6 +182,7 @@ describe("sqlite backup", () => {
         verifiedAt: START.toISOString(),
       });
       assert.equal(owner.id.length > 0, true);
+      store.close();
       await createBackup({
         dataDir,
         outDir: backupDir,
