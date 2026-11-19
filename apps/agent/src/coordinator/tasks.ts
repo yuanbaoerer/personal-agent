@@ -20,6 +20,7 @@ import type { Store } from "../storage/store.ts";
 import type { EffectDispatcher, EffectOutcome } from "../delivery/effects.ts";
 import type { BudgetService } from "../observability/magpie.ts";
 import type { AgentRuntime, WakeScheduler } from "../runtime/types.ts";
+import { isStateToolName, type StateReadService } from "../actions/state.ts";
 import { TaskCompletionVerifier } from "./completion.ts";
 
 export interface ActionProposer {
@@ -47,6 +48,7 @@ export interface TaskServiceDeps {
   budget?: BudgetService;
   completionVerifier?: TaskCompletionVerifier;
   memories?: MemoryRepository;
+  state?: StateReadService;
 }
 
 export interface CreateTaskInput {
@@ -114,7 +116,11 @@ export class TaskService {
     this.#budget = deps.budget;
     this.#completion =
       deps.completionVerifier ??
-      new TaskCompletionVerifier({ actions: deps.actions, now: this.#now });
+      new TaskCompletionVerifier({
+        actions: deps.actions,
+        state: deps.state,
+        now: this.#now,
+      });
     this.#memories = deps.memories;
   }
 
@@ -720,10 +726,7 @@ export class TaskService {
       // it here; finalized actions are no longer proposed, so this is safe.
       const unfinalized = this.#actions
         .listByTask(task.id)
-        .filter(
-          (action) =>
-            action.status === "proposed" && action.preauthorizationId !== undefined,
-        )
+        .filter((action) => action.status === "proposed")
         .map((action) => action.id);
       if (unfinalized.length > 0) {
         this.#proposer?.finalizeReportedActions?.(unfinalized);
@@ -831,7 +834,7 @@ export class TaskService {
           remainingApprovals > 0 ? "clarify" : "status",
           remainingApprovals > 0
             ? `任务需要主人批准 ${remainingApprovals} 个动作后继续。`
-            : `任务已按只读预授权执行 ${result.autoApprove.length} 个动作，等待结果。`,
+            : `任务已按只读授权执行 ${result.autoApprove.length} 个动作，等待结果。`,
           remainingApprovals > 0
             ? `approval-needed:${assignment.id}`
             : `preauthorized:${assignment.id}`,
@@ -1203,6 +1206,15 @@ function workerPrompt(
     `Completion criteria: ${task.completionCriteria}`,
     `Mandate: ${JSON.stringify(task.mandate)}`,
   ];
+  const stateTools = task.mandate.tools.filter(isStateToolName);
+  if (stateTools.length > 0) {
+    lines.push(
+      "Internal state tools are read-only and owner-scoped. Propose them as actions;",
+      "their executor receipts will appear under previous action results on the next assignment.",
+      'When ready, cite every verified receipt with evidence {"kind":"state_snapshot","value":"<snapshotHash>"}.',
+      "Do not state task, reminder, memory or schedule facts that are not in those snapshots.",
+    );
+  }
   if (inputs.length > 0) {
     lines.push(
       `Owner input (authoritative, ${inputs.length} item(s); a ready report must address all of them):`,

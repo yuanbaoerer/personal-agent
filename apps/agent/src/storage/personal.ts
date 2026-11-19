@@ -128,17 +128,41 @@ export class ScheduleRepository {
     return row === undefined ? undefined : mapSchedule(row);
   }
 
-  listByOwner(ownerId: string, limit = 20): ScheduleRecord[] {
+  listByOwner(ownerId: string, limit = 20, offset = 0): ScheduleRecord[] {
     return this.#db
       .all<ScheduleRow>(
         `SELECT * FROM pa_schedules
          WHERE owner_id = ?
-         ORDER BY due_at ASC
-         LIMIT ?`,
+         ORDER BY due_at ASC, rowid ASC
+         LIMIT ? OFFSET ?`,
         ownerId,
         limit,
+        offset,
       )
       .map(mapSchedule);
+  }
+
+  listPendingByOwner(ownerId: string, limit = 20, offset = 0): ScheduleRecord[] {
+    return this.#db
+      .all<ScheduleRow>(
+        `SELECT * FROM pa_schedules
+         WHERE owner_id = ? AND status = 'pending'
+         ORDER BY due_at ASC, rowid ASC
+         LIMIT ? OFFSET ?`,
+        ownerId,
+        limit,
+        offset,
+      )
+      .map(mapSchedule);
+  }
+
+  countPendingByOwner(ownerId: string): number {
+    const row = this.#db.all<{ count: number }>(
+      `SELECT COUNT(*) AS count FROM pa_schedules
+       WHERE owner_id = ? AND status = 'pending'`,
+      ownerId,
+    )[0];
+    return Number(row?.count ?? 0);
   }
 
   listDue(now: string, limit = 50): ScheduleRecord[] {
@@ -292,7 +316,12 @@ export class MemoryRepository {
   }
 
   /** Global memories plus the task's project; never another project. */
-  listApplicable(ownerId: string, project?: string): MemoryRecord[] {
+  listApplicable(
+    ownerId: string,
+    project?: string,
+    limit = 20,
+    offset = 0,
+  ): MemoryRecord[] {
     return this.#db
       .all<MemoryRow>(
         `SELECT * FROM pa_memories
@@ -300,11 +329,24 @@ export class MemoryRepository {
            AND (project = '' OR project = ?)
          ORDER BY CASE WHEN project = '' THEN 1 ELSE 0 END,
                   updated_at DESC, key ASC
-         LIMIT 20`,
+         LIMIT ? OFFSET ?`,
         ownerId,
         project ?? "",
+        limit,
+        offset,
       )
       .map(mapMemory);
+  }
+
+  /** Counts global memories only when `project` is omitted. */
+  countActive(ownerId: string, project?: string): number {
+    const row = this.#db.all<{ count: number }>(
+      `SELECT COUNT(*) AS count FROM pa_memories
+       WHERE owner_id = ? AND status = 'active' AND project = ?`,
+      ownerId,
+      project ?? "",
+    )[0];
+    return Number(row?.count ?? 0);
   }
 
   softDelete(

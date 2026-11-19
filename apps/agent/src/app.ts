@@ -1,4 +1,5 @@
 import { ActionService } from "./actions/service.ts";
+import { StateReadService } from "./actions/state.ts";
 import { createDefaultToolRegistry } from "./actions/tools.ts";
 import type { ToolRegistry } from "./actions/tools.ts";
 import type { GitHubReadConfig } from "./actions/github.ts";
@@ -62,6 +63,7 @@ export interface AppServices {
   confirmation: ConfirmationService;
   preauthorization: PreauthorizationService;
   schedulePolicy: SchedulePolicyService;
+  state: StateReadService;
   budget?: MagpieBudget;
   router: Router;
   ingress: IngressService;
@@ -85,7 +87,14 @@ export function createApp(deps: AppDeps): AppServices {
   const confirmations = new ConfirmationRepository(db);
   const preauthorizations = new PreauthorizationRepository(db);
   const schedulePolicies = new SchedulePolicyRepository(db);
-  const { registry } = createDefaultToolRegistry(store, deps.now, deps.github);
+  const state = new StateReadService({
+    tasks,
+    schedules,
+    memories,
+    schedulePolicies,
+    now: deps.now,
+  });
+  const { registry } = createDefaultToolRegistry(store, deps.now, deps.github, state);
   deps.registerTools?.(registry);
 
   const taskService = new TaskService({
@@ -99,6 +108,7 @@ export function createApp(deps: AppDeps): AppServices {
     maxActiveWorkers: deps.maxActiveWorkers,
     budget,
     memories,
+    state,
   });
   const preauthorization = new PreauthorizationService({
     store,
@@ -153,6 +163,7 @@ export function createApp(deps: AppDeps): AppServices {
     confirmation,
     preauthorization,
     schedulePolicy,
+    state,
     budget,
     model: deps.model,
     wake: deps.wake,
@@ -182,6 +193,7 @@ export function createApp(deps: AppDeps): AppServices {
     confirmation,
     preauthorization,
     schedulePolicy,
+    state,
     budget,
     router,
     ingress,

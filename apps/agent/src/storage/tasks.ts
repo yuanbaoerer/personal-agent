@@ -216,17 +216,58 @@ export class TaskRepository {
     return row === undefined ? undefined : mapTask(row);
   }
 
-  listByOwner(ownerId: string, limit = 20): TaskRecord[] {
+  listByOwner(ownerId: string, limit = 20, offset = 0): TaskRecord[] {
     return this.#db
       .all<TaskRow>(
         `SELECT * FROM pa_tasks
          WHERE owner_id = ?
-         ORDER BY created_at DESC
-         LIMIT ?`,
+         ORDER BY created_at DESC, rowid DESC
+         LIMIT ? OFFSET ?`,
         ownerId,
         limit,
+        offset,
       )
       .map(mapTask);
+  }
+
+  countByOwner(ownerId: string): number {
+    const row = this.#db.all<{ count: number }>(
+      "SELECT COUNT(*) AS count FROM pa_tasks WHERE owner_id = ?",
+      ownerId,
+    )[0];
+    return Number(row?.count ?? 0);
+  }
+
+  /** Owner-scoped status counts; `needs_review` is a flag, not a DB status. */
+  countsByOwner(ownerId: string): Record<TaskStatus, number> {
+    const counts = Object.fromEntries(
+      [
+        "queued",
+        "running",
+        "waiting_user",
+        "waiting_external",
+        "succeeded",
+        "needs_review",
+        "failed",
+        "cancelling",
+        "cancelled",
+      ].map((status) => [status, 0]),
+    ) as Record<TaskStatus, number>;
+    const rows = this.#db.all<{ status: TaskStatus; needs_review: number; count: number }>(
+      `SELECT status, needs_review, COUNT(*) AS count
+       FROM pa_tasks
+       WHERE owner_id = ?
+       GROUP BY status, needs_review`,
+      ownerId,
+    );
+    for (const row of rows) {
+      const status =
+        row.status === "waiting_user" && Number(row.needs_review) === 1
+          ? "needs_review"
+          : row.status;
+      counts[status] += Number(row.count);
+    }
+    return counts;
   }
 
   listByOwnerStatus(

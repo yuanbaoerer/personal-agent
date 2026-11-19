@@ -1,118 +1,16 @@
-import { createHash } from "node:crypto";
-
 import { GitHubReadTool, type GitHubReadConfig } from "./github.ts";
+import {
+  ToolRejectedError,
+  ToolRegistry,
+  ToolUnknownError,
+  type ActionTool,
+  type ToolExecution,
+  type ToolVerification,
+} from "./tooling.ts";
+import { createStateTools, type StateReadService } from "./state.ts";
 import type { Store } from "../storage/store.ts";
 
-export class ToolRejectedError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "ToolRejectedError";
-  }
-}
-
-/** The external side may have changed; the local caller did not observe it. */
-export class ToolUnknownError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "ToolUnknownError";
-  }
-}
-
-/** The dispatcher stopped waiting; a write may still complete externally. */
-export class ToolTimeoutError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "ToolTimeoutError";
-  }
-}
-
-/** Experimental until D11; bump only with a documented migration. */
-export const TOOL_CONTRACT_VERSION = 1;
-
-export interface ToolDescriptor {
-  name: string;
-  resource?: string;
-  readOnly: boolean;
-  replayPolicy: "verify" | "never";
-  timeoutMs: number;
-}
-
-export interface ToolExecution {
-  evidence: Record<string, unknown>;
-  externalRef?: string;
-}
-
-export interface ToolVerification {
-  satisfied: boolean;
-  evidence: Record<string, unknown>;
-}
-
-export interface ActionTool {
-  readonly name: string;
-  /** Mandate resource required to use this tool, if any. */
-  readonly resource?: string;
-  /** A timed-out read is safely retryable; a write may have landed. */
-  readonly readOnly?: boolean;
-  /** `verify` permits reconcile retry only after verify(); default never retries. */
-  readonly replayPolicy?: "verify" | "never";
-  /** Bound on one tool call; defaults to 15s. */
-  readonly timeoutMs?: number;
-  readonly description?: string;
-  canonicalize(args: Record<string, unknown>): Record<string, unknown>;
-  execute(args: Record<string, unknown>): Promise<ToolExecution>;
-  verify(args: Record<string, unknown>): Promise<ToolVerification>;
-}
-
-export class ToolRegistry {
-  readonly #tools = new Map<string, ActionTool>();
-
-  register(tool: ActionTool): void {
-    if (this.#tools.has(tool.name)) {
-      throw new Error(`tool already registered: ${tool.name}`);
-    }
-    this.#tools.set(tool.name, tool);
-  }
-
-  get(name: string): ActionTool | undefined {
-    return this.#tools.get(name);
-  }
-
-  names(): string[] {
-    return [...this.#tools.keys()].sort();
-  }
-
-  describe(): ToolDescriptor[] {
-    return [...this.#tools.values()]
-      .map((tool) => ({
-        name: tool.name,
-        resource: tool.resource,
-        readOnly: tool.readOnly === true,
-        replayPolicy: tool.replayPolicy ?? "never",
-        timeoutMs: tool.timeoutMs ?? 15_000,
-      }))
-      .sort((left, right) => left.name.localeCompare(right.name));
-  }
-}
-
-export function hashArgs(tool: string, args: Record<string, unknown>): string {
-  return createHash("sha256")
-    .update(`${tool}:${stableStringify(args)}`, "utf8")
-    .digest("hex");
-}
-
-export function stableStringify(value: unknown): string {
-  if (value === null || typeof value !== "object") {
-    return JSON.stringify(value);
-  }
-  if (Array.isArray(value)) {
-    return `[${value.map(stableStringify).join(",")}]`;
-  }
-  const record = value as Record<string, unknown>;
-  return `{${Object.keys(record)
-    .sort()
-    .map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`)
-    .join(",")}}`;
-}
+export * from "./tooling.ts";
 
 interface LampState {
   brightness: number;
@@ -215,6 +113,7 @@ export function createDefaultToolRegistry(
   store: Store,
   now?: () => Date,
   github?: GitHubReadConfig,
+  state?: StateReadService,
 ): {
   registry: ToolRegistry;
   lamp: MockLampTool;
@@ -222,6 +121,11 @@ export function createDefaultToolRegistry(
   const registry = new ToolRegistry();
   const lamp = new MockLampTool(store, now);
   registry.register(lamp);
+  if (state !== undefined) {
+    for (const tool of createStateTools(state)) {
+      registry.register(tool);
+    }
+  }
   if (
     github !== undefined &&
     (github.tokenProvider !== undefined ||

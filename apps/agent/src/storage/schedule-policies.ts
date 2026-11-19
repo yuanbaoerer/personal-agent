@@ -129,17 +129,39 @@ export class SchedulePolicyRepository {
     return row === undefined ? undefined : mapPolicy(row);
   }
 
-  listByOwner(ownerId: string, limit = 50): SchedulePolicyRecord[] {
+  listByOwner(ownerId: string, limit = 50, offset = 0): SchedulePolicyRecord[] {
     return this.#db
       .all<PolicyRow>(
         `SELECT * FROM pa_schedule_policies
          WHERE owner_id = ?
-         ORDER BY created_at DESC
-         LIMIT ?`,
+         ORDER BY created_at DESC, rowid DESC
+         LIMIT ? OFFSET ?`,
         ownerId,
         limit,
+        offset,
       )
       .map(mapPolicy);
+  }
+
+  countsByOwner(ownerId: string): Record<SchedulePolicyStatus, number> {
+    const counts: Record<SchedulePolicyStatus, number> = {
+      draft: 0,
+      active: 0,
+      paused: 0,
+      cancelled: 0,
+      expired: 0,
+    };
+    const rows = this.#db.all<{ status: SchedulePolicyStatus; count: number }>(
+      `SELECT status, COUNT(*) AS count
+       FROM pa_schedule_policies
+       WHERE owner_id = ?
+       GROUP BY status`,
+      ownerId,
+    );
+    for (const row of rows) {
+      counts[row.status] = Number(row.count);
+    }
+    return counts;
   }
 
   listDue(now: string, limit = 50): SchedulePolicyRecord[] {
