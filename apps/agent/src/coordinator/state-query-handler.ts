@@ -2,7 +2,7 @@ import type { StateQuery, TaskRecord } from "../domain/types.ts";
 import type { StateReadService, StateToolName } from "../actions/state.ts";
 import type { TaskRepository } from "../storage/tasks.ts";
 import type { Store } from "../storage/store.ts";
-import type { IntentReply } from "./personal-intents.ts";
+import type { IntentReply } from "./intent-types.ts";
 import {
   extractProjectFlag,
   formatStateQuery,

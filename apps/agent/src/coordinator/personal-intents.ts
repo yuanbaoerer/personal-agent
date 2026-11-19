@@ -5,6 +5,11 @@ import type { ConfirmationService } from "../personal/confirmations.ts";
 import type { ReminderService } from "../personal/reminders.ts";
 import { assertTimezone, formatInTimezone } from "../personal/reminders.ts";
 import type { SchedulePolicyService } from "../personal/schedule-policies.ts";
+import type {
+  IntentContext,
+  IntentOutcome,
+  IntentReply,
+} from "./intent-types.ts";
 import {
   describeReminderCancelFailure,
   formatSchedulePolicy,
@@ -17,24 +22,6 @@ import {
   resolveScheduleReference,
   type ScheduleAction,
 } from "./state-query.ts";
-
-export interface IntentContext {
-  ownerId: string;
-  conversationId: string;
-  inboxId: string;
-  text: string;
-}
-
-export interface IntentReply {
-  text: string;
-  purpose: "ack" | "status" | "failure";
-}
-
-export interface IntentOutcome {
-  replies: IntentReply[];
-  /** The caller must wake the host after a confirmed schedule. */
-  wake?: boolean;
-}
 
 export type PersonalIntentAction =
   | "save_memory"
