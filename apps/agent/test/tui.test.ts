@@ -57,7 +57,24 @@ describe("TUI frame", () => {
     assert.match(frame, /> 12345678/);
     assert.match(frame, /check the lamp/);
     assert.match(frame, /lamp.set_brightness/);
+    assert.match(frame, /\[s\] supplement/);
+    assert.match(frame, /\[v\] revise/);
     assert.match(frame, /\[c\] cancel/);
+  });
+
+  it("renders a one-line supplement prompt without executing it", () => {
+    const state = initialTuiState();
+    state.tasks = [task];
+    state.input = {
+      kind: "supplement",
+      label: "Supplement",
+      taskId: task.id,
+      revision: 1,
+      value: "also check the plug",
+    };
+    state.message = "";
+    const frame = renderFrame(state, 100, 30);
+    assert.match(frame, /> Supplement: also check the plug/);
   });
 
   it("shows approval args and nonce without requiring another view", () => {

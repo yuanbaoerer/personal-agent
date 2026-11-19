@@ -166,4 +166,4 @@ PA-17/18/19 的最小本地实现已接入：`/api/v1` 鉴权控制面、hashed 
 - `cli.test.ts`：SDK header/idempotency、CLI JSON、approve `--yes` 门槛、结构化错误。
 - `tui.test.ts`：任务/审批帧与绑定可见性；本地 PTY smoke 能进入 alternate screen 并由 `q` 复原。
 
-这**不是完整的 K15/K16 通过**：K15 的并发审批单次消费已有确定性测试，但跨进程并发 cancel/approve 仍未实测；K16 的 SSE/WebSocket 断线重连与重放上限未实测，当前 event cursor 只覆盖轮询 replay。TUI 的 macOS Terminal/iTerm2、Windows Terminal/ConPTY、窄屏/无色和 E3 也未验收。
+这**不是完整的 K15/K16 通过**：K15 的并发审批单次消费已有确定性测试，但跨进程并发 cancel/approve 仍未实测；K16 的 SSE 断线重连/重放上限与 WebSocket 未实测；当前已有 SSE 单元/HTTP 测试与轮询 replay，但尚无跨进程长连接证据。TUI 的 macOS Terminal/iTerm2、Windows Terminal/ConPTY、窄屏/无色和 E3 也未验收。

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { emitKeypressEvents } from "node:readline";
 
 import { ClientApiClient } from "./client/sdk.ts";
@@ -10,6 +11,14 @@ type PendingAction =
   | { kind: "approve" | "deny"; approval: ActionRecord }
   | undefined;
 
+interface InputState {
+  kind: "supplement" | "revise";
+  label: string;
+  taskId: string;
+  revision: number;
+  value: string;
+}
+
 export interface TuiState {
   mode: Mode;
   selected: number;
@@ -17,6 +26,7 @@ export interface TuiState {
   approvals: ActionRecord[];
   detail?: TaskDetail;
   status?: unknown;
+  input?: InputState;
   message: string;
   busy: boolean;
 }
@@ -76,7 +86,7 @@ export function renderFrame(state: TuiState, width: number, height: number): str
   lines.push(truncate(diagnosticsSummary(state.status), widthSafe));
   lines.push(
     state.mode === "tasks"
-      ? "Tasks  [tab] approvals  [j/k] select  [c] cancel  [r] refresh  [q] quit"
+      ? "Tasks  [tab] approvals  [j/k] select  [s] supplement  [v] revise  [c] cancel  [r] refresh  [q] quit"
       : "Approvals  [tab] tasks  [j/k] select  [a] approve  [d] deny  [r] refresh  [q] quit",
   );
   lines.push("─".repeat(widthSafe));
@@ -140,7 +150,11 @@ export function renderFrame(state: TuiState, width: number, height: number): str
       lines.push(truncate(`binding: ${action.argsHash} rev ${action.taskRevision}`, widthSafe));
     }
   }
-  lines.push(truncate(state.message, widthSafe));
+  if (state.input !== undefined) {
+    lines.push(truncate(`> ${state.input.label}: ${state.input.value}█`, widthSafe));
+  } else {
+    lines.push(truncate(state.message, widthSafe));
+  }
   return lines.slice(0, Math.max(1, height)).join("\n");
 }
 
@@ -249,10 +263,79 @@ export async function runTui(client: ClientApiClient, io: TuiIo = {
     }
   };
 
+  const submitInput = async (input: InputState) => {
+    state.busy = true;
+    try {
+      if (input.kind === "supplement") {
+        await client.supplementTask(input.taskId, input.value, randomUUID());
+        state.message = "Supplement accepted.";
+      } else {
+        await client.reviseTask(input.taskId, {
+          expectedRevision: input.revision,
+          goal: input.value,
+        });
+        state.message = "Task revised.";
+      }
+    } catch (error) {
+      state.message = error instanceof Error ? error.message : String(error);
+    } finally {
+      state.busy = false;
+      await refresh();
+    }
+  };
+
+  const handleInputKey = (
+    str: string | undefined,
+    key: { name?: string; ctrl?: boolean },
+  ): boolean => {
+    const input = state.input;
+    if (input === undefined) return false;
+    if (key.ctrl === true && key.name === "c") {
+      finish();
+      return true;
+    }
+    if (key.name === "escape") {
+      state.input = undefined;
+      state.message = "Input cancelled.";
+      draw();
+      return true;
+    }
+    if (key.name === "backspace") {
+      input.value = input.value.slice(0, -1);
+      draw();
+      return true;
+    }
+    if (key.name === "return" || key.name === "enter") {
+      if (input.value.trim().length === 0) {
+        state.message = "Input cannot be empty.";
+        draw();
+        return true;
+      }
+      state.input = undefined;
+      state.message = input.kind === "supplement" ? "Submitting supplement…" : "Submitting revision…";
+      void submitInput(input);
+      draw();
+      return true;
+    }
+    if (str !== undefined && str.length > 0 && !/[\u0000-\u001f\u007f]/.test(str)) {
+      if (input.value.length + str.length <= 10_000) {
+        input.value += str;
+        draw();
+      }
+      return true;
+    }
+    return true;
+  };
+
   const onKeypress = (str: string | undefined, key: { name?: string; ctrl?: boolean }) => {
     if (closed) return;
+    if (handleInputKey(str, key)) return;
     const name = key.name ?? str;
-    if ((key.ctrl === true && name === "c") || name === "q") {
+    if (key.ctrl === true && name === "c") {
+      finish();
+      return;
+    }
+    if (name === "q") {
       finish();
       return;
     }
@@ -291,6 +374,20 @@ export async function runTui(client: ClientApiClient, io: TuiIo = {
     if (name === "n" || name === "escape") {
       pending = undefined;
       state.message = "Cancelled pending confirmation.";
+      draw();
+      return;
+    }
+    if ((name === "s" || name === "v") && state.mode === "tasks") {
+      const task = state.tasks[state.selected];
+      if (task === undefined) return;
+      state.input = {
+        kind: name === "s" ? "supplement" : "revise",
+        label: name === "s" ? "Supplement" : "New goal",
+        taskId: task.id,
+        revision: task.revision,
+        value: "",
+      };
+      state.message = "";
       draw();
       return;
     }

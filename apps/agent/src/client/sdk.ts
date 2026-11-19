@@ -248,6 +248,80 @@ export class ClientApiClient {
     });
   }
 
+  /**
+   * Consume the SSE event stream. The caller owns the AbortSignal and should
+   * pass the last cursor as `after` when reconnecting.
+   */
+  async *streamEvents(options: {
+    after?: number;
+    limit?: number;
+    signal?: AbortSignal;
+  } = {}): AsyncGenerator<ApiEvent, void, void> {
+    const url = new URL(`${this.#baseUrl}/api/v1/events/stream`);
+    if (options.after !== undefined) url.searchParams.set("after", String(options.after));
+    if (options.limit !== undefined) url.searchParams.set("limit", String(options.limit));
+    const response = await this.#fetch(url, {
+      headers: {
+        authorization: `Bearer ${this.#token}`,
+        accept: "text/event-stream",
+      },
+      signal: options.signal,
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      let payload: { error?: unknown; message?: unknown } | undefined;
+      try {
+        payload = JSON.parse(text) as { error?: unknown; message?: unknown };
+      } catch {
+        payload = undefined;
+      }
+      throw new ClientApiError(
+        response.status,
+        typeof payload?.error === "string" ? payload.error : `http_${response.status}`,
+        typeof payload?.message === "string" ? payload.message : undefined,
+      );
+    }
+    if (response.body === null) {
+      throw new ClientApiError(response.status, "empty_response");
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        buffer = buffer.replace(/\r\n/g, "\n");
+        for (;;) {
+          const boundary = buffer.indexOf("\n\n");
+          if (boundary < 0) break;
+          const block = buffer.slice(0, boundary);
+          buffer = buffer.slice(boundary + 2);
+          const data = block
+            .split("\n")
+            .filter((line) => line.startsWith("data:"))
+            .map((line) => line.slice("data:".length).trimStart())
+            .join("\n");
+          if (data.length === 0) continue;
+          const event = JSON.parse(data) as unknown;
+          if (
+            typeof event === "object" &&
+            event !== null &&
+            "cursor" in event &&
+            typeof event.cursor === "number" &&
+            "event" in event &&
+            typeof event.event === "string"
+          ) {
+            yield event as ApiEvent;
+          }
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  }
+
   async createToken(input: { name: string; scopes?: string[] }): Promise<{
     token: string;
     record: ClientTokenView;

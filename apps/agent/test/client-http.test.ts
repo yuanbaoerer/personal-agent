@@ -81,6 +81,34 @@ describe("client API HTTP mount", () => {
         headers: { authorization: `Bearer ${ADMIN}` },
       });
       assert.equal(detail.status, 200);
+
+      const unauthorizedStream = await fetch(`${url}/api/v1/events/stream`);
+      assert.equal(unauthorizedStream.status, 401);
+
+      const controller = new AbortController();
+      const stream = await fetch(`${url}/api/v1/events/stream?after=0`, {
+        headers: { authorization: `Bearer ${ADMIN}` },
+        signal: controller.signal,
+      });
+      assert.equal(stream.status, 200);
+      assert.match(stream.headers.get("content-type") ?? "", /text\/event-stream/);
+      const reader = stream.body?.getReader();
+      assert.ok(reader !== undefined);
+      let received = "";
+      const deadline = Date.now() + 2_000;
+      while (!received.includes("event: audit") && Date.now() < deadline) {
+        const next = await Promise.race([
+          reader.read(),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error("SSE timeout")), 500),
+          ),
+        ]);
+        if (next.done) break;
+        received += new TextDecoder().decode(next.value);
+      }
+      controller.abort();
+      assert.match(received, /event: audit/);
+      assert.match(received, /task\.created|inbox\./);
     } finally {
       server.closeAllConnections();
       const closed = Promise.withResolvers<void>();

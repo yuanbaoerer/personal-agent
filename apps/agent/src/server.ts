@@ -11,6 +11,7 @@ import {
 } from "./domain/errors.ts";
 
 const MAX_BODY_BYTES = 1_048_576;
+const MAX_EVENT_STREAMS = 8;
 
 export interface AppLogger {
   info(message: string, fields?: Record<string, unknown>): void;
@@ -45,6 +46,7 @@ interface OAuthSession {
 
 export function createHttpServer(deps: HttpServerDeps): Server {
   const sessions = new Map<string, OAuthSession>();
+  let activeEventStreams = 0;
   return createServer(async (request, response) => {
     const startedAt = Date.now();
     let status = 500;
@@ -55,6 +57,43 @@ export function createHttpServer(deps: HttpServerDeps): Server {
       if (request.method === "GET" && url.pathname === "/healthz") {
         status = 200;
         sendJson(response, status, { ok: true, uptimeSeconds: process.uptime() });
+        return;
+      }
+
+      if (url.pathname === "/api/v1/events/stream" && deps.clientApi !== undefined) {
+        if (request.method !== "GET") {
+          status = 405;
+          sendJson(response, status, { error: "method_not_allowed" });
+          return;
+        }
+        const setup = deps.clientApi.prepareEventStream({
+          method: request.method,
+          path: url.pathname,
+          query: url.searchParams,
+          headers: normalizeHeaders(request),
+        });
+        if (!setup.ok) {
+          status = setup.status;
+          sendJson(response, status, setup.body);
+          return;
+        }
+        if (activeEventStreams >= MAX_EVENT_STREAMS) {
+          status = 429;
+          sendJson(response, status, { error: "too_many_event_streams" });
+          return;
+        }
+        activeEventStreams += 1;
+        status = 200;
+        startEventStream(
+          request,
+          response,
+          deps.clientApi,
+          setup.after,
+          setup.limit,
+          () => {
+            activeEventStreams = Math.max(0, activeEventStreams - 1);
+          },
+        );
         return;
       }
 
@@ -123,6 +162,66 @@ export function createHttpServer(deps: HttpServerDeps): Server {
       });
     }
   });
+}
+
+function startEventStream(
+  request: IncomingMessage,
+  response: ServerResponse,
+  clientApi: ClientApiService,
+  after: number,
+  limit: number,
+  onClose: () => void,
+): void {
+  response.writeHead(200, {
+    "content-type": "text/event-stream; charset=utf-8",
+    "cache-control": "no-cache, no-transform",
+    connection: "keep-alive",
+    "x-accel-buffering": "no",
+  });
+  let cursor = after;
+  let closed = false;
+  let poll: NodeJS.Timeout | undefined;
+  let heartbeat: NodeJS.Timeout | undefined;
+  const cleanup = () => {
+    if (closed) return;
+    closed = true;
+    if (poll !== undefined) clearInterval(poll);
+    if (heartbeat !== undefined) clearInterval(heartbeat);
+    response.off("close", cleanup);
+    request.off("aborted", cleanup);
+    onClose();
+  };
+  const flush = () => {
+    if (closed || response.writableEnded) {
+      cleanup();
+      return;
+    }
+    try {
+      const events = clientApi.eventsSince(cursor, limit);
+      for (const event of events) {
+        response.write(
+          `id: ${event.cursor}\nevent: audit\ndata: ${JSON.stringify(event)}\n\n`,
+        );
+        cursor = event.cursor;
+      }
+    } catch {
+      cleanup();
+      response.end();
+    }
+  };
+  response.write("retry: 2000\n\n");
+  flush();
+  poll = setInterval(flush, 1_000);
+  heartbeat = setInterval(() => {
+    if (!closed && !response.writableEnded) {
+      response.write(": keep-alive\n\n");
+    }
+  }, 15_000);
+  response.on("close", cleanup);
+  response.on("error", cleanup);
+  request.on("aborted", cleanup);
+  // SSE is intentionally long-lived; do not let a socket idle timeout drop it.
+  response.socket?.setTimeout(0);
 }
 
 function normalizeHeaders(request: IncomingMessage): Record<string, string | undefined> {

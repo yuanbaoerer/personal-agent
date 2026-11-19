@@ -106,6 +106,25 @@ describe("client CLI and SDK", () => {
     assert.match(out.join("\n"), /--yes/);
   });
 
+  it("SDK consumes SSE data frames without treating comments as events", async () => {
+    const fakeFetch: typeof fetch = async () =>
+      new Response(
+        ": keep-alive\n\n" +
+          "id: 7\nevent: audit\ndata: {\"cursor\":7,\"event\":\"task.created\",\"traceId\":\"t\",\"occurredAt\":\"2026-01-01T00:00:00.000Z\"}\n\n",
+        { headers: { "content-type": "text/event-stream" } },
+      );
+    const client = new ClientApiClient({
+      baseUrl: "http://api.local",
+      token: "pa_secret",
+      fetch: fakeFetch,
+    });
+    const events = [];
+    for await (const event of client.streamEvents({ after: 6 })) {
+      events.push(event);
+    }
+    assert.deepEqual(events.map((event) => event.cursor), [7]);
+  });
+
   it("SDK surfaces structured API errors and revokes tokens via delete", async () => {
     const seen: string[] = [];
     const fakeFetch: typeof fetch = async (input, init) => {

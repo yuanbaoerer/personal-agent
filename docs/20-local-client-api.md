@@ -85,6 +85,7 @@ API 前缀 `/api/v1`，请求/响应 JSON，`cache-control: no-store`。
 | GET/POST | `/reminders` | 列表 / 创建 |
 | DELETE | `/reminders/:id` | 取消 |
 | GET | `/events?after=&limit=` | 可重放事件游标 |
+| GET | `/events/stream?after=` | SSE 推送；支持 `Last-Event-ID`、心跳与 1s replay |
 | GET/POST | `/tokens` | admin：列表 / 创建 |
 | DELETE | `/tokens/:id` | admin：撤销 |
 
@@ -97,13 +98,17 @@ API 前缀 `/api/v1`，请求/响应 JSON，`cache-control: no-store`。
 
 ### 3.2 事件
 
-当前是**轮询式 replay**，不是 SSE/WebSocket：
+提供两个入口：
 
 ```bash
-pa events --after 0 --limit 100
+pa events --after 0 --limit 100          # 一次性 replay
+pa events --after 0 --follow             # SSE 持续订阅
 ```
 
-返回 `events[]` 与 `nextCursor`。事件只包含 event/subject/trace/time，不返回 goal、消息正文或 Action args；客户端重连后从 cursor 继续。SSE/WebSocket 与长轮询仍是 PA-17 pending。
+- `GET /events` 返回 `events[]` 与 `nextCursor`。
+- `GET /events/stream` 是 `text/event-stream`：每个事件带 `id: <cursor>`、`event: audit`、`data: <json>`；支持 `Last-Event-ID`，每秒 replay 新事件，15 秒心跳；服务端最多 8 条并发流。
+- 事件只包含 event/subject/trace/time，不返回 goal、消息正文或 Action args。
+- SDK `streamEvents({after,signal})` 与 CLI `--follow` 已接 SSE；断线后调用方以最后 cursor 重连。浏览器 `EventSource` 不能设置 Bearer header，当前 SDK/CLI 使用 fetch stream。
 
 ## 4. CLI
 
@@ -142,12 +147,14 @@ npm run pa -- tui
 | --- | --- |
 | `j`/`k` 或上下 | 选择 |
 | `tab` | Tasks ↔ Approvals |
+| `s` + 文本 + Enter | 增补任务输入 |
+| `v` + 新目标 + Enter | 修订选中任务目标（带当前 revision） |
 | `c` + `y` | 取消选中任务 |
 | `a` / `d` + `y` | 批准 / 拒绝选中 Action |
 | `r` | 刷新 |
 | `q` / Ctrl-C | 退出并恢复终端 |
 
-TUI 只读 API，每 2 秒刷新；显示任务状态、目标、Action 参数/nonce/binding、unknown/confirm/effects 计数。非 TTY 直接报错；没有动画、鼠标或后台常驻。
+TUI 只通过 Client API，每 2 秒刷新；显示任务状态、目标、Action 参数/nonce/binding、unknown/confirm/effects 计数。非 TTY 直接报错；没有动画、鼠标或后台常驻。
 
 ## 6. 验证与边界
 
@@ -155,14 +162,14 @@ TUI 只读 API，每 2 秒刷新；显示任务状态、目标、Action 参数/n
 
 - `apps/agent/test/client-api.test.ts`：auth/scope/revocation、任务幂等、修订冲突、补充幂等、审批绑定、并发审批单次消费、错误 owner。
 - `apps/agent/test/client-http.test.ts`：真实 HTTP mount、Bearer 鉴权、token 不进入日志。
-- `apps/agent/test/cli.test.ts`：CLI/SDK header/idempotency、错误映射、approve 必须有 `--yes`。
-- `apps/agent/test/tui.test.ts`：帧渲染、任务/审批绑定可见性。
+- `apps/agent/test/cli.test.ts`：CLI/SDK header/idempotency、SSE 数据帧、错误映射、approve 必须有 `--yes`。
+- `apps/agent/test/tui.test.ts`：帧渲染、任务/审批绑定、增补输入模式。
 - 本地 Node PTY smoke：`pa tui` 进入 alternate screen 并由 `q` 干净退出。
-- 全量 `npm test`：262 个确定性测试通过（2026-11-19）。
+- 全量 `npm test`：264 个确定性测试通过（2026-11-19）。
 
 仍 pending：
 
 - 远程 TLS/设备配对、token 轮换 UI、速率限制；
-- SSE/WebSocket 推送与断线重连实测；
+- SSE 断线重连/重放上限的跨进程实测；WebSocket 未实现；
 - macOS Terminal/iTerm2、Windows Terminal/ConPTY 的真实键盘/窄屏验收；
-- CLI/TUI 的 E3 真实操作证据；TUI 当前只覆盖取消/审批，不覆盖修订/提醒编辑。
+- CLI/TUI 的 E3 真实操作证据；TUI 已支持任务取消/审批/增补/修订目标，仍不覆盖提醒编辑。

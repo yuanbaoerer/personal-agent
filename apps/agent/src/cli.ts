@@ -376,20 +376,40 @@ export async function runCli(
         throw new Error("reminders subcommand must be list, create or cancel");
       }
       case "events": {
-        let cursor = flagNumber(args.flags, "after") ?? 0;
+        const cursor = flagNumber(args.flags, "after") ?? 0;
         const limit = flagNumber(args.flags, "limit");
-        for (;;) {
-          const result = await client.events({ after: cursor, limit });
-          if (json) printJson(io, result);
-          else {
-            for (const event of result.events) {
-              io.out(`${event.cursor}  ${event.event}  ${event.subjectType ?? "-"} ${shortId(event.subjectId ?? "-")}`);
+        if (args.flags.follow === true) {
+          const controller = new AbortController();
+          const onSignal = () => controller.abort();
+          process.once("SIGINT", onSignal);
+          try {
+            for await (const event of client.streamEvents({
+              after: cursor,
+              limit,
+              signal: controller.signal,
+            })) {
+              if (json) {
+                printJson(io, event);
+              } else {
+                io.out(
+                  `${event.cursor}  ${event.event}  ${event.subjectType ?? "-"} ${shortId(event.subjectId ?? "-")}`,
+                );
+              }
             }
-            io.out(`cursor ${result.nextCursor}`);
+          } catch (error) {
+            if (!controller.signal.aborted) throw error;
+          } finally {
+            process.off("SIGINT", onSignal);
           }
-          cursor = result.nextCursor;
-          if (args.flags.follow !== true) break;
-          await new Promise((resolve) => setTimeout(resolve, 1_000));
+          return 0;
+        }
+        const result = await client.events({ after: cursor, limit });
+        if (json) printJson(io, result);
+        else {
+          for (const event of result.events) {
+            io.out(`${event.cursor}  ${event.event}  ${event.subjectType ?? "-"} ${shortId(event.subjectId ?? "-")}`);
+          }
+          io.out(`cursor ${result.nextCursor}`);
         }
         return 0;
       }

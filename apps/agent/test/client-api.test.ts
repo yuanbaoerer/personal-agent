@@ -68,6 +68,14 @@ describe("client API", () => {
     const admin = await call(api, "GET", "/api/v1/health", { token: ADMIN });
     assert.equal(admin.status, 200);
     assert.equal(admin.body.apiVersion, 1);
+    const stream = api.prepareEventStream({
+      method: "GET",
+      path: "/api/v1/events/stream",
+      query: new URLSearchParams(),
+      headers: { authorization: `Bearer ${ADMIN}`, "last-event-id": "5" },
+    });
+    assert.equal(stream.ok, true);
+    if (stream.ok) assert.equal(stream.after, 5);
 
     const created = await call(api, "POST", "/api/v1/tokens", {
       token: ADMIN,

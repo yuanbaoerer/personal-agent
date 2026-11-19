@@ -9,7 +9,7 @@ import {
 } from "./storage/client-tokens.ts";
 import { buildDiagnostics } from "./observability/diagnostics.ts";
 import { buildUsage } from "./observability/usage.ts";
-import type { Store } from "./storage/store.ts";
+import type { AuditFeedItem, Store } from "./storage/store.ts";
 import type {
   ActionRecord,
   Mandate,
@@ -49,6 +49,10 @@ export interface ClientApiResponse {
   body: unknown;
 }
 
+export type EventStreamSetup =
+  | { ok: true; after: number; limit: number }
+  | { ok: false; status: number; body: unknown };
+
 export interface ClientApiDeps {
   store: Store;
   services: Pick<
@@ -81,6 +85,18 @@ class ApiError extends Error {
     this.status = status;
     this.code = code;
   }
+}
+
+function errorResponse(error: unknown): ClientApiResponse {
+  if (error instanceof ApiError) {
+    return {
+      status: error.status,
+      body: { error: error.code, message: error.message },
+    };
+  }
+  // Do not expose SQL/stack details to a client. The HTTP layer logs only
+  // method/path/status; the owning process has the server error log.
+  return { status: 500, body: { error: "internal_error" } };
 }
 
 function hasScope(auth: Auth, scope: ClientScope): boolean {
@@ -288,16 +304,37 @@ export class ClientApiService {
       }
       return await this.#route(request, auth, segments);
     } catch (error) {
-      if (error instanceof ApiError) {
-        return {
-          status: error.status,
-          body: { error: error.code, message: error.message },
-        };
-      }
-      // Do not expose SQL/stack details to a client. The HTTP layer logs only
-      // method/path/status; the owning process has the server error log.
-      return { status: 500, body: { error: "internal_error" } };
+      return errorResponse(error);
     }
+  }
+
+  /**
+   * HTTP servers use this before switching a response to text/event-stream.
+   * Reuses the same bearer/scope checks as the JSON API; Last-Event-ID is
+   * honored only when no explicit `after` query is present.
+   */
+  prepareEventStream(request: ClientApiRequest): EventStreamSetup {
+    try {
+      this.#require(this.#authenticate(request), "read");
+      if (request.method.toUpperCase() !== "GET") {
+        throw new ApiError(405, "method_not_allowed");
+      }
+      const query = new URLSearchParams(request.query);
+      if (!query.has("after") && !query.has("cursor")) {
+        const lastEventId = request.headers["last-event-id"];
+        if (lastEventId !== undefined) {
+          query.set("after", lastEventId);
+        }
+      }
+      return { ok: true, after: parseCursor(query), limit: parseLimit(query) };
+    } catch (error) {
+      const mapped = errorResponse(error);
+      return { ok: false, status: mapped.status, body: mapped.body };
+    }
+  }
+
+  eventsSince(after: number, limit: number): AuditFeedItem[] {
+    return this.#store.listAuditAfter(after, limit);
   }
 
   #authenticate(request: ClientApiRequest): Auth {
