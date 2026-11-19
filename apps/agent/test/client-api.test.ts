@@ -30,6 +30,7 @@ async function call(
     body?: unknown;
     headers?: Record<string, string>;
     query?: Record<string, string>;
+    remoteAddress?: string;
   } = {},
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   const request: ClientApiRequest = {
@@ -41,6 +42,7 @@ async function call(
       ...options.headers,
     },
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
+    remoteAddress: options.remoteAddress,
   };
   return api.handle(request) as Promise<{ status: number; body: Record<string, unknown> }>;
 }
@@ -136,6 +138,28 @@ describe("client API", () => {
     const throttled = await call(limited, "GET", "/api/v1/health", { token: ADMIN });
     assert.equal(throttled.status, 429);
     assert.equal(throttled.body.error, "rate_limited");
+
+    const ipLimited = new ClientApiService({
+      store: services.store,
+      services,
+      ownerId: services.owner.id,
+      adminToken: ADMIN,
+      ipRateLimitPerMinute: 1,
+      now: () => NOW,
+    });
+    const ipRequest = {
+      method: "GET",
+      path: "/api/v1/health",
+      query: new URLSearchParams(),
+      headers: {},
+      remoteAddress: "203.0.113.9",
+    };
+    assert.equal((await ipLimited.handle(ipRequest)).status, 401);
+    assert.equal((await ipLimited.handle(ipRequest)).status, 429);
+    assert.equal(
+      (await ipLimited.handle({ ...ipRequest, remoteAddress: "203.0.113.10" })).status,
+      401,
+    );
   });
 
   it("creates idempotent tasks and exposes detail/cancel", async () => {

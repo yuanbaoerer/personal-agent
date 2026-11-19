@@ -57,7 +57,7 @@ export PA_API_TOKEN=pa_...
 
 - token 可撤销（`pa tokens revoke <id>`），撤销立即生效。
 - 可选 `ttlDays`（1–365）；到期返回 401，`expiresAt` 在 token 列表可见。
-- 每个 credential 固定窗口 600 请求/分钟；超限返回 429 `rate_limited`。该限制是进程内保护，不是分布式配额。
+- 每个 credential 固定窗口 600 请求/分钟；每个 socket IP 固定窗口 1200 请求/分钟。超限返回 429 `rate_limited`。两者都是进程内保护，不是分布式配额；反向代理后需在代理层按真实客户端 IP 限流。
 - 默认 token scope 为 `read`；CLI 日常本地可继续用 `ADMIN_TOKEN`，远程设备必须用窄 scope token。
 - 当前没有 HTTPS/设备配对/mTLS；远程使用必须放在 TLS 反向代理后，不能把 API 明文暴露到 LAN/公网。`HOST=0.0.0.0` 只应配合防火墙/TLS 使用。
 - 日志只记录 method/path/status；不记录 token、body 或 query string。
@@ -110,6 +110,7 @@ pa events --after 0 --follow             # SSE 持续订阅
 
 - `GET /events` 返回 `events[]` 与 `nextCursor`。
 - `GET /events/stream` 是 `text/event-stream`：每个事件带 `id: <cursor>`、`event: audit`、`data: <json>`；支持 `Last-Event-ID`，每秒 replay 新事件，15 秒心跳；服务端最多 8 条并发流。
+- `client-http.test.ts` 已覆盖断开后携带 `Last-Event-ID` 重连并收到新事件；仍未覆盖进程重启后的长连接/TTL。
 - 事件只包含 event/subject/trace/time，不返回 goal、消息正文或 Action args。
 - SDK `streamEvents({after,signal})` 与 CLI `--follow` 已接 SSE；断线后调用方以最后 cursor 重连。浏览器 `EventSource` 不能设置 Bearer header，当前 SDK/CLI 使用 fetch stream。
 
@@ -171,9 +172,9 @@ TUI 只通过 Client API，每 2 秒刷新；显示任务状态、目标、Actio
 
 已执行：
 
-- `apps/agent/test/client-api.test.ts`：auth/scope/revocation、token 过期、速率限制、任务幂等、修订冲突、补充幂等、审批绑定、并发审批单次消费、错误 owner。
+- `apps/agent/test/client-api.test.ts`：auth/scope/revocation、token 过期、credential/IP 限流、任务幂等、修订冲突、补充幂等、审批绑定、并发审批单次消费、错误 owner。
 - `apps/agent/test/reminders.test.ts`：dueAt/时区更新、host timer 重排、timer 失败回滚、非 pending 拒绝。
-- `apps/agent/test/client-http.test.ts`：真实 HTTP mount、Bearer 鉴权、token 不进入日志。
+- `apps/agent/test/client-http.test.ts`：真实 HTTP mount、Bearer 鉴权、token 不进入日志、SSE Last-Event-ID 重连。
 - `apps/agent/test/cli.test.ts`：CLI/SDK header/idempotency、SSE 数据帧、错误映射、approve 必须有 `--yes`。
 - `apps/agent/test/tui.test.ts`：帧渲染、任务/审批绑定、增补/提醒输入/编辑提示、换行/详情滚动、短终端底部提示。
 - 本地 Node PTY smoke：`pa tui` 进入 alternate screen 并由 `q` 干净退出。
@@ -181,7 +182,7 @@ TUI 只通过 Client API，每 2 秒刷新；显示任务状态、目标、Actio
 
 仍 pending：
 
-- 远程 TLS/设备配对、token 轮换 UI；当前速率限制是单进程内存窗口；
-- SSE 断线重连/重放上限的跨进程实测；WebSocket 未实现；
+- 远程 TLS/设备配对、token 轮换 UI；当前速率限制是单进程内存窗口，反向代理需另行限流；
+- SSE 跨进程重启/重放上限实测；WebSocket 未实现（单连接重连已测试）；
 - macOS Terminal/iTerm2、Windows Terminal/ConPTY 的真实键盘/窄屏验收；
 - CLI/TUI 的 E3 真实操作证据；TUI 已支持任务取消/审批/增补/修订目标和提醒创建/文本/到期时间编辑/取消。

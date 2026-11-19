@@ -40,6 +40,8 @@ export interface ClientApiRequest {
   path: string;
   query: URLSearchParams;
   headers: Record<string, string | undefined>;
+  /** Socket remote address, used for the per-IP guard. */
+  remoteAddress?: string;
   /** UTF-8 JSON body for non-GET requests. */
   body?: string;
 }
@@ -71,6 +73,8 @@ export interface ClientApiDeps {
   adminToken?: string;
   /** Per-credential fixed-window request limit; defaults to 600/min. */
   rateLimitPerMinute?: number;
+  /** Per-IP fixed-window request limit; defaults to 1200/min. */
+  ipRateLimitPerMinute?: number;
   now?: () => Date;
 }
 
@@ -280,6 +284,7 @@ export class ClientApiService {
   readonly #now: () => Date;
   readonly #tokens: ClientTokenRepository;
   readonly #rateLimit: number;
+  readonly #ipRateLimit: number;
   readonly #rateWindows = new Map<string, { startedAt: number; count: number }>();
 
   constructor(deps: ClientApiDeps) {
@@ -290,6 +295,7 @@ export class ClientApiService {
     this.#now = deps.now ?? (() => new Date());
     this.#tokens = new ClientTokenRepository(deps.store.db);
     this.#rateLimit = Math.max(1, deps.rateLimitPerMinute ?? 600);
+    this.#ipRateLimit = Math.max(1, deps.ipRateLimitPerMinute ?? 1_200);
   }
 
   async handle(request: ClientApiRequest): Promise<ClientApiResponse> {
@@ -344,12 +350,16 @@ export class ClientApiService {
   }
 
   #authenticate(request: ClientApiRequest): Auth {
+    this.#checkRate(
+      `ip:${request.remoteAddress ?? "unknown"}`,
+      this.#ipRateLimit,
+    );
     const raw = bearer(request.headers);
     if (raw === undefined || raw.length === 0) {
       throw new ApiError(401, "unauthorized");
     }
     if (this.#adminToken !== undefined && safeEqual(this.#adminToken, raw)) {
-      this.#checkRate("admin");
+      this.#checkRate("admin", this.#rateLimit);
       return { kind: "admin" };
     }
     if (raw.startsWith(TOKEN_PREFIX)) {
@@ -362,21 +372,21 @@ export class ClientApiService {
         throw new ApiError(401, "unauthorized");
       }
       this.#tokens.touch(record.id, this.#now().toISOString());
-      this.#checkRate(`token:${record.id}`);
+      this.#checkRate(`token:${record.id}`, this.#rateLimit);
       return { kind: "token", record };
     }
     throw new ApiError(401, "unauthorized");
   }
 
-  #checkRate(key: string): void {
+  #checkRate(key: string, limit: number): void {
     const now = this.#now().getTime();
     const current = this.#rateWindows.get(key);
     if (current === undefined || now - current.startedAt >= 60_000) {
       this.#rateWindows.set(key, { startedAt: now, count: 1 });
       return;
     }
-    if (current.count >= this.#rateLimit) {
-      throw new ApiError(429, "rate_limited", `at most ${this.#rateLimit} requests/minute`);
+    if (current.count >= limit) {
+      throw new ApiError(429, "rate_limited", `at most ${limit} requests/minute`);
     }
     current.count += 1;
   }

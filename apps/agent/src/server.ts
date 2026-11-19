@@ -71,6 +71,7 @@ export function createHttpServer(deps: HttpServerDeps): Server {
           path: url.pathname,
           query: url.searchParams,
           headers: normalizeHeaders(request),
+          remoteAddress: request.socket.remoteAddress,
         });
         if (!setup.ok) {
           status = setup.status;
@@ -107,6 +108,7 @@ export function createHttpServer(deps: HttpServerDeps): Server {
           path: url.pathname,
           query: url.searchParams,
           headers: normalizeHeaders(request),
+          remoteAddress: request.socket.remoteAddress,
           body,
         });
         status = result.status;

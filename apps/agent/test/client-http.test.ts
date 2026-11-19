@@ -109,6 +109,54 @@ describe("client API HTTP mount", () => {
       controller.abort();
       assert.match(received, /event: audit/);
       assert.match(received, /task\.created|inbox\./);
+      const ids = [...received.matchAll(/^id: (\d+)$/gm)].map((match) => Number(match[1]));
+      const lastId = Math.max(...ids);
+      assert.ok(Number.isFinite(lastId) && lastId > 0);
+
+      const second = await fetch(`${url}/api/v1/tasks`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${ADMIN}`,
+          "content-type": "application/json",
+          "idempotency-key": "http-task-2",
+        },
+        body: JSON.stringify({
+          goal: "http task 2",
+          completionCriteria: "http task 2 done",
+        }),
+      });
+      assert.equal(second.status, 201);
+      const secondBody = (await second.json()) as { task: { id: string } };
+
+      const reconnectController = new AbortController();
+      const reconnect = await fetch(`${url}/api/v1/events/stream`, {
+        headers: {
+          authorization: `Bearer ${ADMIN}`,
+          "last-event-id": String(lastId),
+        },
+        signal: reconnectController.signal,
+      });
+      assert.equal(reconnect.status, 200);
+      const reconnectReader = reconnect.body?.getReader();
+      assert.ok(reconnectReader !== undefined);
+      let replayed = "";
+      const reconnectDeadline = Date.now() + 2_500;
+      while (
+        !replayed.includes(secondBody.task.id) &&
+        Date.now() < reconnectDeadline
+      ) {
+        const next = await Promise.race([
+          reconnectReader.read(),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error("SSE reconnect timeout")), 700),
+          ),
+        ]);
+        if (next.done) break;
+        replayed += new TextDecoder().decode(next.value);
+      }
+      reconnectController.abort();
+      assert.match(replayed, /task\.created/);
+      assert.ok(replayed.includes(secondBody.task.id));
     } finally {
       server.closeAllConnections();
       const closed = Promise.withResolvers<void>();
