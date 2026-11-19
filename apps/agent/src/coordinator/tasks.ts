@@ -5,7 +5,9 @@ import type {
   ProposedAction,
   TaskInputRecord,
   MemoryRecord,
+  StateClaim,
   TaskRecord,
+  TaskStatus,
   WorkerReport,
 } from "../domain/types.ts";
 import type { ActionRepository } from "../storage/actions.ts";
@@ -20,7 +22,11 @@ import type { Store } from "../storage/store.ts";
 import type { EffectDispatcher, EffectOutcome } from "../delivery/effects.ts";
 import type { BudgetService } from "../observability/magpie.ts";
 import type { AgentRuntime, WakeScheduler } from "../runtime/types.ts";
-import { isStateToolName, type StateReadService } from "../actions/state.ts";
+import {
+  TASK_STATUSES,
+  isStateToolName,
+  type StateReadService,
+} from "../actions/state.ts";
 import { TaskCompletionVerifier } from "./completion.ts";
 
 export interface ActionProposer {
@@ -1218,6 +1224,11 @@ function workerPrompt(
       "their executor receipts will appear under previous action results on the next assignment.",
       'When ready, cite every verified receipt with evidence {"kind":"state_snapshot","value":"<snapshotHash>"}.',
       "Do not state task, reminder, memory or schedule facts that are not in those snapshots.",
+      'For every count, task status or reminder time you state, add a stateClaim that points at the cited snapshot hash:',
+      '{"stateClaims":[{"kind":"count","snapshotHash":"<hash>","path":"tasks.counts.running","value":2},',
+      '{"kind":"task_status","snapshotHash":"<hash>","taskId":"<id>","status":"running"},',
+      '{"kind":"reminder_due","snapshotHash":"<hash>","reminderId":"<id>","dueAt":"<ISO>"}]}',
+      "Claims are checked against the receipt; omit unverifiable free-text numbers.",
     );
   }
   if (inputs.length > 0) {
@@ -1256,6 +1267,77 @@ function workerPrompt(
     }
   }
   return lines.join("\n");
+}
+
+const STATE_CLAIM_LIMIT = 50;
+const SNAPSHOT_HASH = /^[0-9a-f]{64}$/;
+
+function parseStateClaims(value: unknown): StateClaim[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const claims: StateClaim[] = [];
+  for (const item of value.slice(0, STATE_CLAIM_LIMIT)) {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) {
+      continue;
+    }
+    const record = item as Record<string, unknown>;
+    const kind = record.kind;
+    const snapshotHash = record.snapshotHash;
+    if (typeof snapshotHash !== "string" || !SNAPSHOT_HASH.test(snapshotHash)) {
+      continue;
+    }
+    if (kind === "count") {
+      const path = record.path;
+      const count = record.value;
+      if (
+        typeof path === "string" &&
+        path.length > 0 &&
+        path.length <= 120 &&
+        /^[A-Za-z0-9_.]+$/.test(path) &&
+        typeof count === "number" &&
+        Number.isInteger(count) &&
+        count >= 0
+      ) {
+        claims.push({ kind, snapshotHash, path, value: count });
+      }
+      continue;
+    }
+    if (kind === "task_status") {
+      const taskId = record.taskId;
+      const status = record.status;
+      if (
+        typeof taskId === "string" &&
+        taskId.length > 0 &&
+        taskId.length <= 64 &&
+        typeof status === "string" &&
+        (TASK_STATUSES as readonly string[]).includes(status)
+      ) {
+        claims.push({
+          kind,
+          snapshotHash,
+          taskId,
+          status: status as TaskStatus,
+        });
+      }
+      continue;
+    }
+    if (kind === "reminder_due") {
+      const reminderId = record.reminderId;
+      const dueAt = record.dueAt;
+      if (
+        typeof reminderId === "string" &&
+        reminderId.length > 0 &&
+        reminderId.length <= 64 &&
+        typeof dueAt === "string" &&
+        dueAt.length > 0 &&
+        dueAt.length <= 40
+      ) {
+        claims.push({ kind, snapshotHash, reminderId, dueAt });
+      }
+    }
+  }
+  return claims.length > 0 ? claims : undefined;
 }
 
 export function parseWorkerReport(text: string): WorkerReport | undefined {
@@ -1346,6 +1428,7 @@ export function parseWorkerReport(text: string): WorkerReport | undefined {
           (item): item is string => typeof item === "string",
         )
       : undefined,
+    stateClaims: parseStateClaims(record.stateClaims),
   };
 }
 

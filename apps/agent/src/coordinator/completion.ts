@@ -1,5 +1,6 @@
 import type {
   ActionRecord,
+  StateClaim,
   TaskRecord,
   TaskVerification,
   WorkerReport,
@@ -236,6 +237,112 @@ function reportHasVerifiedGithubSource(
  * directly: structural checks always run, and tasks that claim external facts
  * must match evidence persisted by the executor.
  */
+function snapshotPath(
+  snapshot: Record<string, unknown>,
+  path: string,
+): unknown {
+  let current: unknown = snapshot;
+  for (const segment of path.split(".")) {
+    if (
+      segment.length === 0 ||
+      segment === "__proto__" ||
+      segment === "constructor" ||
+      segment === "prototype" ||
+      typeof current !== "object" ||
+      current === null ||
+      Array.isArray(current) ||
+      !Object.hasOwn(current, segment)
+    ) {
+      return undefined;
+    }
+    current = (current as Record<string, unknown>)[segment];
+  }
+  return current;
+}
+
+function snapshotItems(
+  snapshot: Record<string, unknown>,
+  key: "task" | "tasks" | "reminders",
+): Record<string, unknown>[] {
+  const items: Record<string, unknown>[] = [];
+  const direct = snapshot[key];
+  if (typeof direct === "object" && direct !== null) {
+    if (Array.isArray(direct)) {
+      for (const item of direct) {
+        if (typeof item === "object" && item !== null && !Array.isArray(item)) {
+          items.push(item as Record<string, unknown>);
+        }
+      }
+    } else {
+      items.push(direct as Record<string, unknown>);
+      const nested = (direct as Record<string, unknown>)[
+        key === "tasks" ? "recent" : "next"
+      ];
+      if (Array.isArray(nested)) {
+        for (const item of nested) {
+          if (typeof item === "object" && item !== null && !Array.isArray(item)) {
+            items.push(item as Record<string, unknown>);
+          }
+        }
+      }
+    }
+  }
+  return items;
+}
+
+function findSnapshotItem(
+  snapshot: Record<string, unknown>,
+  key: "task" | "tasks" | "reminders",
+  id: string,
+): Record<string, unknown> | undefined {
+  const items = snapshotItems(snapshot, key);
+  const exact = items.find((item) => item.id === id);
+  if (exact !== undefined) {
+    return exact;
+  }
+  const prefixed = items.filter(
+    (item) => typeof item.id === "string" && item.id.startsWith(id),
+  );
+  return prefixed.length === 1 ? prefixed[0] : undefined;
+}
+
+/**
+ * Compare one model-declared fact with the executor snapshot. The program
+ * never trusts the report's free text; only these structured claims are
+ * machine-checkable.
+ */
+function validateStateClaim(
+  claim: StateClaim,
+  snapshot: Record<string, unknown>,
+): string | undefined {
+  if (claim.kind === "count") {
+    const actual = snapshotPath(snapshot, claim.path);
+    if (typeof actual !== "number") {
+      return `count_path_missing:${claim.path}`;
+    }
+    return actual === claim.value
+      ? undefined
+      : `count_mismatch:${claim.path}:${actual}`;
+  }
+  if (claim.kind === "task_status") {
+    const task = findSnapshotItem(snapshot, "task", claim.taskId) ??
+      findSnapshotItem(snapshot, "tasks", claim.taskId);
+    if (task === undefined) {
+      return `task_missing:${claim.taskId}`;
+    }
+    return task.status === claim.status
+      ? undefined
+      : `task_status_mismatch:${claim.taskId}:${String(task.status)}`;
+  }
+  const reminder = findSnapshotItem(snapshot, "reminders", claim.reminderId);
+  if (reminder === undefined) {
+    return `reminder_missing:${claim.reminderId}`;
+  }
+  return reminder.dueAt === claim.dueAt
+    ? undefined
+    : `reminder_due_mismatch:${claim.reminderId}:${String(reminder.dueAt)}`;
+}
+
 export class TaskCompletionVerifier {
   readonly #actions: ActionRepository;
   readonly #state?: StateReadService;
@@ -406,12 +513,20 @@ export class TaskCompletionVerifier {
     actions: readonly ActionRecord[],
     minSnapshotAt?: string,
   ): {
-    receipts: { action: ActionRecord; hash: string }[];
+    receipts: {
+      action: ActionRecord;
+      hash: string;
+      snapshot: Record<string, unknown>;
+    }[];
     checked: string[];
     missing: string[];
   } {
     const stateTools = task.mandate.tools.filter(isStateToolName);
-    const receipts: { action: ActionRecord; hash: string }[] = [];
+    const receipts: {
+      action: ActionRecord;
+      hash: string;
+      snapshot: Record<string, unknown>;
+    }[] = [];
     const checked: string[] = [];
     const missing: string[] = [];
     if (stateTools.length === 0) {
@@ -451,7 +566,11 @@ export class TaskCompletionVerifier {
         missing.push(...validation.missing);
         continue;
       }
-      receipts.push({ action: latest, hash: validation.hash });
+      receipts.push({
+        action: latest,
+        hash: validation.hash,
+        snapshot: validation.snapshot,
+      });
       const cited = report.evidence.some(
         (item) => item.kind === "state_snapshot" && item.value === validation.hash,
       );
@@ -461,6 +580,25 @@ export class TaskCompletionVerifier {
       }
       checked.push(`claim:snapshot_cited:${toolName}`);
     }
+    const claims = report.stateClaims ?? [];
+    for (const claim of claims) {
+      const receipt = receipts.find((item) => item.hash === claim.snapshotHash);
+      if (receipt === undefined) {
+        missing.push(
+          `claim:unknown_snapshot:${claim.snapshotHash.slice(0, 8)}`,
+        );
+        continue;
+      }
+      const mismatch = validateStateClaim(claim, receipt.snapshot);
+      if (mismatch !== undefined) {
+        missing.push(`claim:${mismatch}`);
+        continue;
+      }
+      checked.push(`claim:state:${claim.kind}`);
+    }
+    // Structured claims cover only declared facts. The report's free text is
+    // never promoted to verified, with or without structured claims.
+    checked.push("claim:free_text_unverified");
     return { receipts, checked, missing };
   }
 
@@ -469,7 +607,12 @@ export class TaskCompletionVerifier {
     action: ActionRecord,
     minSnapshotAt?: string,
   ):
-    | { ok: true; hash: string; checked: string[] }
+    | {
+        ok: true;
+        hash: string;
+        snapshot: Record<string, unknown>;
+        checked: string[];
+      }
     | { ok: false; missing: string[]; checked: string[] } {
     const checked: string[] = [];
     const missing: string[] = [];
@@ -569,7 +712,12 @@ export class TaskCompletionVerifier {
       "provenance:snapshot_time",
       "provenance:entities_present",
     );
-    return { ok: true, hash: evidence.snapshotHash, checked };
+    return {
+      ok: true,
+      hash: evidence.snapshotHash,
+      snapshot: evidence.snapshot,
+      checked,
+    };
   }
 
   #verifyState(
@@ -617,10 +765,13 @@ export class TaskCompletionVerifier {
         at,
       );
     }
+    const claims = report.stateClaims?.length ?? 0;
     return this.#verdict(
       "state-read",
       "succeeded",
-      "state snapshot receipt, scope and report citation verified for the current revision",
+      claims > 0
+        ? `state snapshot receipt, scope, citation and ${claims} structured claim(s) verified for the current revision; remaining free text was not independently verified`
+        : "state snapshot receipt, scope and citation verified for the current revision; free-text claims were not independently verified",
       {
         checked,
         evidenceRefs,

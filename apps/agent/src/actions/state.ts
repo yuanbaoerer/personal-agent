@@ -99,7 +99,7 @@ interface TaskListArgs extends ListArgs {
   status?: TaskStatus;
 }
 
-const TASK_STATUSES: readonly TaskStatus[] = [
+export const TASK_STATUSES: readonly TaskStatus[] = [
   "queued",
   "running",
   "waiting_user",

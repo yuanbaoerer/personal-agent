@@ -1349,3 +1349,188 @@ describe("deterministic status answers", () => {
     assert.ok(criteria.requiredEvidenceKinds.includes("state_snapshot"));
   });
 });
+
+describe("structured state claims", () => {
+  function verifier(services: TestServices): TaskCompletionVerifier {
+    return new TaskCompletionVerifier({
+      actions: services.actions,
+      state: services.state,
+      now: () => NOW,
+    });
+  }
+
+  it("accepts a count that matches the cited snapshot", () => {
+    const services = setup();
+    const task = createStateTask(services, {
+      tools: ["state.summary"],
+      key: "state:claim-count-ok",
+    });
+    const state = insertSucceededStateAction(services, task);
+    const body = state.snapshot.snapshot as {
+      tasks: { counts: Record<string, number> };
+    };
+    const verdict = verifier(services).verify(task, {
+      ...readyReport([
+        { kind: "state_snapshot", value: state.snapshot.snapshotHash },
+      ]),
+      stateClaims: [
+        {
+          kind: "count",
+          snapshotHash: state.snapshot.snapshotHash,
+          path: "tasks.counts.queued",
+          value: body.tasks.counts.queued as number,
+        },
+      ],
+    });
+    assert.equal(verdict.verdict, "succeeded");
+    assert.ok(verdict.verification.checked.includes("claim:state:count"));
+    assert.ok(
+      verdict.verification.checked.includes("claim:free_text_unverified"),
+    );
+  });
+
+  it("rejects a count that conflicts with the cited snapshot", () => {
+    const services = setup();
+    const task = createStateTask(services, {
+      tools: ["state.summary"],
+      key: "state:claim-count-bad",
+    });
+    const state = insertSucceededStateAction(services, task);
+    const verdict = verifier(services).verify(task, {
+      ...readyReport([
+        { kind: "state_snapshot", value: state.snapshot.snapshotHash },
+      ]),
+      stateClaims: [
+        {
+          kind: "count",
+          snapshotHash: state.snapshot.snapshotHash,
+          path: "tasks.counts.queued",
+          value: 5,
+        },
+      ],
+    });
+    assert.equal(verdict.verdict, "needs_review");
+    assert.ok(
+      verdict.verification.missing.some((item) =>
+        item.startsWith("claim:count_mismatch:tasks.counts.queued:"),
+      ),
+    );
+  });
+
+  it("rejects a status that conflicts with the task list receipt", () => {
+    const services = setup();
+    const task = createStateTask(services, {
+      tools: ["task.list"],
+      key: "state:claim-status-bad",
+    });
+    const state = insertSucceededStateAction(services, task, {
+      tool: "task.list",
+      args: { limit: 10, offset: 0 },
+    });
+    const verdict = verifier(services).verify(task, {
+      ...readyReport([
+        { kind: "state_snapshot", value: state.snapshot.snapshotHash },
+      ]),
+      stateClaims: [
+        {
+          kind: "task_status",
+          snapshotHash: state.snapshot.snapshotHash,
+          taskId: task.id,
+          status: "running",
+        },
+      ],
+    });
+    assert.equal(verdict.verdict, "needs_review");
+    assert.ok(
+      verdict.verification.missing.some((item) =>
+        item.startsWith("claim:task_status_mismatch:"),
+      ),
+    );
+  });
+
+  it("rejects a reminder time that conflicts with the reminder receipt", async () => {
+    const services = setup();
+    const reminder = await services.reminders.create({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      text: "claim due",
+      dueAt: new Date(NOW.getTime() + 3_600_000).toISOString(),
+      timezone: "UTC",
+    });
+    const task = createStateTask(services, {
+      tools: ["reminder.list"],
+      key: "state:claim-reminder-bad",
+    });
+    const state = insertSucceededStateAction(services, task, {
+      tool: "reminder.list",
+      args: { limit: 10, offset: 0 },
+    });
+    const verdict = verifier(services).verify(task, {
+      ...readyReport([
+        { kind: "state_snapshot", value: state.snapshot.snapshotHash },
+      ]),
+      stateClaims: [
+        {
+          kind: "reminder_due",
+          snapshotHash: state.snapshot.snapshotHash,
+          reminderId: reminder.id,
+          dueAt: new Date(NOW.getTime() + 7_200_000).toISOString(),
+        },
+      ],
+    });
+    assert.equal(verdict.verdict, "needs_review");
+    assert.ok(
+      verdict.verification.missing.some((item) =>
+        item.startsWith("claim:reminder_due_mismatch:"),
+      ),
+    );
+  });
+
+  it("rejects a claim that points at a different snapshot", () => {
+    const services = setup();
+    const task = createStateTask(services, {
+      tools: ["state.summary"],
+      key: "state:claim-wrong-snapshot",
+    });
+    const state = insertSucceededStateAction(services, task);
+    const verdict = verifier(services).verify(task, {
+      ...readyReport([
+        { kind: "state_snapshot", value: state.snapshot.snapshotHash },
+      ]),
+      stateClaims: [
+        {
+          kind: "count",
+          snapshotHash: "a".repeat(64),
+          path: "tasks.counts.queued",
+          value: 1,
+        },
+      ],
+    });
+    assert.equal(verdict.verdict, "needs_review");
+    assert.ok(
+      verdict.verification.missing.some((item) =>
+        item.startsWith("claim:unknown_snapshot:"),
+      ),
+    );
+  });
+
+  it("labels a report without structured claims as free text", () => {
+    const services = setup();
+    const task = createStateTask(services, {
+      tools: ["state.summary"],
+      key: "state:claim-free-text",
+    });
+    const state = insertSucceededStateAction(services, task);
+    const verdict = verifier(services).verify(
+      task,
+      readyReport([
+        { kind: "state_snapshot", value: state.snapshot.snapshotHash },
+      ]),
+    );
+    assert.equal(verdict.verdict, "succeeded");
+    assert.ok(
+      verdict.verification.checked.includes("claim:free_text_unverified"),
+    );
+    assert.match(verdict.verification.reason, /free-text claims/);
+  });
+});
