@@ -441,9 +441,12 @@ export class Router implements InboundHandler {
           mandate,
           priority: decision.task.priority,
         });
+        const modelAck = decision.text.trim();
         const ack =
-          decision.text.length > 0 && decision.text.length <= 200
-            ? decision.text
+          modelAck.length > 0 &&
+          modelAck.length <= 200 &&
+          !/^(?:ack|ok|received|已收到|收到)[。.!！]?$/i.test(modelAck)
+            ? modelAck
             : `已接单：${task.goal}`;
         this.#reply(
           context,

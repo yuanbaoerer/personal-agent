@@ -34,6 +34,23 @@ describe("task and assignment coordination", () => {
     assert.ok(services.store.countOutbox("pending") >= 2);
   });
 
+  it("replaces a bare model acknowledgement with a user-facing task ack", async () => {
+    const services = createServices();
+    services.model.push({
+      action: "create_task",
+      text: "ack",
+      task: {
+        goal: "整理资料",
+        completionCriteria: "输出摘要",
+        mandate: { resources: ["chat"], tools: [] },
+      },
+    });
+    await sendText(services, "帮我整理这些资料", "evt_ack_text");
+    const texts = services.store.listRecentOutbox(10).map((row) => row.text);
+    assert.ok(texts.includes("已接单：整理资料"));
+    assert.ok(!texts.includes("ack"));
+  });
+
   it("rejects a stale report after a revision and keeps the new revision queued", () => {
     const services = createServices();
     const task = services.taskService.create({
