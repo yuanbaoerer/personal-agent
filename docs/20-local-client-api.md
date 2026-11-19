@@ -110,7 +110,7 @@ pa events --after 0 --follow             # SSE 持续订阅
 
 - `GET /events` 返回 `events[]` 与 `nextCursor`。
 - `GET /events/stream` 是 `text/event-stream`：每个事件带 `id: <cursor>`、`event: audit`、`data: <json>`；支持 `Last-Event-ID`，每秒 replay 新事件，15 秒心跳；服务端最多 8 条并发流。
-- `client-http.test.ts` 覆盖断开后携带 `Last-Event-ID` 重连；`sse-restart.test.ts` 覆盖关闭并重新打开 SQLite 后从 cursor 继续；`sse-kill.test.ts` 对独立 child HTTP server 执行 SIGKILL、重启并从 cursor 继续。仍不是完整 Agent 主进程/DO 驱逐证据。
+- `client-http.test.ts` 覆盖断开后携带 `Last-Event-ID` 重连；`sse-restart.test.ts` 覆盖关闭并重新打开 SQLite 后从 cursor 继续；`sse-kill.test.ts` 对独立 child HTTP server 执行 SIGKILL、重启并从 cursor 继续；`sse-main-kill.test.ts` 对真实 `main.ts` 进程执行 SIGKILL/重启并从 cursor 继续。仍不是 Cloudflare DO 驱逐或真实 Feishu 流量恢复证据。
 - 事件只包含 event/subject/trace/time，不返回 goal、消息正文或 Action args。
 - SDK `streamEvents({after,signal})` 与 CLI `--follow` 已接 SSE；断线后调用方以最后 cursor 重连。浏览器 `EventSource` 不能设置 Bearer header，当前 SDK/CLI 使用 fetch stream。
 
@@ -177,10 +177,11 @@ TUI 只通过 Client API，每 2 秒刷新；显示任务状态、目标、Actio
 - `apps/agent/test/client-http.test.ts`：真实 HTTP mount、Bearer 鉴权、token 不进入日志、SSE Last-Event-ID 重连。
 - `apps/agent/test/sse-restart.test.ts`：SQLite 关闭/重开后 SSE cursor 继续。
 - `apps/agent/test/sse-kill.test.ts`：独立 child server SIGKILL/重启后 Last-Event-ID 继续。
+- `apps/agent/test/sse-main-kill.test.ts`：完整 `main.ts` 子进程 SIGKILL/重启后 API/SSE cursor 继续。
 - `apps/agent/test/cli.test.ts`：CLI/SDK header/idempotency、SSE 数据帧、错误映射、approve 必须有 `--yes`。
 - `apps/agent/test/tui.test.ts`：帧渲染、任务/审批绑定、增补/提醒输入/编辑提示、换行/详情滚动、短终端底部提示。
 - 本地 Node PTY smoke：`pa tui` 进入 alternate screen 并由 `q` 干净退出。
-- 全量 `npm test`：273 个确定性测试通过（2026-11-19）。
+- 全量 `npm test`：274 个确定性测试通过（2026-11-19）。
 
 仍 pending：
 

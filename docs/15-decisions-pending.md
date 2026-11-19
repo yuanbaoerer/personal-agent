@@ -6,7 +6,7 @@
 
 | 项 | 状态 | 证据 |
 | --- | --- | --- |
-| PA-01～PA-09 核心闭环 | E1，部分 E2 | 273 个确定性测试；见各 Issue |
+| PA-01～PA-09 核心闭环 | E1，部分 E2 | 274 个确定性测试；见各 Issue |
 | PA-10 确认/项目记忆 | E1 | `e9aee02` + `4f9047a`；记忆 global/project 隔离、修订保留 project、Worker 注入 |
 | PA-11 固定 40 场景目录 + JSON/Markdown 报告 | E1 | `evals/scenarios.ts`、`scripts/eval-report.ts`；37/40 确定性执行通过，3 条真实 pending |
 | PA-11 真实模型 10×3、G1–G3 E3、7 天自用 | 未开始 | 需 D01–D04 决策与真实凭据 |
@@ -16,9 +16,9 @@
 | PA-15 开源治理 | E1 部分 | `7017ca4`；SECURITY/CONTRIBUTING/CHANGELOG/模板、工作树/history secret scan、许可清单；LICENSE/历史/visibility pending |
 | 真实飞书验证修复 | 已提交 | `9f2e9a1` 裸 `ack`；`1ef8e81` 多行 slash 命令；短提醒投递通过 |
 | GitHub OAuth | E1 已实现，当前未配置 | `c0cf4d5` + `b83ca96`；OAuth App start/callback/status/disconnect、浏览器 admin 登录、AES-GCM token、执行时 provider；真实 OAuth/G1 pending |
-| PA-17 Client API / PA-18 CLI | E1 最小实现 | `b8fea74` + `6a89ad7` + `3851e93` + `ac44b91` + `d9a564c` + `a2f063e` + `85d5006` + `e88e7c9` + `044193c` + `a1b488e` + `67fbbcf`；`/api/v1`、device token/scope/revoke/TTL、credential 600 + IP 1200 req/min 限流、幂等/修订/审批绑定、稳定 audit seq、轮询 + SSE 事件、`pa` CLI；远程 TLS/代理层限流/完整 Agent 重连与 E3 pending |
+| PA-17 Client API / PA-18 CLI | E1 最小实现 | `b8fea74` + `6a89ad7` + `3851e93` + `ac44b91` + `d9a564c` + `a2f063e` + `85d5006` + `e88e7c9` + `044193c` + `a1b488e` + `67fbbcf`；`/api/v1`、device token/scope/revoke/TTL、credential 600 + IP 1200 req/min 限流、幂等/修订/审批绑定、稳定 audit seq、轮询 + SSE 事件、`pa` CLI；远程 TLS/代理层限流/DO 驱逐与 E3 pending |
 | PA-19 TUI | E1 最小实现 | `b8fea74` + `6a89ad7` + `3851e93` + `ac44b91` + `d9a564c` + `a2f063e` + `85d5006` + `e88e7c9` + `044193c` + `a1b488e` + `67fbbcf`；Tasks/Approvals/Reminders、取消/批准/拒绝、增补/修订、提醒文本/到期编辑、换行/详情滚动、短终端底部提示、PTY smoke；平台终端与 E3 pending |
-| PA-22 跨平台 CI | E1 部分 | `86a24a2` + `6494933`；macos-26-arm64 与 windows-2025-vs2026 均成功（最新 run `44500006564`，273 tests/secret scan）；Intel、真实 Terminal 待验收 |
+| PA-22 跨平台 CI | E1 部分 | `86a24a2` + `6494933`；macos-26-arm64 与 windows-2025-vs2026 均成功（最新 run `44500006564`，273 tests/secret scan；当前本地 274）；Intel、真实 Terminal 待验收 |
 | PA-12/PA-13 部分 | E1/pending | 见路线图 |
 
 固定 40 场景分类为渠道 8、任务 10、权限 10、恢复 8、记忆 4。K01–K14 映射由 `evals/scenarios.ts` 维护；pending 不计入成功分母。报告命令：
