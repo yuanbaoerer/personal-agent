@@ -123,6 +123,40 @@ describe("TaskCompletionVerifier", () => {
     assert.deepEqual(report?.unverifiedClaims, ["freshness unknown"]);
   });
 
+  it("parses only well-formed structured state claims", () => {
+    const hash = "a".repeat(64);
+    const report = parseWorkerReport(
+      JSON.stringify({
+        status: "ready",
+        summary: "ok",
+        evidence: [{ kind: "state_snapshot", value: hash }],
+        stateClaims: [
+          { kind: "count", snapshotHash: hash, path: "tasks.counts.running", value: 2 },
+          { kind: "task_status", snapshotHash: hash, taskId: "task-1", status: "running" },
+          {
+            kind: "reminder_due",
+            snapshotHash: hash,
+            reminderId: "reminder-1",
+            dueAt: "2026-01-01T01:00:00.000Z",
+          },
+          { kind: "count", snapshotHash: "bad", path: "tasks.counts.running", value: 2 },
+          { kind: "count", snapshotHash: hash, path: "tasks.counts.running", value: "2" },
+          { kind: "task_status", snapshotHash: hash, taskId: "task-2", status: "invented" },
+        ],
+      }),
+    );
+    assert.deepEqual(report?.stateClaims, [
+      { kind: "count", snapshotHash: hash, path: "tasks.counts.running", value: 2 },
+      { kind: "task_status", snapshotHash: hash, taskId: "task-1", status: "running" },
+      {
+        kind: "reminder_due",
+        snapshotHash: hash,
+        reminderId: "reminder-1",
+        dueAt: "2026-01-01T01:00:00.000Z",
+      },
+    ]);
+  });
+
   it("marks a GitHub claim without an executor receipt as needs_review", () => {
     const services = setup();
     const task = createTask(services);

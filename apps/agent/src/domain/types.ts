@@ -249,6 +249,27 @@ export interface ProposedAction {
   args: Record<string, unknown>;
 }
 
+export type StateClaim =
+  | {
+      kind: "count";
+      snapshotHash: string;
+      /** Dot path into the snapshot, e.g. tasks.counts.running. */
+      path: string;
+      value: number;
+    }
+  | {
+      kind: "task_status";
+      snapshotHash: string;
+      taskId: string;
+      status: TaskStatus;
+    }
+  | {
+      kind: "reminder_due";
+      snapshotHash: string;
+      reminderId: string;
+      dueAt: string;
+    };
+
 export interface WorkerReport {
   status: ReportStatus;
   summary: string;
@@ -260,6 +281,8 @@ export interface WorkerReport {
   evidenceRef?: string;
   verifierVersion?: string;
   unverifiedClaims?: string[];
+  /** Structured facts the program can compare with executor receipts. */
+  stateClaims?: StateClaim[];
 }
 
 export type ActionStatus =

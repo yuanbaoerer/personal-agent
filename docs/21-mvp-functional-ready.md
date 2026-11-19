@@ -7,7 +7,7 @@
 
 一个 owner、一个常驻 Agent Core、一个真实模型、一个真实飞书私聊入口。通过自然语言对话/创建任务/查询状态/补充/修改/取消、真实 GitHub 只读查询、明确确认的记忆和一次/周期提醒、授权的定期汇报，关闭客户端仍可执行并收回结果。已有本地 CLI/TUI 辅助管理；不要求远程多设备或 Desktop。私有首版只读优先，真实外部写默认不启用；若必须验证写操作，仅隔离测试资源、明确审批和可核对结果。
 
-当前证据：MVP-01 的六个 owner-scope state tools、确定性状态问答路径与 state-read verifier 已合并（PR #43），MVP-02 结构化 Intent 与 Intent Handler 已合并（PR #44/#46），仓库记录 345 个确定性测试通过；本地 API/CLI/TUI/SSE、OpenAPI、macOS arm64/Windows x64 CI、clean-install smoke 已有记录。真实 Feishu 长连接入站、D19 复测与 M02/M03 仍 pending；飞书/真实模型/短提醒只有部分真实记录。SSE 主进程 SIGKILL 恢复不是任务/模型恢复证据。真实 GitHub OAuth/G1、并发 G2、计划 G3、持续运行仍待验收。不要增加 E1 数量来代替真实业务结果。
+当前证据：MVP-01 的六个 owner-scope state tools、确定性状态问答路径与 state-read verifier 已合并（PR #43），MVP-02 结构化 Intent 与 Intent Handler 已合并（PR #44/#46），仓库记录 356 个确定性测试通过；本地 API/CLI/TUI/SSE、OpenAPI、macOS arm64/Windows x64 CI、clean-install smoke 已有记录。真实 Feishu 长连接入站、D19 复测与 M02/M03 仍 pending；飞书/真实模型/短提醒只有部分真实记录。SSE 主进程 SIGKILL 恢复不是任务/模型恢复证据。真实 GitHub OAuth/G1、并发 G2、计划 G3、持续运行仍待验收。不要增加 E1 数量来代替真实业务结果。
 
 ## 2. 工作包与依赖
 
@@ -28,7 +28,7 @@
 - Router 意图与工具 allowlist、Mandate resource、ActionService 程序化守卫一致；明确 owner 请求内的只读能力可窄范围自动批准。租约/revision 等既有不变量保留。
 - state-read verifier 必须验证当前 revision 的真实快照/回执，来源核验与内容事实核验分开。缺证据不得成功；对照真实状态复测 D19，不接受模型自报。
 - 负例：空、过期、跨 owner/project、旧 revision、恶意文本、缺权或凭据泄漏。
-- 当前状态：代码与确定性测试完成；剩余验收仅限真实 Feishu 长连接入站、自然语言状态查询、后台分析报告与实际收件。人工验收未完成前不勾选 M02/M03，不以本地注入事件替代。
+- 当前状态：代码与确定性测试完成；state-read 已支持 Worker 结构化 `stateClaims`（计数/任务状态/提醒时间）与回执字段对照，冲突进入 `needs_review`，自由文本始终标记未独立核验。剩余验收仅限真实 Feishu 长连接入站、自然语言状态查询、后台分析报告与实际收件。人工验收未完成前不勾选 M02/M03，不以本地注入事件替代。
 
 ### MVP-02：自然语言主入口
 
@@ -40,7 +40,7 @@
 2. 再接入任务指代/上下文消歧，所有控制操作复用 TaskService 与 revision 栅栏。
 3. 最后补记忆、提醒、计划草稿/确认/取消的自然语言入口与确认展示；新增分支放入小型 Intent Handler，Router 保留编排与鉴权后 dispatch。
 
-当前实现（2026-11-20，MVP-02 PR）：六个只读 target 已结构化并经 `StateReadService` 返回真实数据；任务指代支持显式 ID、唯一前缀、序号、会话焦点与目标关键词，歧义时只询问不执行；复合查询+控制请求要求拆分；记忆保存/删除复用 Confirmation，提醒取消复用 ReminderService，周期计划走草稿→确认→取消。新增分支已提取到 `StateQueryHandler` / `PersonalIntentHandler`，Router 保留编排、鉴权后 dispatch 与回复投递。确定性测试合计 348 项通过（含 40 项 MVP-02 新增）。真实飞书自然语言覆盖仍待 #38/#12 人工验收，不以本地事件替代。
+当前实现（2026-11-20，MVP-02 PR）：六个只读 target 已结构化并经 `StateReadService` 返回真实数据；任务指代支持显式 ID、唯一前缀、序号、会话焦点与目标关键词，歧义时只询问不执行；复合查询+控制请求要求拆分；记忆保存/删除复用 Confirmation，提醒取消复用 ReminderService，周期计划走草稿→确认→取消。新增分支已提取到 `StateQueryHandler` / `PersonalIntentHandler`，Router 保留编排、鉴权后 dispatch 与回复投递。确定性测试合计 356 项通过（含 40 项 MVP-02 新增）。真实飞书自然语言覆盖仍待 #38/#12 人工验收，不以本地事件替代。
 
 ### MVP-03：GitHub 真实闭环
 
