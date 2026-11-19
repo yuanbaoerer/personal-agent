@@ -482,7 +482,7 @@ const REMINDER_HINT = /(?:提醒(?:列表|清单|有哪些|有什么|多少|几�
 const MEMORY_HINT = /(?:记忆|偏好).{0,8}(?:有哪些|有什么|列表|内容|吗|呢)|(?:有哪些|有什么|查看|列出|记住).{0,20}(?:记忆|偏好)|我记住了什么/;
 const SCHEDULE_HINT = /(?:周期计划|定时计划|计划).{0,8}(?:有哪些|有什么|列表|内容|吗|呢)|(?:有哪些|有什么|查看|列出).{0,6}(?:周期计划|定时计划|计划)/;
 const MUTATION_HINT =
-  /(?:创建|新建|添加|设置|修改|更新|改|结束|停|删除|取消|关闭|打开|清除|移除|重命名|调整|更换|保存|记录|安排|暂停|恢复|批准|拒绝|补充|回答|发送|发给|提交|提醒(?:一下|下)?我|设(?:置|个)提醒|加(?:个)?提醒|做一个|帮我做)/;
+  /(?:创建|新建|添加|设置|修改|更新|改|加上|增加|授予|结束|停|删除|取消|关闭|打开|清除|移除|重命名|调整|更换|保存|记录|安排|暂停|恢复|批准|拒绝|补充|回答|发送|发给|提交|提醒(?:一下|下)?我|设(?:置|个)提醒|加(?:个)?提醒|做一个|帮我做)/;
 
 const STATUS_HINTS: readonly [RegExp, TaskStatus][] = [
   [/(?:正在运行|运行中|执行中|running)/i, "running"],
@@ -529,7 +529,10 @@ export function inferStateQuery(text: string): StateQuery | undefined {
   if (COMBINED_HINT.test(value)) {
     return { target: "summary", ...(project === undefined ? {} : { project }) };
   }
-  if (TASK_DETAIL_HINT.test(value) || ORDINAL.test(value) && /任务/.test(value)) {
+  const ordinalDetail =
+    ORDINAL.test(value) &&
+    /(?:详情|信息|什么|状态|进展|情况|怎么样|如何|吗|呢)/.test(value);
+  if (TASK_DETAIL_HINT.test(value) || ordinalDetail) {
     const refMatch = ORDINAL.exec(value);
     return {
       target: "task",

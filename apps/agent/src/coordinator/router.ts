@@ -513,6 +513,23 @@ export class Router implements InboundHandler {
       );
       return { status: "done" };
     }
+    const redirectableControls: ReadonlySet<RouterDecision["action"]> = new Set([
+      "supplement_task",
+      "revise_task",
+      "cancel_task",
+      "forget_memory",
+      "cancel_reminder",
+      "confirm_schedule",
+      "cancel_schedule",
+    ]);
+    if (redirectableControls.has(decision.action)) {
+      // A read-only question misrouted as a control must not mutate anything.
+      const query = inferStateQuery(context.text);
+      if (query !== undefined) {
+        this.#answerStateQuery(context, query);
+        return { status: "done" };
+      }
+    }
     switch (decision.action) {
       case "reply": {
         // A model reply must not invent current state. Explicit read
@@ -1020,17 +1037,31 @@ export class Router implements InboundHandler {
       // completion verifier for already-authorized work.
       const nextTools = new Set(mandate.tools);
       const nextResources = new Set(mandate.resources);
+      const currentTools = new Set(current.mandate.tools);
+      const currentResources = new Set(current.mandate.resources);
       const nextProject = mandate.project ?? null;
       const currentProject = current.mandate.project ?? null;
+      const addedTools = mandate.tools.some((tool) => !currentTools.has(tool));
+      const addedResources = mandate.resources.some(
+        (resource) => !currentResources.has(resource),
+      );
+      const removedTools = current.mandate.tools.some(
+        (tool) => !nextTools.has(tool),
+      );
+      const removedResources = current.mandate.resources.some(
+        (resource) => !nextResources.has(resource),
+      );
       if (
         nextProject !== currentProject ||
-        current.mandate.tools.some((tool) => !nextTools.has(tool)) ||
-        current.mandate.resources.some((resource) => !nextResources.has(resource))
+        addedTools ||
+        addedResources ||
+        removedTools ||
+        removedResources
       ) {
         return {
           ok: false,
           reason:
-            "修订不能改变项目范围或缩小任务授权；需要更换项目时请新建任务。",
+            "修订不能改变项目范围或增减任务授权；需要新能力或更换项目时请新建任务。",
         };
       }
     }

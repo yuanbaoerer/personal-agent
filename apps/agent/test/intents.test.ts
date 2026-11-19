@@ -125,6 +125,7 @@ describe("deterministic state query fallback", () => {
     assert.equal(inferStateQuery("把刚才的任务目标修改一下"), undefined);
     assert.equal(inferStateQuery("刚才那个任务先停一下"), undefined);
     assert.equal(inferStateQuery("分析时再关注数据库性能"), undefined);
+    assert.equal(inferStateQuery("第二个任务再关注数据库性能"), undefined);
     assert.equal(inferStateQuery("记住我喜欢咖啡"), undefined);
   });
 
@@ -308,6 +309,21 @@ describe("natural language state intents", () => {
     assert.match(outbox(services), /summary reminder/);
   });
 
+  it("redirects a read question misrouted as cancel instead of mutating", async () => {
+    const services = setup();
+    const task = insertTask(services, TASK_A, "must survive", {
+      status: "running",
+    });
+    services.model.push({
+      action: "cancel_task",
+      text: "",
+      taskId: task.id.slice(0, 8),
+    });
+    await sendText(services, "这个任务执行得怎么样了", "evt_intent_misroute_cancel");
+    assert.equal(services.tasks.get(task.id)?.status, "running");
+    assert.match(outbox(services), /must survive/);
+  });
+
   it("asks to split a compound mutation-plus-query request", async () => {
     const services = setup();
     const task = insertTask(services, TASK_A, "compound target", {
@@ -444,6 +460,24 @@ describe("natural language state intents", () => {
     const revised = services.tasks.get(task.id);
     assert.equal(revised?.goal, "new goal");
     assert.equal(revised?.revision, 2);
+  });
+
+  it("rejects a revision that expands the task mandate", async () => {
+    const services = setup();
+    const task = insertTask(services, TASK_A, "fixed scope", {
+      status: "waiting_user",
+    });
+    services.model.push({
+      action: "revise_task",
+      text: "",
+      taskRef: "刚才那个任务",
+      changes: {
+        mandate: { resources: ["chat", "state"], tools: ["state.summary"] },
+      },
+    });
+    await sendText(services, "给刚才那个任务加上状态读取权限", "evt_intent_expand");
+    assert.equal(services.tasks.get(task.id)?.revision, 1);
+    assert.match(outbox(services), /不能改变项目范围或增减任务授权/);
   });
 
   it("confirms memory save and forget instead of writing directly", async () => {
