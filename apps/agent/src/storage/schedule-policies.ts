@@ -367,6 +367,16 @@ export class SchedulePolicyRepository {
     );
   }
 
+  /** Dispatched runs since an ISO timestamp; used by the daily cap. */
+  countDispatchedSince(since: string): number {
+    const row = this.#db.all<{ count: number }>(
+      `SELECT COUNT(*) AS count FROM pa_schedule_policy_runs
+       WHERE status = 'dispatched' AND created_at >= ?`,
+      since,
+    )[0];
+    return Number(row?.count ?? 0);
+  }
+
   listRuns(policyId: string, limit = 20): SchedulePolicyRunRecord[] {
     return this.#db
       .all<RunRow>(

@@ -112,6 +112,34 @@ describe("schedule policy time calculation", () => {
 });
 
 describe("schedule policy lifecycle", () => {
+  it("caps dispatched runs per UTC day and skips the rest", () => {
+    const time = clock();
+    const github = githubFixture();
+    const services = createServices({
+      now: time.now,
+      maxScheduleRunsPerDay: 1,
+      github: {
+        token: "secret",
+        allowedRepos: ["owner/repo"],
+        fetch: github.fetch,
+      },
+    });
+    createConfirmed(services);
+    const second = createConfirmed(services, { goal: "第二个计划" });
+    time.set("2026-01-01T09:00:00.000Z");
+    assert.equal(services.schedulePolicy.fireDue(), 1);
+    assert.equal(services.tasks.listByOwner(services.owner.id).length, 1);
+    const runs = services.schedulePolicies.listRuns(second.id);
+    assert.equal(runs[0]?.status, "skipped");
+    assert.match(
+      services.store
+        .listAuditAfter(0, 100)
+        .map((event) => event.event)
+        .join(","),
+      /schedule_policy.skipped/,
+    );
+  });
+
   it("requires confirmation before firing and creates one task per occurrence", () => {
     const { services, time } = fixture();
     const draft = services.schedulePolicy.createDraft(

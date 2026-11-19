@@ -43,6 +43,7 @@ export interface AppConfig {
     maxCallsPerTask: number;
     maxCallsPerDay?: number;
     maxToolCallsPerTask: number;
+    maxScheduleRunsPerDay: number;
   };
   ownerOpenId?: string;
   eventMode: FeishuEventMode;
@@ -182,6 +183,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       maxToolCallsPerTask: parseInteger(
         read("BUDGET_MAX_TOOL_CALLS_PER_TASK") ?? "20",
         "BUDGET_MAX_TOOL_CALLS_PER_TASK",
+        1,
+        1_000,
+      ),
+      maxScheduleRunsPerDay: parseInteger(
+        read("BUDGET_MAX_SCHEDULE_RUNS_PER_DAY") ?? "20",
+        "BUDGET_MAX_SCHEDULE_RUNS_PER_DAY",
         1,
         1_000,
       ),
