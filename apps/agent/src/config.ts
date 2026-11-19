@@ -13,6 +13,14 @@ export interface ModelConfig {
   apiKey?: string;
 }
 
+export interface GitHubOAuthConfig {
+  clientId: string;
+  clientSecret: string;
+  redirectUri: string;
+  scopes: string[];
+  encryptionKey: string;
+}
+
 export interface AppConfig {
   host: string;
   port: number;
@@ -23,7 +31,9 @@ export interface AppConfig {
   github: {
     token?: string;
     allowedRepos: string[];
+    oauth?: GitHubOAuthConfig;
   };
+  adminToken?: string;
   magpie: {
     baseUrl?: string;
     gatewayKey?: string;
@@ -64,6 +74,54 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     throw new ConfigError("FEISHU_EVENT_MODE must be webhook or long_connection");
   }
 
+  const port = parseInteger(read("PORT") ?? "8787", "PORT", 1, 65_535);
+  const adminToken = read("ADMIN_TOKEN");
+  const githubOAuthClientId = read("GITHUB_OAUTH_CLIENT_ID");
+  const githubOAuthClientSecret = read("GITHUB_OAUTH_CLIENT_SECRET");
+  const githubOAuthEncryptionKey = read("GITHUB_OAUTH_ENCRYPTION_KEY");
+  if (
+    (githubOAuthClientId === undefined) !==
+    (githubOAuthClientSecret === undefined)
+  ) {
+    throw new ConfigError(
+      "GITHUB_OAUTH_CLIENT_ID and GITHUB_OAUTH_CLIENT_SECRET must be set together",
+    );
+  }
+  if (githubOAuthClientId !== undefined && githubOAuthEncryptionKey === undefined) {
+    throw new ConfigError(
+      "GITHUB_OAUTH_ENCRYPTION_KEY is required when GitHub OAuth is configured",
+    );
+  }
+  if (githubOAuthClientId === undefined && githubOAuthEncryptionKey !== undefined) {
+    throw new ConfigError(
+      "GITHUB_OAUTH_ENCRYPTION_KEY is set but GITHUB_OAUTH_CLIENT_ID/SECRET are missing",
+    );
+  }
+  if (
+    githubOAuthClientId !== undefined &&
+    githubOAuthClientSecret !== undefined &&
+    adminToken === undefined
+  ) {
+    throw new ConfigError(
+      "ADMIN_TOKEN is required when GitHub OAuth is configured; OAuth routes must not rely on loopback trust",
+    );
+  }
+  const githubOAuth =
+    githubOAuthClientId !== undefined &&
+    githubOAuthClientSecret !== undefined &&
+    githubOAuthEncryptionKey !== undefined
+      ? {
+          clientId: githubOAuthClientId,
+          clientSecret: githubOAuthClientSecret,
+          redirectUri:
+            read("GITHUB_OAUTH_REDIRECT_URI") ??
+            `http://127.0.0.1:${port}/oauth/github/callback`,
+          scopes: (read("GITHUB_OAUTH_SCOPES") ?? "read:user,public_repo")
+            .split(/[\s,]+/)
+            .filter((scope) => scope.length > 0),
+          encryptionKey: githubOAuthEncryptionKey,
+        }
+      : undefined;
   const providerRaw = read("MODEL_PROVIDER") ?? "opencode-go";
   if (!SUPPORTED_MODEL_PROVIDERS.includes(providerRaw as ModelProvider)) {
     throw new ConfigError(
@@ -73,7 +131,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
 
   return {
     host: read("HOST") ?? "0.0.0.0",
-    port: parseInteger(read("PORT") ?? "8787", "PORT", 1, 65_535),
+    port,
     databasePath: read("DATABASE_PATH") ?? "./data/agent.sqlite",
     piDatabasePath: read("PI_DATABASE_PATH") ?? "./data/pi.sqlite",
     model: {
@@ -87,7 +145,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
         .split(",")
         .map((repo) => repo.trim())
         .filter((repo) => repo.length > 0),
+      oauth: githubOAuth,
     },
+    adminToken,
     magpie: {
       baseUrl: read("MAGPIE_URL"),
       gatewayKey: read("MAGPIE_GATEWAY_KEY"),

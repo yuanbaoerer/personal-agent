@@ -224,8 +224,8 @@ export function createDefaultToolRegistry(
   registry.register(lamp);
   if (
     github !== undefined &&
-    github.token !== undefined &&
-    github.token.trim().length > 0 &&
+    (github.tokenProvider !== undefined ||
+      (github.token !== undefined && github.token.trim().length > 0)) &&
     github.allowedRepos.length > 0
   ) {
     registry.register(new GitHubReadTool(github));

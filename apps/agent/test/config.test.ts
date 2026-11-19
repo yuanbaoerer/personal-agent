@@ -25,6 +25,46 @@ describe("model provider config", () => {
   });
 });
 
+describe("GitHub OAuth config", () => {
+  it("requires client id, secret, and encryption key together", () => {
+    assert.throws(
+      () => loadConfig({ ...BASE, GITHUB_OAUTH_CLIENT_ID: "client" }),
+      /set together/,
+    );
+    assert.throws(
+      () =>
+        loadConfig({
+          ...BASE,
+          GITHUB_OAUTH_CLIENT_ID: "client",
+          GITHUB_OAUTH_CLIENT_SECRET: "secret",
+        }),
+      /GITHUB_OAUTH_ENCRYPTION_KEY/,
+    );
+    assert.throws(
+      () =>
+        loadConfig({
+          ...BASE,
+          GITHUB_OAUTH_CLIENT_ID: "client",
+          GITHUB_OAUTH_CLIENT_SECRET: "secret",
+          GITHUB_OAUTH_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString("base64"),
+        }),
+      /ADMIN_TOKEN is required/,
+    );
+    const config = loadConfig({
+      ...BASE,
+      GITHUB_OAUTH_CLIENT_ID: "client",
+      GITHUB_OAUTH_CLIENT_SECRET: "secret",
+      GITHUB_OAUTH_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString("base64"),
+      ADMIN_TOKEN: "admin",
+    });
+    assert.equal(config.github.oauth?.clientId, "client");
+    assert.equal(
+      config.github.oauth?.redirectUri,
+      "http://127.0.0.1:8787/oauth/github/callback",
+    );
+  });
+});
+
 describe("Feishu event mode config", () => {
   it("defaults to webhook", () => {
     assert.equal(loadConfig(BASE).eventMode, "webhook");

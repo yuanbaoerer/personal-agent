@@ -8,6 +8,7 @@
 - 飞书自建应用：App ID、App Secret、Verification Token；可选 Encrypt Key。
 - 唯一的 owner `open_id`；不要从昵称或模型输出推断。
 - 首次建议 `FEISHU_EVENT_MODE=long_connection`，无需公网回调/TLS；webhook 模式需要自行提供反向代理。
+- GitHub OAuth App 的 callback 必须能从浏览器访问：本机用 `http://127.0.0.1:8787/oauth/github/callback`，远程部署用公网 HTTPS 地址并同步 `GITHUB_OAUTH_REDIRECT_URI`。OAuth token 用 `GITHUB_OAUTH_ENCRYPTION_KEY` 加密；该 key 不随备份保存。OAuth start/status/disconnect 必须配置 `ADMIN_TOKEN`，只接受 Bearer header。
 
 ## 2. 启动
 

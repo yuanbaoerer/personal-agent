@@ -22,6 +22,7 @@ export interface PreflightResult {
     piDatabasePath: string;
     modelConfigured: boolean;
     githubRepos: number;
+    githubOAuthConfigured: boolean;
     magpieConfigured: boolean;
   };
 }
@@ -82,6 +83,9 @@ export function runPreflight(options: PreflightOptions = {}): PreflightResult {
   if (config.magpie.baseUrl === undefined) {
     warnings.push("MAGPIE_URL is unset: subscription budget enforcement is disabled");
   }
+  if (config.github.oauth !== undefined && config.github.allowedRepos.length === 0) {
+    warnings.push("GitHub OAuth is configured but GITHUB_ALLOWED_REPOS is empty: GitHub tool is disabled");
+  }
 
   return {
     checks,
@@ -94,6 +98,7 @@ export function runPreflight(options: PreflightOptions = {}): PreflightResult {
       piDatabasePath: config.piDatabasePath,
       modelConfigured: config.model.apiKey !== undefined,
       githubRepos: config.github.allowedRepos.length,
+      githubOAuthConfigured: config.github.oauth !== undefined,
       magpieConfigured: config.magpie.baseUrl !== undefined,
     },
   };

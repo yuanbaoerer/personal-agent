@@ -33,7 +33,8 @@ npm run export:data -- --data ./data --out ./exports/agent.json
 ```
 
 - 导出 agent 业务表（身份、会话、Inbox/Outbox、任务、审批、提醒、记忆、计划、审计等）为可读 JSON。
-- 不读取环境变量，不导出 secret；Pi/Provider 原始会话 **不在 JSON 中**，其表数量仅作提示。
+- 不读取环境变量，不导出 secret；GitHub OAuth 凭据不在 JSON 白名单中；Pi/Provider 原始会话 **不在 JSON 中**，其表数量仅作提示。
+- 数据库备份可能包含加密后的 GitHub OAuth 凭据；恢复实例必须复用原 `GITHUB_OAUTH_ENCRYPTION_KEY`，否则需重新授权。
 - 目标已存在时拒绝覆盖；文件 600。
 - 导出用于审阅/迁移辅助，不等于完整恢复包；完整恢复使用备份目录。
 

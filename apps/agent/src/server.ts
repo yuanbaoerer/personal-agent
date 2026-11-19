@@ -1,7 +1,9 @@
+import { timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 
 import type { FeishuAdapter } from "./channels/feishu/adapter.ts";
 import type { IngressService } from "./coordinator/ingress.ts";
+import type { GitHubOAuthStatus } from "./personal/github-oauth.ts";
 import {
   FeishuAuthError,
   FeishuRequestError,
@@ -14,10 +16,19 @@ export interface AppLogger {
   error(message: string, fields?: Record<string, unknown>): void;
 }
 
+export interface GitHubOAuthHttpHandler {
+  start(): string;
+  complete(code: string, state: string): Promise<GitHubOAuthStatus>;
+  status(): GitHubOAuthStatus;
+  disconnect(): boolean;
+}
+
 export interface HttpServerDeps {
   feishu: FeishuAdapter;
   ingress: IngressService;
   logger: AppLogger;
+  oauth?: GitHubOAuthHttpHandler;
+  adminToken?: string;
 }
 
 class BodyTooLargeError extends Error {}
@@ -33,6 +44,11 @@ export function createHttpServer(deps: HttpServerDeps): Server {
       if (request.method === "GET" && url.pathname === "/healthz") {
         status = 200;
         sendJson(response, status, { ok: true, uptimeSeconds: process.uptime() });
+        return;
+      }
+
+      if (url.pathname.startsWith("/oauth/github")) {
+        status = await handleGitHubOAuth(request, response, url, deps);
         return;
       }
 
@@ -65,12 +81,128 @@ export function createHttpServer(deps: HttpServerDeps): Server {
     } finally {
       deps.logger.info("http_request", {
         method: request.method,
-        path: request.url,
+        // Never log query strings: OAuth/admin tokens may be there.
+        path: (() => {
+          try {
+            return new URL(request.url ?? "/", "http://localhost").pathname;
+          } catch {
+            return "/invalid";
+          }
+        })(),
         status,
         durationMs: Date.now() - startedAt,
       });
     }
   });
+}
+
+function requestIsAuthorized(
+  request: IncomingMessage,
+  _url: URL,
+  adminToken: string | undefined,
+): boolean {
+  if (adminToken === undefined || adminToken.length === 0) {
+    return false;
+  }
+  const authorization = request.headers.authorization;
+  const bearer =
+    typeof authorization === "string" && authorization.startsWith("Bearer ")
+      ? authorization.slice("Bearer ".length)
+      : undefined;
+  if (bearer === undefined) {
+    return false;
+  }
+  const expected = Buffer.from(adminToken);
+  const actual = Buffer.from(bearer);
+  return expected.length === actual.length && timingSafeEqual(expected, actual);
+}
+
+async function handleGitHubOAuth(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL,
+  deps: HttpServerDeps,
+): Promise<number> {
+  if (deps.oauth === undefined) {
+    sendJson(response, 404, { error: "github_oauth_not_configured" });
+    return 404;
+  }
+  if (url.pathname === "/oauth/github/start") {
+    if (request.method !== "GET" || !requestIsAuthorized(request, url, deps.adminToken)) {
+      sendJson(response, 401, { error: "unauthorized" });
+      return 401;
+    }
+    response.statusCode = 302;
+    response.setHeader("location", deps.oauth.start());
+    response.setHeader("cache-control", "no-store");
+    response.end();
+    return 302;
+  }
+  if (url.pathname === "/oauth/github/callback") {
+    if (request.method !== "GET") {
+      sendJson(response, 405, { error: "method_not_allowed" });
+      return 405;
+    }
+    const code = url.searchParams.get("code");
+    const state = url.searchParams.get("state");
+    if (code === null || state === null) {
+      sendHtml(response, 400, "GitHub authorization was cancelled or incomplete.");
+      return 400;
+    }
+    try {
+      const result = await deps.oauth.complete(code, state);
+      sendHtml(
+        response,
+        200,
+        `GitHub connected as ${escapeHtml(result.login ?? "unknown")}. You can close this window.`,
+      );
+      return 200;
+    } catch (error) {
+      deps.logger.error("github_oauth_failed", {
+        message: error instanceof Error ? error.message : String(error),
+      });
+      sendHtml(response, 400, "GitHub authorization failed. Start the connection again.");
+      return 400;
+    }
+  }
+  if (url.pathname === "/oauth/github/status") {
+    if (request.method !== "GET" || !requestIsAuthorized(request, url, deps.adminToken)) {
+      sendJson(response, 401, { error: "unauthorized" });
+      return 401;
+    }
+    sendJson(response, 200, deps.oauth.status());
+    return 200;
+  }
+  if (url.pathname === "/oauth/github/disconnect") {
+    if (request.method !== "POST" || !requestIsAuthorized(request, url, deps.adminToken)) {
+      sendJson(response, 401, { error: "unauthorized" });
+      return 401;
+    }
+    sendJson(response, 200, { disconnected: deps.oauth.disconnect() });
+    return 200;
+  }
+  sendJson(response, 404, { error: "not_found" });
+  return 404;
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (character) => {
+    switch (character) {
+      case "&": return "&amp;";
+      case "<": return "&lt;";
+      case ">": return "&gt;";
+      case '"': return "&quot;";
+      default: return "&#39;";
+    }
+  });
+}
+
+function sendHtml(response: ServerResponse, status: number, message: string): void {
+  if (response.writableEnded) return;
+  response.statusCode = status;
+  response.setHeader("content-type", "text/html; charset=utf-8");
+  response.setHeader("cache-control", "no-store");
+  response.end(`<!doctype html><title>GitHub</title><p>${message}</p>`);
 }
 
 async function handleFeishuWebhook(

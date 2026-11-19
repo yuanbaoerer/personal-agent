@@ -2,6 +2,8 @@ import { ToolRejectedError, type ActionTool, type ToolExecution, type ToolVerifi
 
 export interface GitHubReadConfig {
   token?: string;
+  /** Resolve a token at call time (OAuth credential store); overrides token. */
+  tokenProvider?: () => string | undefined | Promise<string | undefined>;
   /** Exact owner/repo allow list; empty disables the connector. */
   allowedRepos: string[];
   timeoutMs?: number;
@@ -95,9 +97,12 @@ export class GitHubReadTool implements ActionTool {
     const operation = canonical.operation as GitHubOperation;
     const repo = canonical.repo as string;
     const limit = canonical.limit as number;
-    const token = this.#config.token;
+    const token =
+      this.#config.tokenProvider === undefined
+        ? this.#config.token
+        : await this.#config.tokenProvider();
     if (token === undefined || token.trim().length === 0) {
-      throw new ToolRejectedError("github token is not configured");
+      throw new ToolRejectedError("github token is not configured or OAuth is not connected");
     }
 
     const path =

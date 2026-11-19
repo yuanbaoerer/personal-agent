@@ -61,6 +61,25 @@ describe("read-only GitHub connector", () => {
     });
   });
 
+  it("resolves an OAuth token provider at execution time", async () => {
+    const calls: { url: string; init?: RequestInit }[] = [];
+    let token: string | undefined = "oauth-token";
+    const tool = new GitHubReadTool({
+      allowedRepos: ["owner/repo"],
+      tokenProvider: async () => token,
+      fetch: fetchReturning({ full_name: "owner/repo" }, calls),
+    });
+    await tool.execute({ operation: "repo", repo: "owner/repo" });
+    let headers = new Headers(calls[0]?.init?.headers);
+    assert.equal(headers.get("authorization"), "Bearer oauth-token");
+
+    token = undefined;
+    await assert.rejects(
+      () => tool.execute({ operation: "repo", repo: "owner/repo" }),
+      /OAuth is not connected/,
+    );
+  });
+
   it("rejects a repo outside the allow list before any fetch", async () => {
     let called = 0;
     const tool = new GitHubReadTool({

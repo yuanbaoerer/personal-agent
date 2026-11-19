@@ -40,7 +40,7 @@ describe("agent JSON export", () => {
 
       const result = await exportAgentData({ dataDir, out, now: START });
       assert.equal(result.exportVersion, 1);
-      assert.equal(result.schemaVersion, "12");
+      assert.equal(result.schemaVersion, "13");
       assert.equal(result.tables.pa_memories?.length, 1);
       assert.equal(result.tables.pa_memories?.[0]?.project, "alpha");
       assert.equal(result.pi.included, false);

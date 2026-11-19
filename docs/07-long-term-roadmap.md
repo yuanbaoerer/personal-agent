@@ -170,6 +170,8 @@ PA-14 的数据资产路径已推进到 E1：manifest v2 元数据、双库备�
 
 PA-12 的 Node + Docker 自托管路径已落地 E1：Dockerfile/Compose、非 root/只读根、持久卷、健康检查、preflight 与诊断文档；镜像未发布 registry，真实 E3/E4、arm64 与定期备份 pending，PA-12 保持 OPEN。
 
+GitHub OAuth（个人开发者）已落地 E1：OAuth App start/callback/status/disconnect、一次性 state、AES-256-GCM token 存储、执行时 token provider；Worker 仍 PAT，私有细粒度只读与真实 G1 待验收。
+
 PA-15 的开源治理确定性部分已落地 E1：SECURITY/CONTRIBUTING/CHANGELOG/模板、工作树秘密扫描、许可清单与治理文档；LICENSE、历史重写、visibility、传递依赖审计仍待 D16–D18，PA-15 保持 OPEN。
 
 PA-13 的扩展契约已部分落地 E1：`MODEL_PROVIDER` 配置校验、实验期 `TOOL/RUNTIME/CHANNEL_CONTRACT_VERSION=1`、`ToolRegistry.describe()` 与只读工具文档；工具声明 `resource`/`readOnly`/`timeoutMs`/`replayPolicy`，`createApp({registerTools})` 是独立注册 seam，未知写只有 `replayPolicy="verify"` 且 verify 返回不满足时才重试。第二真实 Provider、通用入站 ChannelAdapter、真实 G1 与稳定性 D11 仍 pending，PA-13 保持 OPEN。详见 [06 · 待办 §2.17](06-next-steps-and-runbook.md)。

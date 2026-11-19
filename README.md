@@ -56,6 +56,8 @@ curl -fsS http://127.0.0.1:8787/healthz
 
 **License:** 尚未声明。D16 决策前不得把本仓库描述为已获得开源许可或可再分发。安全报告见 `SECURITY.md`。
 
+**GitHub:** 只读 connector 已支持运维 PAT 与个人 owner OAuth App；私有仓库细粒度只读仍需 GitHub App，见 [19 · GitHub OAuth](docs/19-github-oauth.md)。
+
 **2026-11-09 验证：**
 
 - **真实飞书 p2p**：入站 `message_id=<redacted-feishu-message-id>` 受理；回调 `POST /webhooks/feishu` 200，约 13ms；主人 `<redacted-owner-open-id>` 绑定；出站 `platform_message_id=<redacted-feishu-message-id>` 被平台接受，端到端约 2s。当前走本地 Node 长连接（`FEISHU_EVENT_MODE=long_connection`），无需 Tunnel；长连接事件日志为 `feishu_ws_event`，出站 `<redacted-feishu-message-id>`。
@@ -106,7 +108,7 @@ curl -fsS http://127.0.0.1:8787/healthz
 - `pa_memories` 增加 `project` 作用域（空为全局）；`/remember [--project=名称] key=value`、`/memory [--project=名称]`、`/forget [--project=名称] key`；同一 key 可在不同项目并存。
 - Worker prompt 只注入全局 + 当前 Task `mandate.project` 的记忆，最多 20 条/每条 1000 字符，不注入其他项目；Router 不注入记忆。项目名只允许 1–64 位字母/数字/点/下划线/连字符。
 - 模型 `save_memory` 可带 project，确认卡显示项目后再写入；`/confirm` 仍按项目隔离复核。
-- `npm test`：244 个确定性测试通过（当前）。
+- `npm test`：249 个确定性测试通过（当前）。
 - 证据边界：E1；真实模型误触发/提示注入负例、语义检索与项目权限模型仍 pending。
 
 **2026-11-18 验证（PA-07 部分）：**
@@ -152,6 +154,14 @@ curl -fsS http://127.0.0.1:8787/healthz
 - `/status`、`/usage` 显示待核对任务数；`/admin/status` 复用同一文本。`needs_review` 在 SQLite 中以 `waiting_user + needs_review=1` 存储，领域状态保持终态语义。
 - `npm test`：当时 226 个确定性测试通过。
 - 证据边界：E1；真实 G1/G3 外部判据、文本任务人审质量和真实模型虚假来源仍未验证。
+
+**2026-11-19 验证（GitHub OAuth，个人开发者 E1）：**
+
+- Node 入口新增 GitHub OAuth App 流程：`/oauth/github/start`、`/oauth/github/callback`、`/oauth/github/status`、`/oauth/github/disconnect`；admin token 保护 start/status/disconnect，state 一次性 10 分钟，回调只换 token。
+- OAuth token 使用 AES-256-GCM 加密写入 `pa_github_credentials`，`github.read` 每次执行时解密；不写日志、不返回 status。
+- 保留 `GITHUB_ALLOWED_REPOS` 白名单；OAuth 不等于全仓库访问。`repo` scope 较宽，应用只发 GET；私有仓库细粒度只读仍需 GitHub App。
+- 249 个确定性测试通过；真实 OAuth App/回调/G1 仍需配置与验收。
+- 文档：[19 · GitHub OAuth](docs/19-github-oauth.md)。
 
 **2026-11-18 验证（PA-15 开源治理，E1 部分）：**
 

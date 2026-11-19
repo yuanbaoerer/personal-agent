@@ -15,7 +15,7 @@
 | PA-14 数据资产 | E1 部分 | `7fe4f07`；备份 manifest v2、双库校验/恢复、agent JSON 导出；加密/保留/Pi 修复 pending |
 | PA-15 开源治理 | E1 部分 | `7017ca4`；SECURITY/CONTRIBUTING/CHANGELOG/模板、工作树/history secret scan、许可清单；LICENSE/历史/visibility pending |
 | 真实飞书验证修复 | 已提交 | `9f2e9a1` 裸 `ack`；`1ef8e81` 多行 slash 命令；短提醒投递通过 |
-| GitHub 接入 | 只读 connector 已实现，当前未配置 | 需 `GITHUB_TOKEN` + `GITHUB_ALLOWED_REPOS`；无 OAuth/GitHub App 授权流程 |
+| GitHub OAuth | E1 已实现，当前未配置 | OAuth App start/callback/status/disconnect、AES-GCM token、执行时 provider；真实 OAuth/G1 pending |
 | PA-12/PA-13 部分 | E1/pending | 见路线图 |
 
 固定 40 场景分类为渠道 8、任务 10、权限 10、恢复 8、记忆 4。K01–K14 映射由 `evals/scenarios.ts` 维护；pending 不计入成功分母。报告命令：
@@ -171,12 +171,12 @@ npm run eval:report:critical  # CI 关键集
 - 建议：先完成 D19 与一次真实复测，再进入 PA-16；否则发布候选会带着已验证的语义缺口。
 - [ ] 已审核：________________
 
-### D21 GitHub 授权模型
+### D21 GitHub 授权模型（已选择：个人开发者 OAuth App）
 
-- 现状：GitHub 功能是运维预置的只读 PAT + repo 白名单；`/allow-read` 只是应用内 24h 读预授权，不是 GitHub 用户授权。当前 `.env` 未配置 token/repo。
-- 需决定：继续单 owner PAT，还是实现 GitHub App / OAuth 用户授权；是否允许多用户各自绑定仓库。
-- 建议：v0.3 自托管保留 PAT；进入多用户/Public Alpha 前采用 GitHub App installation token，按 installation/repo 最小权限，不把长期用户 token 存进 SQLite；OAuth App 只在确有用户级需求时采用。
-- [ ] 已审核：________________
+- 2026-11-19 主人决定：先以个人开发者为主，支持 GitHub OAuth。
+- 已实现 E1：单 owner OAuth App web flow、一次性 state、AES-256-GCM 加密 token、执行时 token provider；白名单继续强制。Worker 仍使用 PAT，GitHub App/多用户绑定未实现。
+- 仍需验收：真实 OAuth App 凭据、回调、撤销和 G1。私有仓库细粒度只读后续用 GitHub App 解决；OAuth `repo` scope 较宽，应用只发 GET。
+- [x] 已审核：个人开发者 OAuth App
 
 ## 3. 决策后的实施顺序
 

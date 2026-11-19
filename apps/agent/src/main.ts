@@ -4,6 +4,7 @@ import { dirname, resolve } from "node:path";
 import { createApp } from "./app.ts";
 import { FeishuAdapter } from "./channels/feishu/adapter.ts";
 import { FeishuLongConnection } from "./channels/feishu/long-connection.ts";
+import { GitHubOAuthService } from "./personal/github-oauth.ts";
 import { loadConfig, type ModelConfig } from "./config.ts";
 import { PiRouterModel } from "./coordinator/pi-router.ts";
 import { StaticRouterModel } from "./coordinator/router.ts";
@@ -121,12 +122,34 @@ async function main(): Promise<void> {
     });
   }
 
+  const owner =
+    config.ownerOpenId === undefined
+      ? undefined
+      : store.findOwner(
+          "feishu",
+          config.feishu.accountId ?? config.feishu.appId,
+          config.ownerOpenId,
+        );
+  const githubOAuth =
+    config.github.oauth !== undefined && owner !== undefined
+      ? new GitHubOAuthService({
+          db: store.db,
+          ownerId: owner.id,
+          config: config.github.oauth,
+        })
+      : undefined;
+  const github = {
+    token: config.github.token,
+    allowedRepos: config.github.allowedRepos,
+    tokenProvider:
+      githubOAuth === undefined ? undefined : () => githubOAuth.accessToken(),
+  };
   const local = createRuntime(config.model, piDatabasePath);
   const app = createApp({
     store,
     runtime: local.runtime,
     wake: noopWake,
-    github: config.github,
+    github,
     magpie: config.magpie,
     // A keyless process must not persist a placeholder session id: the next
     // run with a model key would inherit an id Pi cannot resolve.
@@ -153,7 +176,21 @@ async function main(): Promise<void> {
     retryBaseMs: config.outbox.retryBaseMs,
   });
 
-  const server = createHttpServer({ feishu, ingress: app.ingress, logger });
+  const server = createHttpServer({
+    feishu,
+    ingress: app.ingress,
+    logger,
+    adminToken: config.adminToken,
+    oauth:
+      githubOAuth === undefined
+        ? undefined
+        : {
+            start: () => githubOAuth.start(),
+            complete: (code, state) => githubOAuth.complete(code, state),
+            status: () => githubOAuth.status(),
+            disconnect: () => githubOAuth.disconnect(),
+          },
+  });
 
   let running = false;
   let stopping = false;
@@ -220,6 +257,7 @@ async function main(): Promise<void> {
     databasePath,
     piDatabasePath,
     eventMode: config.eventMode,
+    githubOAuth: githubOAuth === undefined ? "disabled" : "configured",
     model:
       config.model.apiKey === undefined
         ? "unavailable"

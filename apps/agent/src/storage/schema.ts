@@ -380,6 +380,27 @@ const migrations: readonly (readonly string[])[] = [
     `DROP TABLE pa_memories_old`,
     `CREATE INDEX pa_memories_scope_idx ON pa_memories (owner_id, project, status)`,
   ],
+  [
+    // GitHub OAuth state and encrypted credentials (Node self-host path).
+    `CREATE TABLE pa_github_oauth_states (
+      state_hash TEXT PRIMARY KEY,
+      owner_id TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      used_at TEXT,
+      created_at TEXT NOT NULL
+    ) STRICT`,
+    `CREATE INDEX pa_github_oauth_states_owner_idx
+       ON pa_github_oauth_states (owner_id, expires_at)`,
+    `CREATE TABLE pa_github_credentials (
+      owner_id TEXT PRIMARY KEY,
+      github_user_id TEXT NOT NULL,
+      login TEXT NOT NULL,
+      scopes TEXT NOT NULL,
+      token_ciphertext TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    ) STRICT`,
+  ],
 ];
 
 /** Highest schema version this build can read/migrate. */

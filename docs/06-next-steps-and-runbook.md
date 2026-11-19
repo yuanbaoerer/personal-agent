@@ -30,7 +30,7 @@
 | Magpie 用量/预算：可选读取 quotas/usage/limit，OpenCode Go 窗口低于阈值或 key 限额时阻止新模型请求，`/usage` 附带订阅窗口 | 当前 Magpie 工作区无 OpenCode Go 卡；真实配额/重置未验证 |
 | 周期计划：草稿→确认、daily/weekdays、IANA 时区/DST、确定性 runKey、暂停/恢复/取消/修改、计划级 repo 只读授权、DO wake | 真实 Feishu/GitHub G3、生产 alarm 观察 |
 | 完成验证器：GitHub Action 回执/来源 URL、Action receipt、结构校验；needs_review 终态 + `/ack` | 真实 G1/G3 外部判据、文本人审质量 |
-| 244 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
+| 249 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
 
 ## 2. 下一步待办
 
@@ -372,6 +372,27 @@ npm run export:data -- --data ./data --out ./exports/agent.json
 
 边界：E1；本阶段不改变仓库可见性，也不构成法律/完整安全审计。PA-15 保持 OPEN。
 
+### 2.20 2026-11-19 实施进展（GitHub OAuth，E1）
+
+```bash
+# 配置 OAuth App 后
+curl -i -H "Authorization: Bearer $ADMIN_TOKEN" \
+  http://127.0.0.1:8787/oauth/github/start
+curl -H "Authorization: Bearer $ADMIN_TOKEN" http://127.0.0.1:8787/oauth/github/status
+```
+
+| 内容 | 实现 | 证据 |
+| --- | --- | --- |
+| OAuth flow | start 302、callback 换 token、一次性 state 10 分钟 | `github-oauth.test.ts` |
+| Token 保护 | AES-256-GCM 密文入库；status/日志不返回 token | 加密/日志测试 |
+| 路由保护 | start/status/disconnect 需 admin token；回调校验 state | `oauth-http.test.ts` |
+| GitHub 工具 | `tokenProvider` 执行时解密；白名单仍强制 | `github.test.ts` |
+| 配置 | client id/secret/key 必须成组；redirect/scope | `config.test.ts`、preflight |
+| 边界 | 单 owner；Worker 仍 PAT；无 token 刷新；私有细粒度只读需 GitHub App | docs/19 |
+| 待验收 | 真实 OAuth App、回调、撤销、真实 G1 | 需 D21 凭据 |
+
+边界：E1；真实 GitHub OAuth/G1 未通过。PA-07/PA-13 仍 OPEN。
+
 ## 3. 环境与密钥
 
 ```bash
@@ -392,6 +413,8 @@ cp infra/.dev.vars.example infra/.dev.vars  # 本地 workerd
 | `MODEL_PROVIDER` | 本地 Node 的 Provider，默认 `opencode-go`；未知值启动前 `ConfigError`；当前仅支持该 Provider |
 | `OPENCODE_MODEL` | 本地模型 id，默认 `deepseek-v4.1-flash`；由 `MODEL_PROVIDER` 解析 |
 | `GITHUB_TOKEN` / `GITHUB_ALLOWED_REPOS` | 只读 GitHub 连接器；两者都需配置，仓库为逗号分隔 `owner/name` 精确白名单；不配置则不注册工具 |
+| `GITHUB_OAUTH_CLIENT_ID` / `GITHUB_OAUTH_CLIENT_SECRET` / `GITHUB_OAUTH_ENCRYPTION_KEY` | 个人 owner OAuth App；三者必须成组，且需 `ADMIN_TOKEN`；token 加密存储 |
+| `GITHUB_OAUTH_REDIRECT_URI` / `GITHUB_OAUTH_SCOPES` | 回调必须与 OAuth App 完全一致；默认 scope 为 `read:user,public_repo`，私有仓库需显式加 `repo` |
 | `MAGPIE_URL` / `MAGPIE_GATEWAY_KEY` / `MAGPIE_MIN_REMAINING_PERCENT` | 可选 Magpie 用量/预算；URL 例 `http://127.0.0.1:3425`；默认 key `magpie-personal-agent`；窗口剩余低于百分比（默认 5）时暂停新模型请求 |
 | `DATABASE_PATH` | 本地 Node SQLite（`pa_*` 应用状态），默认 `./data/agent.sqlite` |
 | `PI_DATABASE_PATH` | Pi 会话库（`pi_*`），默认 `./data/pi.sqlite`；与上一项成对备份 |
