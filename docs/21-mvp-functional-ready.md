@@ -1,13 +1,13 @@
 # 21 · MVP Functional Ready：私有自用主体功能实施纲领
 
-> 2026-11-20 · 总跟踪 [#41](https://github.com/yuanbaoerer/personal-agent/issues/41) · 实施基线 `b93e0ad`（MVP-01 PR #43 已合并）；MVP-02 PR #44 已合并至 `68f7756`，CI run 44573381332 通过。
+> 2026-11-20 · 总跟踪 [#41](https://github.com/yuanbaoerer/personal-agent/issues/41) · 实施基线 `b93e0ad`（MVP-01 PR #43 已合并）；MVP-02 PR #44 与 Intent Handler PR #46 已合并；当前 main `2fcafd6`。
 > 这是 v0.2 Reliable Core 主线内的近期私有试用检查点，**不是新版本发布或放宽 v0.2/v0.3/v0.4 的正式门槛**。本文优先决定近期任务顺序；长期设计保留。
 
 ## 1. 目标与边界
 
 一个 owner、一个常驻 Agent Core、一个真实模型、一个真实飞书私聊入口。通过自然语言对话/创建任务/查询状态/补充/修改/取消、真实 GitHub 只读查询、明确确认的记忆和一次/周期提醒、授权的定期汇报，关闭客户端仍可执行并收回结果。已有本地 CLI/TUI 辅助管理；不要求远程多设备或 Desktop。私有首版只读优先，真实外部写默认不启用；若必须验证写操作，仅隔离测试资源、明确审批和可核对结果。
 
-当前证据：MVP-01 的六个 owner-scope state tools、确定性状态问答路径与 state-read verifier 已合并（PR #43），仓库记录 308 个确定性测试通过；本地 API/CLI/TUI/SSE、OpenAPI、macOS arm64/Windows x64 CI、clean-install smoke 已有记录。真实 Feishu 长连接入站、D19 复测与 M02/M03 仍 pending；飞书/真实模型/短提醒只有部分真实记录。SSE 主进程 SIGKILL 恢复不是任务/模型恢复证据。真实 GitHub OAuth/G1、并发 G2、计划 G3、持续运行仍待验收。不要增加 E1 数量来代替真实业务结果。
+当前证据：MVP-01 的六个 owner-scope state tools、确定性状态问答路径与 state-read verifier 已合并（PR #43），MVP-02 结构化 Intent 与 Intent Handler 已合并（PR #44/#46），仓库记录 345 个确定性测试通过；本地 API/CLI/TUI/SSE、OpenAPI、macOS arm64/Windows x64 CI、clean-install smoke 已有记录。真实 Feishu 长连接入站、D19 复测与 M02/M03 仍 pending；飞书/真实模型/短提醒只有部分真实记录。SSE 主进程 SIGKILL 恢复不是任务/模型恢复证据。真实 GitHub OAuth/G1、并发 G2、计划 G3、持续运行仍待验收。不要增加 E1 数量来代替真实业务结果。
 
 ## 2. 工作包与依赖
 
