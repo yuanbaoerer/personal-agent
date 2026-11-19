@@ -126,6 +126,7 @@ describe("deterministic state query fallback", () => {
     assert.equal(inferStateQuery("刚才那个任务先停一下"), undefined);
     assert.equal(inferStateQuery("分析时再关注数据库性能"), undefined);
     assert.equal(inferStateQuery("第二个任务再关注数据库性能"), undefined);
+    assert.equal(inferStateQuery("我的任务都完成了吗"), undefined);
     assert.equal(inferStateQuery("记住我喜欢咖啡"), undefined);
   });
 
@@ -526,6 +527,96 @@ describe("natural language state intents", () => {
     assert.equal(services.memory.get(services.owner.id, "editor")?.status, "active");
     await sendText(services, `/确认 ${pendingForget.id.slice(0, 8)}`, "evt_intent_memory_forget_confirm");
     assert.equal(services.memory.get(services.owner.id, "editor")?.status, "deleted");
+  });
+
+  it("finds a pending reminder past 20 fired history rows", async () => {
+    const services = setup();
+    const reminders = [];
+    for (let index = 0; index < 21; index += 1) {
+      reminders.push(
+        await services.reminders.create({
+          ownerId: services.owner.id,
+          conversationId: services.conversation.id,
+          text: `reminder ${index}`,
+          dueAt: new Date(NOW.getTime() + (index + 1) * 3_600_000).toISOString(),
+          timezone: "UTC",
+        }),
+      );
+    }
+    for (const reminder of reminders.slice(0, 20)) {
+      services.schedules.markFired(reminder.id, NOW.toISOString());
+    }
+    const pending = reminders[20] as { id: string };
+    services.model.push({
+      action: "cancel_reminder",
+      text: "",
+      reminderRef: "reminder 20",
+    });
+    await sendText(services, "取消第二十一个提醒", "evt_intent_reminder_history");
+    assert.equal(services.schedules.get(pending.id)?.status, "cancelled");
+  });
+
+  it("resolves a project-scoped ordinal within that project", async () => {
+    const services = setup();
+    insertTask(services, TASK_A, "beta newest", {
+      createdAt: "2026-01-01T00:03:00.000Z",
+      project: "beta",
+    });
+    insertTask(services, TASK_B, "alpha newest", {
+      createdAt: "2026-01-01T00:02:00.000Z",
+      project: "alpha",
+    });
+    insertTask(services, TASK_C, "alpha second", {
+      createdAt: "2026-01-01T00:01:00.000Z",
+      project: "alpha",
+    });
+    services.model.push({
+      action: "query_status",
+      text: "",
+      query: { target: "task", taskRef: "第二个", project: "alpha" },
+    });
+    await sendText(services, "项目 alpha 的第二个任务怎么样了", "evt_intent_project_ordinal");
+    const text = outbox(services);
+    assert.match(text, /alpha second/);
+    assert.doesNotMatch(text, /alpha newest/);
+  });
+
+  it("does not reject a read-only query that mentions a past control word", async () => {
+    const services = setup();
+    insertTask(services, TASK_A, "readable task");
+    services.model.push({
+      action: "query_status",
+      text: "",
+      query: { target: "tasks" },
+    });
+    await sendText(services, "任务停了吗，最近任务有哪些", "evt_intent_read_compound");
+    const text = outbox(services);
+    assert.doesNotMatch(text, /复合请求/);
+    assert.match(text, /readable task/);
+  });
+
+  it("requires an explicit confirmation before activating a schedule", async () => {
+    const services = setup({ github: { allowedRepos: ["owner/repo"] } });
+    const draft = services.schedulePolicy.createDraft(
+      services.owner.id,
+      services.conversation.id,
+      {
+        repo: "owner/repo",
+        localTime: "09:00",
+        cadence: "weekdays",
+        goal: "确认守卫",
+      },
+    );
+    assert.ok(draft.ok);
+    const policy = draft.policy;
+    services.model.push({
+      action: "confirm_schedule",
+      text: "",
+      scheduleRef: policy.id.slice(0, 8),
+    });
+    await sendText(services, "那个计划怎么样", "evt_intent_schedule_confirm_guard");
+    assert.equal(services.schedulePolicies.get(policy.id)?.status, "draft");
+    assert.match(outbox(services), /需要明确确认/);
   });
 
   it("cancels a natural language reminder reference", async () => {

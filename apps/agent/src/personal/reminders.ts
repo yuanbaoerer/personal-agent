@@ -352,6 +352,11 @@ export class ReminderService {
     return this.#schedules.listByOwner(ownerId);
   }
 
+  /** Pending reminders only; never scan past fired/cancelled history. */
+  listPending(ownerId: string, limit = 1_000): ScheduleRecord[] {
+    return this.#schedules.listPendingByOwner(ownerId, limit);
+  }
+
   #reply(
     schedule: ScheduleRecord,
     purpose: "status" | "reminder",

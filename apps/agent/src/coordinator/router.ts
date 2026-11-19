@@ -513,6 +513,7 @@ export class Router implements InboundHandler {
     const now = this.#now().toISOString();
     if (
       decision.action !== "reply" &&
+      decision.action !== "query_status" &&
       isCompoundControlRequest(context.text)
     ) {
       this.#reply(
@@ -571,9 +572,13 @@ export class Router implements InboundHandler {
           this.#answerStateQuery(context, directQuery);
           return { status: "done" };
         }
-        if (requested.tools.length === 0 && isExplicitStateQuery(context.text)) {
-          // D19: never dispatch a state question to a Worker with no read
-          // tools where structural checks could pass without real data.
+        if (
+          !sustained &&
+          requested.tools.every(isStateToolName) &&
+          isExplicitStateQuery(context.text)
+        ) {
+          // D19: never dispatch a state question to a Worker that could pass
+          // structural checks without reading the owner's real state.
           this.#answerStateQuery(context);
           return { status: "done" };
         }
@@ -853,7 +858,7 @@ export class Router implements InboundHandler {
         const resolution = resolveReminderReference(
           context.ownerId,
           ref,
-          this.#reminders.list(context.ownerId),
+          this.#reminders.listPending(context.ownerId),
         );
         if (resolution.status === "ambiguous") {
           this.#reply(context, formatReminderCandidates(resolution.items), "failure");
@@ -944,6 +949,17 @@ export class Router implements InboundHandler {
         }
         const action: ScheduleAction =
           decision.action === "confirm_schedule" ? "confirm" : "cancel";
+        if (
+          action === "confirm" &&
+          !/(?:确认|激活|启用|开启|同意|批准|可以|好的?|执行)/.test(context.text)
+        ) {
+          this.#reply(
+            context,
+            "激活周期计划需要明确确认。请回复“确认计划 <编号>”。",
+            "failure",
+          );
+          return { status: "done" };
+        }
         const ref = decision.scheduleId ?? decision.scheduleRef;
         const resolution = resolveScheduleReference(
           context.ownerId,
@@ -1831,14 +1847,32 @@ export class Router implements InboundHandler {
    * Ambiguity is reported, never guessed; no mutation runs without a target.
    */
   #resolveDecisionTask(
-    context: { ownerId: string; conversationId: string; inboxId: string },
+    context: {
+      ownerId: string;
+      conversationId: string;
+      inboxId: string;
+      text?: string;
+    },
     decision: RouterDecision,
   ): TaskRecord | undefined {
+    const text = context.text ?? "";
+    const flagProject = extractProjectFlag(text);
+    if (invalidProjectFlag(text, flagProject)) {
+      this.#reply(
+        context,
+        "项目名无效：只允许 1–64 位字母、数字、点、下划线或连字符。",
+        "failure",
+      );
+      return undefined;
+    }
     if (decision.taskId !== undefined) {
       const explicit = resolveTaskId(context.ownerId, decision.taskId, this.#tasks);
       if (explicit.status === "ok") {
         const task = this.#tasks.get(explicit.id);
-        if (task !== undefined) {
+        if (
+          task !== undefined &&
+          (flagProject === undefined || task.mandate.project === flagProject)
+        ) {
           this.#rememberTaskFocus(context.conversationId, task.id);
           return task;
         }
@@ -1869,6 +1903,7 @@ export class Router implements InboundHandler {
         preferredTaskId: this.#store.metaGet(
           `${TASK_FOCUS_PREFIX}${context.conversationId}`,
         ),
+        project: flagProject,
       },
     );
     if (resolution.status === "ok") {
@@ -1950,6 +1985,7 @@ export class Router implements InboundHandler {
                 preferredTaskId: this.#store.metaGet(
                   `${TASK_FOCUS_PREFIX}${context.conversationId}`,
                 ),
+                project,
               },
             )
           : (() => {
@@ -1960,7 +1996,8 @@ export class Router implements InboundHandler {
               );
               if (explicit.status === "ok") {
                 const task = this.#tasks.get(explicit.id);
-                return task === undefined
+                return task === undefined ||
+                  (project !== undefined && task.mandate.project !== project)
                   ? ({
                       status: "not_found",
                       reason: "找不到属于你的该任务。",
