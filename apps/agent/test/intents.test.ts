@@ -113,6 +113,7 @@ describe("deterministic state query fallback", () => {
       project: "alpha",
     });
     assert.deepEqual(inferStateQuery("周期计划有哪些"), { target: "schedules" });
+    assert.deepEqual(inferStateQuery("我记住了什么"), { target: "memories" });
     assert.deepEqual(inferStateQuery("最近 3 个正在运行的任务"), {
       target: "tasks",
       status: "running",
@@ -225,6 +226,70 @@ describe("task reference resolution", () => {
 });
 
 describe("natural language state intents", () => {
+  it("asks to split a time-scoped reminder that also contains a read question", async () => {
+    const services = setup();
+    services.model.push({
+      action: "remind",
+      text: "提醒我查看任务",
+      dueAt: new Date(NOW.getTime() + 3_600_000).toISOString(),
+      timezone: "UTC",
+    });
+    await sendText(
+      services,
+      "明天九点提醒一下有哪些任务要处理",
+      "evt_intent_remind_time_read",
+    );
+    assert.equal(services.confirmations.listPending(services.owner.id).length, 0);
+    const text = outbox(services);
+    assert.match(text, /拆成两步/);
+    assert.doesNotMatch(text, /没有符合条件的任务/);
+  });
+
+  it("rejects a malformed project flag instead of falling back to global", async () => {
+    const services = setup();
+    services.memory.save(services.owner.id, "editor", "vim");
+    services.model.push({
+      action: "forget_memory",
+      text: "",
+      key: "editor",
+    });
+    await sendText(
+      services,
+      "忘掉编辑器偏好 --project=bad!",
+      "evt_intent_bad_project",
+    );
+    assert.equal(services.confirmations.listPending(services.owner.id).length, 0);
+    assert.equal(services.memory.get(services.owner.id, "editor")?.status, "active");
+    assert.match(outbox(services), /项目名无效/);
+  });
+
+  it("does not activate a schedule on a question that mentions approval", async () => {
+    const services = setup({ github: { allowedRepos: ["owner/repo"] } });
+    const draft = services.schedulePolicy.createDraft(
+      services.owner.id,
+      services.conversation.id,
+      {
+        repo: "owner/repo",
+        localTime: "09:00",
+        cadence: "weekdays",
+        goal: "问题守卫",
+      },
+    );
+    assert.ok(draft.ok);
+    services.model.push({
+      action: "confirm_schedule",
+      text: "",
+      scheduleRef: draft.policy.id.slice(0, 8),
+    });
+    await sendText(
+      services,
+      "这个计划我可以批准吗",
+      "evt_intent_schedule_question",
+    );
+    assert.equal(services.schedulePolicies.get(draft.policy.id)?.status, "draft");
+    assert.match(outbox(services), /需要明确确认/);
+  });
+
   it("does not create a reminder when a list question is misrouted as remind", async () => {
     const services = setup();
     services.model.push({
