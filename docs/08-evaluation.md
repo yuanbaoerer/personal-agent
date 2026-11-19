@@ -166,4 +166,4 @@ PA-17/18/19 的最小本地实现已接入：`/api/v1` 鉴权控制面、hashed 
 - `cli.test.ts`：SDK header/idempotency、CLI JSON、approve `--yes` 门槛、结构化错误。
 - `tui.test.ts`：任务/审批帧与绑定可见性；本地 PTY smoke 能进入 alternate screen 并由 `q` 复原。
 
-这**不是完整的 K15/K16 通过**：K15 的并发审批单次消费已有确定性测试，但跨进程并发 cancel/approve 仍未实测；K16 已有 SSE 单连接断开后 `Last-Event-ID` 重连测试，但进程重启/重放上限与 WebSocket 未实测。macOS GitHub Actions job 首次运行成功：`macos-26-arm64`、Node 26.12.0、271 tests pass、secret scan 无 findings（run `44495304676`）。这仍不是 macOS Intel、Windows、真实 Terminal/PTY 或 E3 证据；TUI 的 macOS Terminal/iTerm2、Windows Terminal/ConPTY、窄屏/无色仍未验收。
+这**不是完整的 K15/K16 通过**：K15 的并发审批单次消费已有确定性测试，但跨进程并发 cancel/approve 仍未实测；K16 已有 SSE 单连接断开后 `Last-Event-ID` 重连与 SQLite 重开 cursor 测试，但真实进程 kill/DO 驱逐、重放上限与 WebSocket 未实测。macOS GitHub Actions job 首次运行成功：`macos-26-arm64`、Node 26.12.0、271 tests pass、secret scan 无 findings（run `44495304676`）。这仍不是 macOS Intel、Windows、真实 Terminal/PTY 或 E3 证据；TUI 的 macOS Terminal/iTerm2、Windows Terminal/ConPTY、窄屏/无色仍未验收。
