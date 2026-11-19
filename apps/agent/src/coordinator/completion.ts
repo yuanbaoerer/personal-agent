@@ -4,9 +4,17 @@ import type {
   TaskVerification,
   WorkerReport,
 } from "../domain/types.ts";
+import { hashArgs } from "../actions/tooling.ts";
+import {
+  hashSnapshot,
+  isStateToolName,
+  parseStateEvidence,
+  snapshotScope,
+  type StateReadService,
+} from "../actions/state.ts";
 import type { ActionRepository } from "../storage/actions.ts";
 
-export const VERIFIER_VERSION = "2026-11-18.1";
+export const VERIFIER_VERSION = "2026-11-19.1";
 
 export interface CompletionVerdict {
   verdict: TaskVerification["verdict"];
@@ -15,6 +23,7 @@ export interface CompletionVerdict {
 
 export interface CompletionDeps {
   actions: ActionRepository;
+  state?: StateReadService;
   now?: () => Date;
 }
 
@@ -225,11 +234,13 @@ function reportHasVerifiedGithubSource(
  */
 export class TaskCompletionVerifier {
   readonly #actions: ActionRepository;
+  readonly #state?: StateReadService;
   readonly #now: () => Date;
   readonly #verifiers = new Map<string, CompletionVerifierFn>();
 
   constructor(deps: CompletionDeps) {
     this.#actions = deps.actions;
+    this.#state = deps.state;
     this.#now = deps.now ?? (() => new Date());
     this.register("structural", ({ structural, at }) =>
       this.#verdict("structural", "succeeded", "structural checks passed", {
@@ -252,6 +263,9 @@ export class TaskCompletionVerifier {
     );
     this.register("github-read", ({ task, report, actions, structural, at }) =>
       this.#verifyGithub(task, report, actions, structural, at),
+    );
+    this.register("state-read", ({ task, report, actions, structural, at }) =>
+      this.#verifyState(task, report, actions, structural, at),
     );
     this.register("action-receipt", ({ structural, actions, at }) => {
       const succeeded = actions.filter((action) => action.status === "succeeded");
@@ -317,15 +331,18 @@ export class TaskCompletionVerifier {
       .filter((action) => action.taskRevision === task.revision);
     const requested = structural.criteria.verifier;
     const hasGithub = task.mandate.tools.includes("github.read");
+    const hasState = task.mandate.tools.some(isStateToolName);
     const hasExecutorTool = task.mandate.tools.length > 0;
     // A model-supplied completion criteria string must never downgrade a
     // tool-backed task to structural-only success. The mandate is the
     // minimum verifier strength, not the report text.
     const verifier = hasGithub
       ? "github-read"
-      : hasExecutorTool
-        ? "action-receipt"
-        : requested ?? "structural";
+      : hasState
+        ? "state-read"
+        : hasExecutorTool
+          ? "action-receipt"
+          : requested ?? "structural";
 
     const registered = this.#verifiers.get(verifier);
     if (registered === undefined) {
@@ -348,6 +365,203 @@ export class TaskCompletionVerifier {
       structural: { checked: structural.checked, criteria: structural.criteria },
       at,
     });
+  }
+
+  /**
+   * Internal state claims need four separate facts: the tool really ran on
+   * the current revision, the persisted receipt belongs to this owner/project,
+   * the snapshot body was not altered, and the report cites that exact
+   * snapshot. A self-consistent hash alone is not enough.
+   */
+  #checkStateReceipts(
+    task: TaskRecord,
+    report: WorkerReport,
+    actions: readonly ActionRecord[],
+  ): {
+    receipts: { action: ActionRecord; hash: string }[];
+    checked: string[];
+    missing: string[];
+  } {
+    const stateTools = task.mandate.tools.filter(isStateToolName);
+    const receipts: { action: ActionRecord; hash: string }[] = [];
+    const checked: string[] = [];
+    const missing: string[] = [];
+    if (stateTools.length === 0) {
+      return {
+        receipts,
+        checked,
+        missing: ["execution:state_tool_mandate"],
+      };
+    }
+    if (this.#state === undefined) {
+      return {
+        receipts,
+        checked,
+        missing: ["execution:state_verifier_unavailable"],
+      };
+    }
+    for (const toolName of stateTools) {
+      const candidates = actions.filter(
+        (action) => action.tool === toolName && action.status === "succeeded",
+      );
+      if (candidates.length === 0) {
+        missing.push(`execution:succeeded_state_action:${toolName}`);
+        continue;
+      }
+      checked.push(`execution:state_action:${toolName}`);
+      const latest = [...candidates].sort((left, right) =>
+        right.updatedAt.localeCompare(left.updatedAt),
+      )[0] as ActionRecord;
+      const validation = this.#validateStateEvidence(task, latest);
+      checked.push(...validation.checked);
+      if (!validation.ok) {
+        missing.push(...validation.missing);
+        continue;
+      }
+      receipts.push({ action: latest, hash: validation.hash });
+      const cited = report.evidence.some(
+        (item) => item.kind === "state_snapshot" && item.value === validation.hash,
+      );
+      if (!cited) {
+        missing.push(`claim:snapshot_cited:${toolName}`);
+        continue;
+      }
+      checked.push(`claim:snapshot_cited:${toolName}`);
+    }
+    return { receipts, checked, missing };
+  }
+
+  #validateStateEvidence(
+    task: TaskRecord,
+    action: ActionRecord,
+  ):
+    | { ok: true; hash: string; checked: string[] }
+    | { ok: false; missing: string[]; checked: string[] } {
+    const checked: string[] = [];
+    const missing: string[] = [];
+    if (this.#state === undefined) {
+      return {
+        ok: false,
+        missing: ["execution:state_verifier_unavailable"],
+        checked,
+      };
+    }
+    const evidence = parseStateEvidence(action.evidence);
+    if (evidence === undefined) {
+      return {
+        ok: false,
+        missing: ["provenance:state_evidence_invalid"],
+        checked,
+      };
+    }
+    checked.push("provenance:state_evidence_parsed");
+    if (evidence.tool !== action.tool) {
+      missing.push("provenance:tool_mismatch");
+    }
+    if (evidence.ownerId !== task.ownerId) {
+      missing.push("provenance:owner_scope_mismatch");
+    }
+    const expectedProject = task.mandate.project ?? null;
+    if (evidence.project !== expectedProject) {
+      missing.push("provenance:project_scope_mismatch");
+    }
+    const scope = snapshotScope(evidence);
+    if (
+      scope === undefined ||
+      scope.ownerId !== task.ownerId ||
+      scope.project !== expectedProject
+    ) {
+      missing.push("provenance:snapshot_scope_mismatch");
+    }
+    if (
+      evidence.argsHash !== action.argsHash ||
+      hashArgs(action.tool, evidence.args) !== action.argsHash
+    ) {
+      missing.push("provenance:args_not_bound");
+    }
+    if (hashSnapshot(evidence.snapshot) !== evidence.snapshotHash) {
+      missing.push("provenance:snapshot_integrity_failed");
+    }
+    const created = Date.parse(action.createdAt);
+    const executed = Date.parse(action.updatedAt);
+    const snapshotAt = Date.parse(evidence.snapshotAt);
+    if (
+      Number.isNaN(created) ||
+      Number.isNaN(executed) ||
+      Number.isNaN(snapshotAt) ||
+      snapshotAt < created ||
+      snapshotAt > executed + 1_000
+    ) {
+      missing.push("provenance:snapshot_time_outside_action");
+    }
+    const entities = this.#state.auditSnapshot(evidence.tool, evidence.snapshot);
+    if (entities.length > 0) {
+      missing.push(...entities.map((item) => `provenance:${item}`));
+    }
+    if (missing.length > 0) {
+      return { ok: false, missing, checked };
+    }
+    checked.push(
+      "provenance:owner_scope",
+      "provenance:project_scope",
+      "provenance:args_bound",
+      "provenance:snapshot_integrity",
+      "provenance:snapshot_time",
+      "provenance:entities_present",
+    );
+    return { ok: true, hash: evidence.snapshotHash, checked };
+  }
+
+  #verifyState(
+    task: TaskRecord,
+    report: WorkerReport,
+    actions: readonly ActionRecord[],
+    structural: { checked: string[]; criteria: Criteria },
+    at: string,
+  ): CompletionVerdict {
+    const state = this.#checkStateReceipts(task, report, actions);
+    const checked = [...structural.checked, ...state.checked];
+    const missing = [...state.missing];
+    for (const toolName of task.mandate.tools.filter(
+      (tool) => !isStateToolName(tool),
+    )) {
+      const succeeded = actions.some(
+        (action) => action.tool === toolName && action.status === "succeeded",
+      );
+      if (succeeded) {
+        checked.push(`execution:action:${toolName}`);
+      } else {
+        missing.push(`execution:succeeded_action:${toolName}`);
+      }
+    }
+    const evidenceRefs = state.receipts.map(
+      ({ action }) => action.externalRef ?? `action:${action.id}`,
+    );
+    if (missing.length > 0) {
+      return this.#verdict(
+        "state-read",
+        "needs_review",
+        "state receipt is missing or does not prove current internal state",
+        {
+          checked,
+          missing,
+          evidenceRefs,
+          externalFactsVerified: false,
+        },
+        at,
+      );
+    }
+    return this.#verdict(
+      "state-read",
+      "succeeded",
+      "state snapshot receipt, scope and report citation verified for the current revision",
+      {
+        checked,
+        evidenceRefs,
+        externalFactsVerified: false,
+      },
+      at,
+    );
   }
 
   #verifyGithub(
@@ -467,6 +681,33 @@ export class TaskCompletionVerifier {
       );
     }
 
+    const hasStateTools = task.mandate.tools.some(isStateToolName);
+    const stateCheck = hasStateTools
+      ? this.#checkStateReceipts(task, report, actions)
+      : { receipts: [], checked: [], missing: [] };
+    if (stateCheck.missing.length > 0) {
+      return this.#verdict(
+        "github-read",
+        "needs_review",
+        "mandated internal state reads are not proven by a current receipt",
+        {
+          checked: [
+            ...structural.checked,
+            "github_action_receipt",
+            "github_repository_match",
+            "github_source_url",
+            ...stateCheck.checked,
+          ],
+          missing: stateCheck.missing,
+          evidenceRefs: accepted
+            .map((action) => action.externalRef ?? `action:${action.id}`)
+            .filter((value): value is string => typeof value === "string"),
+          externalFactsVerified: true,
+        },
+        at,
+      );
+    }
+
     return this.#verdict(
       "github-read",
       "succeeded",
@@ -477,6 +718,7 @@ export class TaskCompletionVerifier {
           "github_action_receipt",
           "github_repository_match",
           "github_source_url",
+          ...stateCheck.checked,
         ],
         evidenceRefs: accepted
           .map((action) => action.externalRef ?? `action:${action.id}`)

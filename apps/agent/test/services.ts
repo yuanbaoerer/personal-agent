@@ -1,4 +1,5 @@
 import { ActionService } from "../src/actions/service.ts";
+import { StateReadService } from "../src/actions/state.ts";
 import {
   createDefaultToolRegistry,
   type MockLampTool,
@@ -50,6 +51,7 @@ export interface TestServices {
   confirmation: ConfirmationService;
   preauthorization: PreauthorizationService;
   schedulePolicy: SchedulePolicyService;
+  state: StateReadService;
   budget?: BudgetService;
   router: Router;
   ingress: IngressService;
@@ -102,7 +104,19 @@ export function createServices(options: {
   const confirmations = new ConfirmationRepository(db);
   const preauthorizations = new PreauthorizationRepository(db);
   const schedulePolicies = new SchedulePolicyRepository(db);
-  const { registry, lamp } = createDefaultToolRegistry(store, now, options.github);
+  const state = new StateReadService({
+    tasks,
+    schedules,
+    memories,
+    schedulePolicies,
+    now,
+  });
+  const { registry, lamp } = createDefaultToolRegistry(
+    store,
+    now,
+    options.github,
+    state,
+  );
   const runtime = new FakeRuntime();
   const wake = options.wake ?? noopWake;
 
@@ -121,6 +135,7 @@ export function createServices(options: {
     assignmentMaxLifetimeMs: options.assignmentMaxLifetimeMs,
     maxTaskAttempts: options.maxTaskAttempts,
     memories,
+    state,
   });
   const preauthorization = new PreauthorizationService({
     store,
@@ -173,6 +188,7 @@ export function createServices(options: {
     confirmation,
     preauthorization,
     schedulePolicy,
+    state,
     budget,
     model,
     wake,
@@ -208,6 +224,7 @@ export function createServices(options: {
     confirmation,
     preauthorization,
     schedulePolicy,
+    state,
     budget,
     router,
     ingress,

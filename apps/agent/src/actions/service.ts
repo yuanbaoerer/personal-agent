@@ -20,8 +20,10 @@ import {
   ToolUnknownError,
   hashArgs,
   type ActionTool,
+  type ToolExecutionContext,
   type ToolRegistry,
 } from "./tools.ts";
+import { STATE_RESOURCE, isStateToolName } from "./state.ts";
 
 export interface ActionServiceDeps {
   store: Store;
@@ -227,7 +229,10 @@ export class ActionService {
     }
 
     try {
-      return { tool, args: tool.canonicalize(proposed.args) };
+      return {
+        tool,
+        args: tool.canonicalize(proposed.args, executionContext(task)),
+      };
     } catch (error) {
       this.#store.recordAudit({
         event: "action.proposal_rejected",
@@ -256,6 +261,7 @@ export class ActionService {
     | undefined {
     const now = this.#now().toISOString();
     const authorization = this.#findReadAuthorization(task, tool, args);
+    const internalStateRead = this.#isInternalStateRead(task, tool);
     if (
       task.schedulePolicyId !== undefined &&
       authorization?.schedulePolicyId === undefined
@@ -311,7 +317,7 @@ export class ActionService {
       occurredAt: now,
     });
 
-    if (authorization !== undefined) {
+    if (authorization !== undefined || internalStateRead) {
       if (deferAutoApprove) {
         return { action, autoApprove: true, created: true };
       }
@@ -537,7 +543,7 @@ export class ActionService {
     }
 
     try {
-      const result = await this.#runTool(tool, action.args);
+      const result = await this.#runTool(tool, action.args, this.#executionContext(action));
       const marked = this.#actions.markSucceeded(
         action.id,
         result.evidence,
@@ -606,7 +612,7 @@ export class ActionService {
     this.#actions.markReconciling(action.id, this.#now().toISOString());
     let verification;
     try {
-      verification = await tool.verify(action.args);
+      verification = await tool.verify(action.args, this.#executionContext(action));
     } catch (error) {
       if (effectAttempts >= this.#maxAttempts) {
         this.#actions.markNeedsManual(
@@ -712,7 +718,7 @@ export class ActionService {
     // afterwards; re-applying is safe only when the tool declares
     // replayPolicy="verify" and its verify is reliable.
     try {
-      const result = await this.#runTool(tool, action.args);
+      const result = await this.#runTool(tool, action.args, this.#executionContext(action));
       const marked = this.#actions.markSucceeded(
         action.id,
         { ...result.evidence, retried: true },
@@ -879,7 +885,20 @@ export class ActionService {
     return undefined;
   }
 
-  async #runTool(tool: ActionTool, args: Record<string, unknown>) {
+  #executionContext(action: ActionRecord): ToolExecutionContext {
+    const task = this.#tasks?.get(action.taskId);
+    return {
+      ownerId: action.ownerId,
+      taskId: action.taskId,
+      project: task?.mandate.project,
+    };
+  }
+
+  async #runTool(
+    tool: ActionTool,
+    args: Record<string, unknown>,
+    context: ToolExecutionContext,
+  ) {
     const queuedAt = this.#now().getTime();
     await this.#acquireToolSlot();
     const waitMs = Math.max(0, this.#now().getTime() - queuedAt);
@@ -897,7 +916,7 @@ export class ActionService {
       timeoutMs,
     );
     try {
-      const running = tool.execute(args);
+      const running = tool.execute(args, context);
       // If the timeout wins, the tool may still settle later; do not surface an
       // unhandled rejection from the abandoned promise.
       void running.catch(() => {});
@@ -974,45 +993,67 @@ export class ActionService {
     return undefined;
   }
 
+  #isInternalStateRead(task: TaskRecord, tool: ActionTool): boolean {
+    return (
+      tool.readOnly === true &&
+      tool.resource === STATE_RESOURCE &&
+      isStateToolName(tool.name) &&
+      task.mandate.tools.includes(tool.name) &&
+      task.mandate.resources.includes(STATE_RESOURCE)
+    );
+  }
+
   #autoApproveReadOnly(action: ActionRecord): boolean {
-    if (action.tool !== "github.read" || typeof action.args.repo !== "string") {
-      return false;
-    }
     const tool = this.#tools.get(action.tool);
     if (tool?.readOnly !== true) {
       return false;
     }
+    const task = this.#tasks?.get(action.taskId);
+    if (task === undefined) {
+      return false;
+    }
+
     let description: string;
-    if (action.schedulePolicyId !== undefined) {
-      if (
-        action.schedulePolicyVersion === undefined ||
-        this.#schedulePolicies?.readAuthorization(
-          action.schedulePolicyId,
-          action.ownerId,
-          action.args.repo,
-          action.schedulePolicyVersion,
-        ) === undefined
-      ) {
-        return false;
+    let authorization: "preauthorization" | "schedule_policy" | "internal_state";
+    if (this.#isInternalStateRead(task, tool)) {
+      authorization = "internal_state";
+      description = `已按任务授权读取内部状态（${action.tool}）。`;
+    } else if (action.tool === "github.read" && typeof action.args.repo === "string") {
+      if (action.schedulePolicyId !== undefined) {
+        if (
+          action.schedulePolicyVersion === undefined ||
+          this.#schedulePolicies?.readAuthorization(
+            action.schedulePolicyId,
+            action.ownerId,
+            action.args.repo,
+            action.schedulePolicyVersion,
+          ) === undefined
+        ) {
+          return false;
+        }
+        authorization = "schedule_policy";
+        description = `已按周期计划授权执行 ${action.tool}（${action.args.repo}）。`;
+      } else {
+        if (
+          this.#preauthorizations === undefined ||
+          action.preauthorizationId === undefined
+        ) {
+          return false;
+        }
+        const grant = this.#preauthorizations.findActiveById(action.preauthorizationId);
+        if (
+          grant === undefined ||
+          grant.ownerId !== action.ownerId ||
+          grant.tool !== action.tool ||
+          grant.repo !== action.args.repo.trim().toLowerCase()
+        ) {
+          return false;
+        }
+        authorization = "preauthorization";
+        description = `已按只读预授权执行 ${action.tool}（${action.args.repo}）。`;
       }
-      description = `已按周期计划授权执行 ${action.tool}（${action.args.repo}）。`;
     } else {
-      if (
-        this.#preauthorizations === undefined ||
-        action.preauthorizationId === undefined
-      ) {
-        return false;
-      }
-      const grant = this.#preauthorizations.findActiveById(action.preauthorizationId);
-      if (
-        grant === undefined ||
-        grant.ownerId !== action.ownerId ||
-        grant.tool !== action.tool ||
-        grant.repo !== action.args.repo.trim().toLowerCase()
-      ) {
-        return false;
-      }
-      description = `已按只读预授权执行 ${action.tool}（${action.args.repo}）。`;
+      return false;
     }
 
     const result = this.approve({
@@ -1033,9 +1074,9 @@ export class ActionService {
       after: {
         tool: action.tool,
         repo: action.args.repo,
-        authorization:
-          action.schedulePolicyId === undefined ? "preauthorization" : "schedule_policy",
+        authorization,
         schedulePolicyId: action.schedulePolicyId,
+        taskProject: task.mandate.project,
       },
       traceId: `action:${action.id}`,
       occurredAt: this.#now().toISOString(),
@@ -1068,4 +1109,12 @@ export class ActionService {
       traceId: `task:${action.taskId}`,
     });
   }
+}
+
+function executionContext(task: TaskRecord): ToolExecutionContext {
+  return {
+    ownerId: task.ownerId,
+    taskId: task.id,
+    project: task.mandate.project,
+  };
 }

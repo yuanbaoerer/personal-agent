@@ -1,4 +1,5 @@
 import type { Mandate, RouterDecision, RouterInput } from "../domain/types.ts";
+import { isStateToolName } from "../actions/state.ts";
 import type { Store } from "../storage/store.ts";
 import type { AgentRuntime } from "../runtime/types.ts";
 import type { RouterModel } from "./router.ts";
@@ -22,10 +23,17 @@ const ALLOWED_RESOURCES: Record<string, true> = {
   chat: true,
   weather: true,
   github: true,
+  state: true,
 };
 const ALLOWED_TOOLS: Record<string, true> = {
   "lamp.set_brightness": true,
   "github.read": true,
+  "state.summary": true,
+  "task.list": true,
+  "task.get": true,
+  "reminder.list": true,
+  "memory.list": true,
+  "schedule.list": true,
 };
 
 /**
@@ -128,6 +136,9 @@ export function routerPrompt(input: RouterInput): string {
     "- Do not approve or execute actions; the owner does that explicitly.",
     "- Include a tool in mandate.tools only when the owner explicitly asks for that capability.",
     "- Use a task when the request needs sustained work; use reply for chat.",
+    "- For questions about the owner's current tasks, reminders, memories, schedules or service status, use query_status. Do not create a task just to restate current state.",
+    "- Internal read-only state tools: state.summary, task.list, task.get, reminder.list, memory.list, schedule.list. They are owner-scoped; never use them for another person's data.",
+    "- Only when a task needs current state for further work, put the needed state tools in mandate.tools and include \"state\" in mandate.resources. For those tasks set completionCriteria to JSON with {\"verifier\":\"state-read\",\"requiredEvidenceKinds\":[\"state_snapshot\"]}.",
     "- Use revise_task only when the owner explicitly asks to change an existing task's goal, completion criteria, mandate, or priority.",
     "- Use save_memory only when the owner explicitly asks you to remember something.",
     "- Set save_memory/task mandate project only when the owner explicitly names a project (or uses --project=name); otherwise omit it. Project memories must not be mixed.",
@@ -237,6 +248,18 @@ export function parseRouterDecision(text: string): RouterDecision | undefined {
   return decision;
 }
 
+/** Derive required resources from the exact tool set; never trust model text. */
+export function ensureMandateResources(mandate: Mandate): Mandate {
+  const resources = [...mandate.resources];
+  if (mandate.tools.includes("github.read") && !resources.includes("github")) {
+    resources.push("github");
+  }
+  if (mandate.tools.some(isStateToolName) && !resources.includes("state")) {
+    resources.push("state");
+  }
+  return { ...mandate, resources: resources.length > 0 ? resources : ["chat"] };
+}
+
 function sanitizeMandate(value: unknown): Mandate {
   if (typeof value !== "object" || value === null) {
     return { resources: ["chat"], tools: [] };
@@ -254,8 +277,8 @@ function sanitizeMandate(value: unknown): Mandate {
           typeof item === "string" && Object.hasOwn(ALLOWED_TOOLS, item),
       )
     : [];
-  return {
-    resources: resources.length > 0 ? resources : ["chat"],
+  return ensureMandateResources({
+    resources,
     tools,
     notes: typeof record.notes === "string" ? record.notes : undefined,
     project:
@@ -263,5 +286,5 @@ function sanitizeMandate(value: unknown): Mandate {
       /^[A-Za-z0-9._-]{1,64}$/.test(record.project)
         ? record.project
         : undefined,
-  };
+  });
 }

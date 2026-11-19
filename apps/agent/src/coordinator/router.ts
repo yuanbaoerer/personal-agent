@@ -26,12 +26,18 @@ import {
   formatUsage,
 } from "../observability/usage.ts";
 import type { BudgetService } from "../observability/magpie.ts";
+import {
+  formatStateSummary,
+  isStateToolName,
+  type StateReadService,
+} from "../actions/state.ts";
 import type { TaskService } from "./tasks.ts";
 import {
   RouterPendingError,
   ROUTER_MAX_ATTEMPTS,
   ROUTER_RETRY_BASE_MS,
   ROUTER_RETRY_MAX_MS,
+  ensureMandateResources,
 } from "./pi-router.ts";
 import type { InboundHandler } from "./responder.ts";
 import type { WakeScheduler } from "../runtime/types.ts";
@@ -69,6 +75,7 @@ export interface RouterDeps {
   confirmation: ConfirmationService;
   preauthorization: PreauthorizationService;
   schedulePolicy?: SchedulePolicyService;
+  state: StateReadService;
   budget?: BudgetService;
   model: RouterModel;
   wake: WakeScheduler;
@@ -138,6 +145,29 @@ function extractGithubRepo(text: string): string | undefined {
 
 const PROJECT_NAME_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
 
+const STATE_QUERY_PATTERNS = [
+  /当前(?:的)?任务/,
+  /任务(?:和|与|及)提醒/,
+  /(?:任务|提醒)状态/,
+  /(?:有哪些|有什么|查看|列出).{0,6}(?:任务|提醒)/,
+  /(?:总结|汇总).{0,16}(?:任务|提醒)/,
+  /(?:任务|提醒).{0,10}(?:总结|汇总)/,
+];
+const STATE_ACTION_VERBS =
+  /(?:创建|新建|添加|设置|修改|取消|删除|关闭|提醒我|安排|执行|做一个|帮我做)/;
+
+/**
+ * Narrow, deterministic detection for explicit "what is my current state"
+ * questions. It must not steal task creation or mutation requests.
+ */
+export function isExplicitStateQuery(text: string): boolean {
+  const value = text.trim();
+  if (value.length === 0 || STATE_ACTION_VERBS.test(value)) {
+    return false;
+  }
+  return STATE_QUERY_PATTERNS.some((pattern) => pattern.test(value));
+}
+
 export function extractProjectFlag(text: string): string | undefined {
   const match = /(?:^|\s)--project=([A-Za-z0-9._-]{1,64})(?=$|\s)/.exec(text);
   return match?.[1];
@@ -189,6 +219,45 @@ export function normalizeGithubCriteria(
     ...parsed,
     verifier: "github-read",
     repo,
+    requiredEvidenceKinds: [...required],
+  });
+}
+
+/**
+ * State tasks are verified by the state-read verifier regardless of the
+ * model's criteria text; make the required citation kind explicit so a
+ * structural-only report cannot pass.
+ */
+export function normalizeStateCriteria(
+  criteria: string,
+  mandateTools: readonly string[],
+): string {
+  if (!mandateTools.some(isStateToolName)) {
+    return criteria;
+  }
+  let parsed: Record<string, unknown> = {};
+  try {
+    const value = JSON.parse(criteria) as unknown;
+    if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+      parsed = value as Record<string, unknown>;
+    }
+  } catch {
+    // Plain text is replaced with the verifier contract below.
+  }
+  const required = new Set(
+    Array.isArray(parsed.requiredEvidenceKinds)
+      ? parsed.requiredEvidenceKinds.filter(
+          (item): item is string => typeof item === "string",
+        )
+      : [],
+  );
+  required.add("state_snapshot");
+  const verifier = mandateTools.includes("github.read")
+    ? parsed.verifier
+    : "state-read";
+  return JSON.stringify({
+    ...parsed,
+    ...(verifier === undefined ? {} : { verifier }),
     requiredEvidenceKinds: [...required],
   });
 }
@@ -289,6 +358,7 @@ export class Router implements InboundHandler {
   readonly #confirmation: ConfirmationService;
   readonly #preauthorization: PreauthorizationService;
   readonly #schedulePolicy?: SchedulePolicyService;
+  readonly #state: StateReadService;
   readonly #budget?: BudgetService;
   readonly #model: RouterModel;
   readonly #wake: WakeScheduler;
@@ -307,6 +377,7 @@ export class Router implements InboundHandler {
     this.#confirmation = deps.confirmation;
     this.#preauthorization = deps.preauthorization;
     this.#schedulePolicy = deps.schedulePolicy;
+    this.#state = deps.state;
     this.#budget = deps.budget;
     this.#model = deps.model;
     this.#wake = deps.wake;
@@ -434,6 +505,12 @@ export class Router implements InboundHandler {
     const now = this.#now().toISOString();
     switch (decision.action) {
       case "reply": {
+        // A model reply must not invent current state. Explicit state
+        // questions always come from the deterministic owner snapshot.
+        if (isExplicitStateQuery(context.text)) {
+          this.#answerStateQuery(context);
+          return { status: "done" };
+        }
         this.#reply(context, decision.text || "已收到。");
         return { status: "done" };
       }
@@ -443,19 +520,29 @@ export class Router implements InboundHandler {
           return { status: "done" };
         }
         const ownerProject = extractProjectFlag(context.text);
-        const mandate = {
-          ...(decision.task.mandate ?? { resources: ["chat"], tools: [] }),
-          project: ownerProject ?? decision.task.mandate?.project,
-        };
+        const requested = decision.task.mandate ?? { resources: ["chat"], tools: [] };
+        if (requested.tools.length === 0 && isExplicitStateQuery(context.text)) {
+          // D19: never dispatch a state question to a Worker with no read
+          // tools where structural checks could pass without real data.
+          this.#answerStateQuery(context);
+          return { status: "done" };
+        }
+        const mandate = ensureMandateResources({
+          ...requested,
+          project: ownerProject ?? requested.project,
+        });
         const task = this.#taskService.create({
           ownerId: context.ownerId,
           conversationId: context.conversationId,
           sourceKey: `inbox:${context.inboxId}:task`,
           goal: decision.task.goal,
-          completionCriteria: normalizeGithubCriteria(
-            decision.task.completionCriteria || "提供可核对的结果和证据",
-            decision.task.goal,
-            context.text,
+          completionCriteria: normalizeStateCriteria(
+            normalizeGithubCriteria(
+              decision.task.completionCriteria || "提供可核对的结果和证据",
+              decision.task.goal,
+              context.text,
+              mandate.tools,
+            ),
             mandate.tools,
           ),
           mandate,
@@ -521,7 +608,7 @@ export class Router implements InboundHandler {
         return { status: "done" };
       }
       case "query_status": {
-        this.#reply(context, this.statusText(context.ownerId));
+        this.#answerStateQuery(context);
         return { status: "done" };
       }
       case "save_memory": {
@@ -684,15 +771,19 @@ export class Router implements InboundHandler {
     if (current === undefined) {
       return { ok: false, reason: "找不到属于你的该任务。" };
     }
-    if (changes.mandate !== undefined) {
+    const mandate =
+      changes.mandate === undefined
+        ? undefined
+        : ensureMandateResources(changes.mandate);
+    if (mandate !== undefined) {
       // The router model proposes mandate changes. A revision may extend the
       // scope, but it must never shrink tools/resources and thereby weaken the
       // completion verifier for already-authorized work.
-      const nextTools = new Set(changes.mandate.tools);
-      const nextResources = new Set(changes.mandate.resources);
+      const nextTools = new Set(mandate.tools);
+      const nextResources = new Set(mandate.resources);
       if (
-        (changes.mandate.project !== undefined &&
-          changes.mandate.project !== current.mandate.project) ||
+        (mandate.project !== undefined &&
+          mandate.project !== current.mandate.project) ||
         current.mandate.tools.some((tool) => !nextTools.has(tool)) ||
         current.mandate.resources.some((resource) => !nextResources.has(resource))
       ) {
@@ -702,12 +793,17 @@ export class Router implements InboundHandler {
         };
       }
     }
+    const nextCriteria =
+      criteria === undefined || criteria.length === 0
+        ? mandate !== undefined && mandate.tools.some(isStateToolName)
+          ? normalizeStateCriteria(current.completionCriteria, mandate.tools)
+          : undefined
+        : normalizeStateCriteria(criteria, mandate?.tools ?? current.mandate.tools);
 
     const task = this.#taskService.revise(resolution.id, {
       goal: goal === undefined || goal.length === 0 ? undefined : goal,
-      completionCriteria:
-        criteria === undefined || criteria.length === 0 ? undefined : criteria,
-      mandate: changes.mandate,
+      completionCriteria: nextCriteria,
+      mandate,
       priority: changes.priority,
     });
     if (task === undefined) {
@@ -843,14 +939,15 @@ export class Router implements InboundHandler {
 
   statusText(ownerId: string): string {
     const tasks = this.#tasks.listByOwner(ownerId, 5);
+    const counts = this.#tasks.countsByOwner(ownerId);
     const lines = [
       `服务运行中。受理 ${this.#store.countInbox("accepted")} 条，拒绝 ${this.#store.countInbox("rejected")} 条；`,
       `待发送 ${this.#store.countOutbox("pending")} 条，待核对投递 ${this.#store.countOutbox("unknown")} 条，` +
         `需人工 ${this.#store.countOutbox("needs_manual")} 条。`,
-      `任务：排队 ${this.#tasks.countByStatus("queued")}，运行 ${this.#tasks.countByStatus("running")}，` +
-        `等待 ${this.#tasks.countByStatus("waiting_user") + this.#tasks.countByStatus("waiting_external")}，` +
-        `完成 ${this.#tasks.countByStatus("succeeded")}，待核对任务 ${this.#tasks.countByStatus("needs_review")}，` +
-        `失败 ${this.#tasks.countByStatus("failed")}。`,
+      `任务：排队 ${counts.queued}，运行 ${counts.running}，` +
+        `等待 ${counts.waiting_user + counts.waiting_external}，` +
+        `完成 ${counts.succeeded}，待核对任务 ${counts.needs_review}，` +
+        `失败 ${counts.failed}。`,
     ];
     if (tasks.length > 0) {
       lines.push("最近任务：");
@@ -1424,6 +1521,37 @@ export class Router implements InboundHandler {
     }
 
     return undefined;
+  }
+
+  /**
+   * Deterministic answer from the owner-scoped state service; no Worker and
+   * no model-authored facts. The audit row keeps the snapshot receipt.
+   */
+  #answerStateQuery(context: {
+    ownerId: string;
+    conversationId: string;
+    inboxId: string;
+  }): void {
+    const snapshot = this.#state.summary(context.ownerId);
+    this.#store.recordAudit({
+      event: "state.query",
+      subjectType: "owner",
+      subjectId: context.ownerId,
+      after: {
+        source: "router.state_query",
+        tool: snapshot.tool,
+        snapshotHash: snapshot.snapshotHash,
+        snapshotAt: snapshot.snapshotAt,
+        byteLength: snapshot.byteLength,
+      },
+      traceId: `inbox:${context.inboxId}`,
+      occurredAt: this.#now().toISOString(),
+    });
+    this.#reply(
+      context,
+      formatStateSummary(snapshot, this.#timezone),
+      "status",
+    );
   }
 
   #reply(
