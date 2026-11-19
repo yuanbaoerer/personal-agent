@@ -51,6 +51,7 @@ export interface AppDeps {
     maxCallsPerTask: number;
     maxCallsPerDay?: number;
     maxToolCallsPerTask: number;
+    maxScheduleRunsPerDay: number;
   };
   /** Host/extension seam for additional tools; keep writes in ActionService. */
   registerTools?: (registry: ToolRegistry) => void;
@@ -98,6 +99,8 @@ export function createApp(deps: AppDeps): AppServices {
     now: deps.now,
   });
   const maxToolCallsPerTask = deps.budgetLimits?.maxToolCallsPerTask ?? 20;
+  const maxScheduleRunsPerDay =
+    deps.budgetLimits?.maxScheduleRunsPerDay ?? 20;
   const tasks = new TaskRepository(db);
   const actions = new ActionRepository(db);
   const effects = new EffectRepository(db);
@@ -141,6 +144,7 @@ export function createApp(deps: AppDeps): AppServices {
     tasks: taskService,
     allowedRepos: deps.github?.allowedRepos ?? [],
     now: deps.now,
+    maxRunsPerDay: maxScheduleRunsPerDay,
   });
   const actionService = new ActionService({
     store,

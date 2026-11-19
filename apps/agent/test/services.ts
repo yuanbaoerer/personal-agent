@@ -73,6 +73,7 @@ export function createServices(options: {
   reminderTimer?: ReminderTimer;
   maxConcurrentTools?: number;
   maxToolCallsPerTask?: number;
+  maxScheduleRunsPerDay?: number;
   budget?: BudgetService;
   magpie?: MagpieConfig;
   wake?: WakeScheduler;
@@ -150,6 +151,7 @@ export function createServices(options: {
     tasks: taskService,
     allowedRepos: options.github?.allowedRepos ?? [],
     now,
+    maxRunsPerDay: options.maxScheduleRunsPerDay,
   });
   const actionService = new ActionService({
     store,

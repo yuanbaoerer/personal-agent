@@ -29,6 +29,8 @@ export interface SchedulePolicyDeps {
   /** Missed occurrences older than this are skipped, not replayed. */
   maxLatenessMs?: number;
   defaultExpiryMs?: number;
+  /** Hard cap on dispatched schedule runs per UTC day. */
+  maxRunsPerDay?: number;
 }
 
 export interface ScheduleDraftInput {
@@ -204,6 +206,7 @@ export class SchedulePolicyService {
   readonly #now: () => Date;
   readonly #maxLatenessMs: number;
   readonly #defaultExpiryMs: number;
+  readonly #maxRunsPerDay: number;
 
   constructor(deps: SchedulePolicyDeps) {
     this.#store = deps.store;
@@ -214,6 +217,7 @@ export class SchedulePolicyService {
     this.#now = deps.now ?? (() => new Date());
     this.#maxLatenessMs = deps.maxLatenessMs ?? 60 * 60_000;
     this.#defaultExpiryMs = deps.defaultExpiryMs ?? 30 * 24 * 60 * 60_000;
+    this.#maxRunsPerDay = Math.max(1, deps.maxRunsPerDay ?? 20);
   }
 
   createDraft(
@@ -429,10 +433,34 @@ export class SchedulePolicyService {
 
   fireDue(): number {
     const now = this.#now();
+    const dayStart = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+    ).toISOString();
+    let used = this.#policies.countDispatchedSince(dayStart);
     let created = 0;
     for (const due of this.#policies.listDue(now.toISOString())) {
       try {
-        created += this.#fireOne(due, now);
+        if (used >= this.#maxRunsPerDay) {
+          const scheduledAt = due.nextRunAt;
+          if (scheduledAt !== undefined) {
+            this.#policies.recordRun(
+              due.id,
+              scheduledAt,
+              "skipped",
+              undefined,
+              now.toISOString(),
+            );
+            this.#advanceAfterRun(due, scheduledAt, now, undefined, now.toISOString());
+          }
+          this.#audit("schedule_policy.skipped", due, now, {
+            reason: "daily_run_budget",
+            maxRunsPerDay: this.#maxRunsPerDay,
+          });
+          continue;
+        }
+        const fired = this.#fireOne(due, now);
+        created += fired;
+        used += fired;
       } catch (error) {
         this.#audit("schedule_policy.fire_failed", due, now, {
           error: error instanceof Error ? error.message : String(error),
