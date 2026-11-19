@@ -322,6 +322,26 @@ export class Router implements InboundHandler {
 
   async handle(event: InboxRecord, _store: Store): Promise<ReplyDraft[]> {
     const text = event.text?.trim() ?? "";
+    const lines = text
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+    if (lines.length > 1 && lines.every((line) => line.startsWith("/"))) {
+      const replies: ReplyDraft[] = [];
+      for (const line of lines) {
+        const result = await this.#command(event, line);
+        if (result === undefined) {
+          replies.push({
+            purpose: "failure",
+            text: `无法识别多命令中的这一行：${line.split(/\s+/)[0]}`,
+          });
+        } else {
+          replies.push(...result);
+        }
+      }
+      return replies;
+    }
+
     const command = await this.#command(event, text);
     if (command !== undefined) {
       return command;

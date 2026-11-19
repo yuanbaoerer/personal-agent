@@ -41,6 +41,26 @@ describe("project-scoped memory", () => {
     );
   });
 
+  it("executes a block of slash commands in order without the model", async () => {
+    const services = createServices();
+    await sendText(
+      services,
+      [
+        "/remember --project=pa-test repo=personal-agent",
+        "/memory --project=pa-test",
+      ].join("\n"),
+      "evt_multi_command",
+    );
+    assert.equal(
+      services.memory.get(services.owner.id, "repo", "pa-test")?.value,
+      "personal-agent",
+    );
+    const texts = services.store.listRecentOutbox(5).map((row) => row.text);
+    assert.ok(texts.some((text) => text.includes("已记住")));
+    assert.ok(texts.some((text) => text.includes("repo = personal-agent")));
+    assert.equal(services.runtime.submissions.length, 0);
+  });
+
   it("supports scoped remember/list/forget commands", async () => {
     const services = createServices();
     await sendText(
