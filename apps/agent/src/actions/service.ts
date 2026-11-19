@@ -553,7 +553,18 @@ export class ActionService {
       if (marked) {
         this.#auditAction(action, "action.succeeded");
       }
-      this.#reply(action, "result", `动作已完成：${JSON.stringify(result.evidence)}`, "succeeded");
+      const internalStateRead =
+        tool.resource === STATE_RESOURCE &&
+        isStateToolName(tool.name) &&
+        tool.readOnly === true;
+      this.#reply(
+        action,
+        "result",
+        internalStateRead
+          ? `状态读取完成（${action.tool}），回执已交给任务核对。`
+          : `动作已完成：${JSON.stringify(result.evidence)}`,
+        "succeeded",
+      );
       this.#onSettled(action.taskId);
       return { status: "done" };
     } catch (error) {

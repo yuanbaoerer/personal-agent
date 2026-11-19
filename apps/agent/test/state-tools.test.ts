@@ -74,6 +74,26 @@ function propose(
   assert.equal(outcome.status, "done");
 }
 
+async function settleAllActions(
+  services: TestServices,
+  taskId: string,
+  expected: number,
+) {
+  for (let index = 0; index < 40; index += 1) {
+    await services.effectDispatcher.drain(1);
+    const actions = services.actions.listByTask(taskId);
+    if (
+      actions.length >= expected &&
+      actions.every((action) =>
+        ["succeeded", "failed", "unknown", "needs_manual"].includes(action.status),
+      )
+    ) {
+      return actions;
+    }
+  }
+  throw new Error("state actions did not settle");
+}
+
 async function settleAction(
   services: TestServices,
   taskId: string,
@@ -446,6 +466,61 @@ describe("state read authorization and receipts", () => {
     );
     assert.ok(
       current?.verification?.checked.includes("provenance:entities_present"),
+    );
+  });
+
+  it("verifies reminder and schedule snapshots with owner-level scope", async () => {
+    const services = setup();
+    await services.reminders.create({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      text: "scope test reminder",
+      dueAt: new Date(NOW.getTime() + 3_600_000).toISOString(),
+      timezone: "UTC",
+    });
+    const task = createStateTask(services, {
+      tools: ["reminder.list", "schedule.list"],
+      key: "state:list-verify",
+    });
+    const assignment = claim(services);
+    services.taskService.report(
+      assignment.id,
+      assignment.fencingToken,
+      assignment.taskRevision,
+      {
+        status: "ready",
+        summary: "reading reminders and schedules",
+        evidence: [{ kind: "state_snapshot", value: "pending" }],
+        proposedActions: [
+          { tool: "reminder.list", args: {} },
+          { tool: "schedule.list", args: {} },
+        ],
+      },
+    );
+    const actions = await settleAllActions(services, task.id, 2);
+    const citations = actions.map((action) => {
+      const evidence = parseStateEvidence(action.evidence);
+      assert.ok(evidence);
+      return { kind: "state_snapshot", value: evidence.snapshotHash };
+    });
+    services.runtime.defaultAnswer = {
+      status: "answered",
+      text: JSON.stringify(readyReport(citations)),
+    };
+    await services.effectDispatcher.drain(20);
+
+    const current = services.tasks.get(task.id);
+    assert.equal(current?.status, "succeeded");
+    assert.equal(current?.verification?.verifier, "state-read");
+    assert.ok(
+      current?.verification?.checked.includes(
+        "claim:snapshot_cited:reminder.list",
+      ),
+    );
+    assert.ok(
+      current?.verification?.checked.includes(
+        "claim:snapshot_cited:schedule.list",
+      ),
     );
   });
 
