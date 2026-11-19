@@ -1,6 +1,8 @@
 # 15 · 实施进度与待决策事项
 
 > 更新：2026-11-19。仅列需要主人/产品负责人决定的事项；工程可确定的内容仍直接实施。
+>
+> **全局状态**：本地 Node 核心闭环 + `/api/v1`/CLI/TUI + SSE + OpenAPI + macOS/Windows CI + clean-install smoke 均为 E1 可用；真实 Feishu/模型/DO 驱逐、第二开发者安装、真实 Terminal 和 E3 仍 pending。
 
 ## 1. 当前进度
 
@@ -19,7 +21,7 @@
 | PA-17 Client API / PA-18 CLI | E1 最小实现 | `b8fea74` + `6a89ad7` + `3851e93` + `ac44b91` + `d9a564c` + `a2f063e` + `85d5006` + `e88e7c9` + `044193c` + `a1b488e` + `67fbbcf` + `23c487e` + `4b9d42c`；`/api/v1`、device token/scope/revoke/TTL、credential 600 + IP 1200 req/min 限流、幂等/修订/审批绑定、稳定 audit seq、轮询 + SSE 事件、`pa` CLI、OpenAPI 3.1 契约；远程 TLS/代理层限流/DO 驱逐与 E3 pending |
 | PA-19 TUI | E1 最小实现 | `b8fea74` + `6a89ad7` + `3851e93` + `ac44b91` + `d9a564c` + `a2f063e` + `85d5006` + `e88e7c9` + `044193c` + `a1b488e` + `67fbbcf` + `23c487e` + `4b9d42c`；Tasks/Approvals/Reminders、取消/批准/拒绝、增补/修订、提醒文本/到期编辑、换行/详情滚动、短终端底部提示、PTY smoke；平台终端与 E3 pending |
 | PA-16 全新环境安装 | E1 部分 | `09b54d4` + `a0606fc`；`npm run install:smoke` 通过临时干净副本（npm ci/typecheck/275 tests/CLI/health）；CI `install-smoke` job 首次成功（run `44509079800`）；未由第二开发者执行，未覆盖真实 OS 安装包 |
-| PA-22 跨平台 CI | E1 部分 | `86a24a2` + `6494933`；macos-26-arm64 与 windows-2025-vs2026 均成功（最新 run `44503910252`，275 tests/secret scan）；Intel、真实 Terminal 待验收 |
+| PA-22 跨平台 CI | E1 部分 | `86a24a2` + `6494933`；macos-26-arm64 与 windows-2025-vs2026 均成功（最新 run `44509079800`，275 tests/secret scan）；Intel、真实 Terminal 待验收 |
 | PA-12/PA-13 部分 | E1/pending | 见路线图 |
 
 固定 40 场景分类为渠道 8、任务 10、权限 10、恢复 8、记忆 4。K01–K14 映射由 `evals/scenarios.ts` 维护；pending 不计入成功分母。报告命令：
