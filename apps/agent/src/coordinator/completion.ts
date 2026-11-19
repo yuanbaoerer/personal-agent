@@ -47,21 +47,23 @@ interface Criteria {
   verifier?: string;
   repo?: string;
   requiredEvidenceKinds: string[];
+  /** New Router tasks require machine-checkable fact claims. */
+  requireStructuredClaims: boolean;
 }
 
 function parseCriteria(text: string): Criteria {
   const trimmed = text.trim();
   if (!trimmed.startsWith("{")) {
-    return { requiredEvidenceKinds: [] };
+    return { requiredEvidenceKinds: [], requireStructuredClaims: false };
   }
   let value: unknown;
   try {
     value = JSON.parse(trimmed);
   } catch {
-    return { requiredEvidenceKinds: [] };
+    return { requiredEvidenceKinds: [], requireStructuredClaims: false };
   }
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return { requiredEvidenceKinds: [] };
+    return { requiredEvidenceKinds: [], requireStructuredClaims: false };
   }
   const record = value as Record<string, unknown>;
   return {
@@ -72,6 +74,7 @@ function parseCriteria(text: string): Criteria {
           (item): item is string => typeof item === "string",
         )
       : [],
+    requireStructuredClaims: record.requireStructuredClaims === true,
   };
 }
 
@@ -572,6 +575,7 @@ export class TaskCompletionVerifier {
     report: WorkerReport,
     actions: readonly ActionRecord[],
     minSnapshotAt?: string,
+    requireClaims = false,
   ): {
     receipts: {
       action: ActionRecord;
@@ -655,6 +659,9 @@ export class TaskCompletionVerifier {
         continue;
       }
       checked.push(`claim:state:${claim.kind}`);
+    }
+    if (requireClaims && claims.length === 0) {
+      missing.push("claim:structured_state_claims_required");
     }
     // Structured claims cover only declared facts. The report's free text is
     // never promoted to verified, with or without structured claims.
@@ -793,6 +800,7 @@ export class TaskCompletionVerifier {
       report,
       actions,
       latestInputAt,
+      structural.criteria.requireStructuredClaims,
     );
     const checked = [...structural.checked, ...state.checked];
     const missing = [...state.missing];
@@ -966,7 +974,13 @@ export class TaskCompletionVerifier {
 
     const hasStateTools = task.mandate.tools.some(isStateToolName);
     const stateCheck = hasStateTools
-      ? this.#checkStateReceipts(task, report, actions, latestInputAt)
+      ? this.#checkStateReceipts(
+          task,
+          report,
+          actions,
+          latestInputAt,
+          structural.criteria.requireStructuredClaims,
+        )
       : { receipts: [], checked: [], missing: [] };
     if (stateCheck.missing.length > 0) {
       return this.#verdict(
@@ -993,6 +1007,12 @@ export class TaskCompletionVerifier {
 
     const githubClaims = report.githubClaims ?? [];
     const claimMissing: string[] = [];
+    if (
+      structural.criteria.requireStructuredClaims &&
+      githubClaims.length === 0
+    ) {
+      claimMissing.push("claim:github_claims_required");
+    }
     const claimChecked: string[] = [];
     for (const claim of githubClaims) {
       const mismatch = validateGithubClaim(claim, accepted);

@@ -1542,6 +1542,35 @@ describe("structured state claims", () => {
     );
   });
 
+  it("requires structured state claims when the criteria demand them", () => {
+    const services = setup();
+    const task = services.taskService.create({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "state:claim-required",
+      goal: "summarize state",
+      completionCriteria: JSON.stringify({
+        verifier: "state-read",
+        requiredEvidenceKinds: ["state_snapshot"],
+        requireStructuredClaims: true,
+      }),
+      mandate: { resources: ["chat", "state"], tools: ["state.summary"] },
+    });
+    const state = insertSucceededStateAction(services, task);
+    const verdict = verifier(services).verify(
+      task,
+      readyReport([
+        { kind: "state_snapshot", value: state.snapshot.snapshotHash },
+      ]),
+    );
+    assert.equal(verdict.verdict, "needs_review");
+    assert.ok(
+      verdict.verification.missing.includes(
+        "claim:structured_state_claims_required",
+      ),
+    );
+  });
+
   it("labels a report without structured claims as free text", () => {
     const services = setup();
     const task = createStateTask(services, {

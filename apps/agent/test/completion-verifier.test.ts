@@ -395,6 +395,27 @@ describe("TaskCompletionVerifier", () => {
     );
   });
 
+  it("requires structured GitHub claims when the criteria demand them", () => {
+    const services = setup();
+    const task = createTask(services, {
+      criteria:
+        '{"verifier":"github-read","repo":"owner/repo","requiredEvidenceKinds":["github"],"requireStructuredClaims":true}',
+    });
+    const assignment = claim(services);
+    insertSucceededAction(services, task.id, assignment);
+    services.taskService.report(
+      assignment.assignment.id,
+      assignment.assignment.fencingToken,
+      assignment.assignment.taskRevision,
+      ready(),
+    );
+    const current = services.tasks.get(task.id);
+    assert.equal(current?.status, "needs_review");
+    assert.ok(
+      current?.verification?.missing.includes("claim:github_claims_required"),
+    );
+  });
+
   it("rejects fabricated evidence kinds and mismatched report sources", () => {
     const fabricated = setup();
     const first = createTask(fabricated, { key: "fabricated" });
