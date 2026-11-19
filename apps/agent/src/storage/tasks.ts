@@ -69,6 +69,20 @@ function likePrefix(prefix: string): string {
   return `${prefix.replace(/[\\%_]/g, (value) => `\\${value}`)}%`;
 }
 
+/** `needs_review` is a flag over waiting_user, not a stored DB status. */
+function statusClause(status: TaskStatus): {
+  sql: string;
+  params: (string | number)[];
+} {
+  if (status === "needs_review") {
+    return { sql: "status = 'waiting_user' AND needs_review = 1", params: [] };
+  }
+  if (status === "waiting_user") {
+    return { sql: "status = 'waiting_user' AND needs_review = 0", params: [] };
+  }
+  return { sql: "status = ?", params: [status] };
+}
+
 function mapTask(row: TaskRow): TaskRecord {
   return {
     id: row.id,
@@ -379,42 +393,75 @@ export class TaskRepository {
     ownerId: string,
     status: TaskStatus,
     limit = 20,
+    offset = 0,
   ): TaskRecord[] {
-    if (status === "needs_review") {
-      return this.#db
-        .all<TaskRow>(
-          `SELECT * FROM pa_tasks
-           WHERE owner_id = ? AND status = 'waiting_user' AND needs_review = 1
-           ORDER BY created_at DESC
-           LIMIT ?`,
-          ownerId,
-          limit,
-        )
-        .map(mapTask);
-    }
-    if (status === "waiting_user") {
-      return this.#db
-        .all<TaskRow>(
-          `SELECT * FROM pa_tasks
-           WHERE owner_id = ? AND status = 'waiting_user' AND needs_review = 0
-           ORDER BY created_at DESC
-           LIMIT ?`,
-          ownerId,
-          limit,
-        )
-        .map(mapTask);
-    }
+    const clause = statusClause(status);
     return this.#db
       .all<TaskRow>(
         `SELECT * FROM pa_tasks
-         WHERE owner_id = ? AND status = ?
-         ORDER BY created_at DESC
-         LIMIT ?`,
+         WHERE owner_id = ? AND ${clause.sql}
+         ORDER BY created_at DESC, rowid DESC
+         LIMIT ? OFFSET ?`,
         ownerId,
-        status,
+        ...clause.params,
         limit,
+        offset,
       )
       .map(mapTask);
+  }
+
+  countByOwnerStatus(ownerId: string, status: TaskStatus): number {
+    const clause = statusClause(status);
+    const row = this.#db.all<{ count: number }>(
+      `SELECT COUNT(*) AS count FROM pa_tasks
+       WHERE owner_id = ? AND ${clause.sql}`,
+      ownerId,
+      ...clause.params,
+    )[0];
+    return Number(row?.count ?? 0);
+  }
+
+  listByOwnerProjectStatus(
+    ownerId: string,
+    project: string,
+    status: TaskStatus,
+    limit = 20,
+    offset = 0,
+  ): TaskRecord[] {
+    const clause = statusClause(status);
+    return this.#db
+      .all<TaskRow>(
+        `SELECT * FROM pa_tasks
+         WHERE owner_id = ?
+           AND json_extract(mandate_json, '$.project') = ?
+           AND ${clause.sql}
+         ORDER BY created_at DESC, rowid DESC
+         LIMIT ? OFFSET ?`,
+        ownerId,
+        project,
+        ...clause.params,
+        limit,
+        offset,
+      )
+      .map(mapTask);
+  }
+
+  countByOwnerProjectStatus(
+    ownerId: string,
+    project: string,
+    status: TaskStatus,
+  ): number {
+    const clause = statusClause(status);
+    const row = this.#db.all<{ count: number }>(
+      `SELECT COUNT(*) AS count FROM pa_tasks
+       WHERE owner_id = ?
+         AND json_extract(mandate_json, '$.project') = ?
+         AND ${clause.sql}`,
+      ownerId,
+      project,
+      ...clause.params,
+    )[0];
+    return Number(row?.count ?? 0);
   }
 
   listRecent(limit = 20): TaskRecord[] {

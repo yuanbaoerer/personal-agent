@@ -435,6 +435,38 @@ export interface ConfirmationRecord {
   updatedAt: string;
 }
 
+export type StateQueryTarget =
+  | "summary"
+  | "tasks"
+  | "task"
+  | "reminders"
+  | "memories"
+  | "schedules";
+
+/**
+ * Model-proposed read intent. The Router validates every field and reads
+ * through StateReadService; the model never supplies state data itself.
+ */
+export interface StateQuery {
+  target: StateQueryTarget;
+  taskId?: string;
+  /** Natural reference such as "刚才那个" or "第二个"; resolved by the program. */
+  taskRef?: string;
+  project?: string;
+  status?: TaskStatus;
+  limit?: number;
+  offset?: number;
+}
+
+export interface ScheduleIntent {
+  repo?: string;
+  localTime?: string;
+  cadence?: "daily" | "weekdays";
+  goal?: string;
+  timezone?: string;
+  until?: string;
+}
+
 export type RouterAction =
   | "reply"
   | "create_task"
@@ -443,7 +475,12 @@ export type RouterAction =
   | "cancel_task"
   | "query_status"
   | "save_memory"
-  | "remind";
+  | "forget_memory"
+  | "remind"
+  | "cancel_reminder"
+  | "draft_schedule"
+  | "confirm_schedule"
+  | "cancel_schedule";
 
 export interface RouterDecision {
   action: RouterAction;
@@ -455,6 +492,8 @@ export interface RouterDecision {
     priority?: number;
   };
   taskId?: string;
+  /** Natural task reference; the program resolves it against owner tasks. */
+  taskRef?: string;
   /** Changes for an existing task; a revision bump invalidates old work. */
   changes?: {
     goal?: string;
@@ -462,12 +501,30 @@ export interface RouterDecision {
     mandate?: Mandate;
     priority?: number;
   };
+  /** Validated read intent. */
+  query?: StateQuery;
+  /** Model-proposed query that failed validation; ask instead of guessing. */
+  queryError?: string;
   key?: string;
   value?: string;
-  /** Optional project scope for save_memory; owner-visible at confirmation. */
+  /** Optional project scope for memory intents; owner-visible at confirmation. */
   project?: string;
   dueAt?: string;
   timezone?: string;
+  /** Natural reminder reference for cancellation. */
+  reminderRef?: string;
+  scheduleId?: string;
+  /** Natural schedule reference for confirm/cancel. */
+  scheduleRef?: string;
+  schedule?: ScheduleIntent;
+}
+
+export interface RouterTaskContext {
+  id: string;
+  status: TaskStatus;
+  goal: string;
+  conversationId: string;
+  project?: string;
 }
 
 export interface RouterInput {
@@ -475,6 +532,8 @@ export interface RouterInput {
   conversationId: string;
   text: string;
   inboxId: string;
+  /** Real owner-scoped candidates; the model may reference but not alter them. */
+  taskContext?: RouterTaskContext[];
 }
 
 export type Clock = () => Date;

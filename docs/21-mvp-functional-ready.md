@@ -40,6 +40,8 @@
 2. 再接入任务指代/上下文消歧，所有控制操作复用 TaskService 与 revision 栅栏。
 3. 最后补记忆、提醒、计划草稿/确认/取消的自然语言入口与确认展示；新增分支放入小型 Intent Handler，Router 保留编排与鉴权后 dispatch。
 
+当前实现（2026-11-20，MVP-02 PR）：六个只读 target 已结构化并经 `StateReadService` 返回真实数据；任务指代支持显式 ID、唯一前缀、序号、会话焦点与目标关键词，歧义时只询问不执行；复合查询+控制请求要求拆分；记忆保存/删除复用 Confirmation，提醒取消复用 ReminderService，周期计划走草稿→确认→取消。确定性测试合计 344 项通过（含 36 项 MVP-02 新增）。真实飞书自然语言覆盖仍待 #38/#12 人工验收，不以本地事件替代。
+
 ### MVP-03：GitHub 真实闭环
 
 复用 github.read、预授权、回执、OAuth，不重做授权。D21 已选择 OAuth App；验证私有仓库可先采用精确 repo 的 fine-grained read-only PAT（OAuth repo scope 本身更宽）。真实查询 commits/issues/PR → 数据与可点击来源 → 飞书交付，含撤销/越权/错误。来源 URL 合法不等于摘要事实正确；字段确定性对照 API，或明确人审/needs_review。真实授权需 owner 配置；不提交凭据，不默认扩大资源。
