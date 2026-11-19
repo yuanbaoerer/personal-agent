@@ -2,6 +2,16 @@
 
 > 状态：E1 工程路径。ADR-0001 仍为 provisional；真实飞书 E3、SIGKILL/DO 驱逐证据未齐备。Docker 镜像未发布到 registry，Cloudflare DO 仍是可选/实验路径。
 
+## 0. Clean-install smoke
+
+在开发机上用隔离临时副本验证安装链：
+
+```bash
+npm run install:smoke
+```
+
+脚本排除 `.git`、`node_modules`、`data`、`.env`、backups/exports/reports，执行 `npm ci`、typecheck、275 tests、`pa help`，再用合成 env 临时启动并检查 `/healthz`/API health。它不代表第二开发者或真实 OS 安装包验收。
+
 ## 1. 前提
 
 - Docker 27+ 与 Compose v2；Linux amd64 已验证目标，arm64 未验证。

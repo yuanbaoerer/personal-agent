@@ -404,9 +404,25 @@ npm run export:data -- --data ./data --out ./exports/agent.json
 | 事件 | 轮询 cursor + SSE `/events/stream`（Last-Event-ID、心跳、1s replay、单连接重连 + SQLite 重开 + child/完整 main SIGKILL）；不含 goal/正文/Action args | `client-api.test.ts`、`client-http.test.ts`、`sse-restart.test.ts`、`sse-kill.test.ts`、`sse-main-kill.test.ts`、`cli.test.ts` |
 | CLI | `pa status/tasks/task/create/cancel/revise/supplement/approvals/approve/deny/memory/reminders/events/tokens/tui`；`--json` 稳定输出 | `cli.test.ts`；本地 smoke |
 | TUI | alternate screen、Tasks/Approvals/Reminders、j/k、cancel/approve/deny、增补/修订、提醒创建/文本/到期时间编辑/取消、换行/详情滚动、短终端底部提示、2s 刷新；只走 SDK | `tui.test.ts`；PTY 任务/提醒输入与 `q` 退出 |
-| 待定 | 远程 TLS/设备配对、代理层/分布式限流、SSE 跨进程重连/WS、macOS/Windows Terminal 实机、E3 | 需真实环境 |
+| 待定 | 远程 TLS/设备配对、代理层/分布式限流、DO 驱逐/真实 Feishu 恢复/WS、macOS/Windows Terminal 实机、E3 | 需真实环境 |
 
 边界：E1；本地单 owner；TUI 覆盖任务取消、审批、增补、修订目标和提醒创建/文本/到期时间编辑/取消，并支持换行/详情滚动；完整平台验收仍 pending。全量 275 tests。
+
+
+### 2.22 2026-11-19 实施进展（PA-16 clean-install smoke，E1 部分）
+
+```bash
+npm run install:smoke
+```
+
+| 内容 | 实现 |
+| --- | --- |
+| 隔离 | 临时目录复制源码/测试/scripts/docs；排除 `.git`、`node_modules`、`data`、`.env`、backups、exports、reports |
+| 安装 | `npm ci --no-audit --no-fund` |
+| 验证 | `npm run typecheck` + `npm test`（275 tests）+ `pa help` |
+| 启动 | 合成非敏感 env，临时 SQLite，`/healthz` 与 `/api/v1/health` 200，SIGTERM 关闭 |
+
+边界：同一开发机上的 clean-room smoke；不是第二开发者、macOS/Windows 安装包或真实 Provider/Feishu E3。PA-16 保持 OPEN。
 
 
 ## 3. 环境与密钥
