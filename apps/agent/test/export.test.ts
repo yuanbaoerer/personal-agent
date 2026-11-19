@@ -44,7 +44,9 @@ describe("agent JSON export", () => {
       assert.equal(result.tables.pa_memories?.length, 1);
       assert.equal(result.tables.pa_memories?.[0]?.project, "alpha");
       assert.equal(result.pi.included, false);
-      assert.equal((await stat(out)).mode & 0o777, 0o600);
+      if (process.platform !== "win32") {
+        assert.equal((await stat(out)).mode & 0o777, 0o600);
+      }
       const text = await readFile(out, "utf8");
       assert.ok(!text.includes("must-not-appear"));
       if (previousSecret === undefined) {

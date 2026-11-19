@@ -14,7 +14,7 @@
   },
   "scripts": {
     "typecheck": "tsc -p apps/agent/tsconfig.json && tsc -p infra/tsconfig.json",
-    "test": "node --test apps/agent/test/*.test.ts",
+    "test": "node --test \"apps/agent/test/*.test.ts\"",
     "test:recovery": "node --test apps/agent/test/recovery.test.ts",
     "eval:report": "node scripts/eval-report.ts --run",
     "eval:report:critical": "node scripts/eval-report.ts --run --critical",

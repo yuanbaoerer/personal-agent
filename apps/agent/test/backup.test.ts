@@ -57,8 +57,10 @@ describe("sqlite backup", () => {
       assert.equal(manifest.metadata?.piTables, 1);
       assert.equal(manifest.files[0]?.schemaVersion, "16");
       assert.equal(manifest.files[1]?.name, "pi.sqlite");
-      assert.equal((await stat(join(outDir, "agent.sqlite"))).mode & 0o777, 0o600);
-      assert.equal((await stat(join(outDir, "manifest.json"))).mode & 0o777, 0o600);
+      if (process.platform !== "win32") {
+        assert.equal((await stat(join(outDir, "agent.sqlite"))).mode & 0o777, 0o600);
+        assert.equal((await stat(join(outDir, "manifest.json"))).mode & 0o777, 0o600);
+      }
       await verifyBackup(outDir);
 
       const copy = new DatabaseSync(join(outDir, "agent.sqlite"), { readOnly: true });
@@ -192,8 +194,9 @@ describe("sqlite backup", () => {
       const restored = openStore(join(restoreDir, "agent.sqlite"));
       assert.equal(restored.findOwner("feishu", APP_ID, OWNER_OPEN_ID)?.id, owner.id);
       restored.close();
-      assert.equal((await stat(join(restoreDir, "manifest.json"))).mode & 0o777, 0o600);
-      assert.equal((await stat(join(restoreDir, "manifest.json"))).mode & 0o777, 0o600);
+      if (process.platform !== "win32") {
+        assert.equal((await stat(join(restoreDir, "manifest.json"))).mode & 0o777, 0o600);
+      }
       await assert.rejects(
         () => restoreBackup({ backupDir, targetDir: restoreDir }),
         /not empty/,
