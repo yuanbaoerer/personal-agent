@@ -401,6 +401,22 @@ const migrations: readonly (readonly string[])[] = [
       updated_at TEXT NOT NULL
     ) STRICT`,
   ],
+  [
+    // Revocable, least-privilege credentials for local clients (CLI/TUI).
+    // Only a SHA-256 hash of the bearer token is stored.
+    `CREATE TABLE pa_client_tokens (
+      id TEXT PRIMARY KEY,
+      owner_id TEXT NOT NULL REFERENCES pa_identities(id),
+      name TEXT NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      scopes_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      last_used_at TEXT,
+      revoked_at TEXT
+    ) STRICT`,
+    `CREATE INDEX pa_client_tokens_owner_idx
+       ON pa_client_tokens (owner_id, revoked_at)`,
+  ],
 ];
 
 /** Highest schema version this build can read/migrate. */

@@ -202,6 +202,24 @@ export class ActionRepository {
       .map(mapAction);
   }
 
+  listProposedByOwner(
+    ownerId: string,
+    now: string,
+    limit = 50,
+  ): ActionRecord[] {
+    return this.#db
+      .all<ActionRow>(
+        `SELECT * FROM pa_actions
+         WHERE owner_id = ? AND status = 'proposed' AND expires_at > ?
+         ORDER BY created_at ASC
+         LIMIT ?`,
+        ownerId,
+        now,
+        limit,
+      )
+      .map(mapAction);
+  }
+
   listInFlight(taskId: string): ActionRecord[] {
     return this.#db
       .all<ActionRow>(

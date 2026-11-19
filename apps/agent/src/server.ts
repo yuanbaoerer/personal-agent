@@ -2,6 +2,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 
 import type { FeishuAdapter } from "./channels/feishu/adapter.ts";
+import type { ClientApiService } from "./client-api.ts";
 import type { IngressService } from "./coordinator/ingress.ts";
 import type { GitHubOAuthStatus } from "./personal/github-oauth.ts";
 import {
@@ -29,6 +30,8 @@ export interface HttpServerDeps {
   logger: AppLogger;
   oauth?: GitHubOAuthHttpHandler;
   adminToken?: string;
+  /** Local authenticated control/event API; omitted means 404. */
+  clientApi?: ClientApiService;
 }
 
 class BodyTooLargeError extends Error {}
@@ -52,6 +55,24 @@ export function createHttpServer(deps: HttpServerDeps): Server {
       if (request.method === "GET" && url.pathname === "/healthz") {
         status = 200;
         sendJson(response, status, { ok: true, uptimeSeconds: process.uptime() });
+        return;
+      }
+
+      if (url.pathname.startsWith("/api/v1/") && deps.clientApi !== undefined) {
+        const body =
+          request.method === "GET" || request.method === "HEAD"
+            ? undefined
+            : await readRawBody(request);
+        const result = await deps.clientApi.handle({
+          method: request.method ?? "GET",
+          path: url.pathname,
+          query: url.searchParams,
+          headers: normalizeHeaders(request),
+          body,
+        });
+        status = result.status;
+        response.setHeader("cache-control", "no-store");
+        sendJson(response, status, result.body);
         return;
       }
 
@@ -102,6 +123,14 @@ export function createHttpServer(deps: HttpServerDeps): Server {
       });
     }
   });
+}
+
+function normalizeHeaders(request: IncomingMessage): Record<string, string | undefined> {
+  const headers: Record<string, string | undefined> = {};
+  for (const [name, value] of Object.entries(request.headers)) {
+    headers[name.toLowerCase()] = Array.isArray(value) ? value[0] : value;
+  }
+  return headers;
 }
 
 function parseCookies(request: IncomingMessage): Map<string, string> {

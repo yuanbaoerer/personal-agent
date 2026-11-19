@@ -229,6 +229,48 @@ export class TaskRepository {
       .map(mapTask);
   }
 
+  listByOwnerStatus(
+    ownerId: string,
+    status: TaskStatus,
+    limit = 20,
+  ): TaskRecord[] {
+    if (status === "needs_review") {
+      return this.#db
+        .all<TaskRow>(
+          `SELECT * FROM pa_tasks
+           WHERE owner_id = ? AND status = 'waiting_user' AND needs_review = 1
+           ORDER BY created_at DESC
+           LIMIT ?`,
+          ownerId,
+          limit,
+        )
+        .map(mapTask);
+    }
+    if (status === "waiting_user") {
+      return this.#db
+        .all<TaskRow>(
+          `SELECT * FROM pa_tasks
+           WHERE owner_id = ? AND status = 'waiting_user' AND needs_review = 0
+           ORDER BY created_at DESC
+           LIMIT ?`,
+          ownerId,
+          limit,
+        )
+        .map(mapTask);
+    }
+    return this.#db
+      .all<TaskRow>(
+        `SELECT * FROM pa_tasks
+         WHERE owner_id = ? AND status = ?
+         ORDER BY created_at DESC
+         LIMIT ?`,
+        ownerId,
+        status,
+        limit,
+      )
+      .map(mapTask);
+  }
+
   listRecent(limit = 20): TaskRecord[] {
     return this.#db
       .all<TaskRow>(
@@ -268,6 +310,17 @@ export class TaskRepository {
       id,
     )[0];
     return row === undefined ? undefined : mapAssignment(row);
+  }
+
+  listAssignments(taskId: string): AssignmentRecord[] {
+    return this.#db
+      .all<AssignmentRow>(
+        `SELECT * FROM pa_assignments
+         WHERE task_id = ?
+         ORDER BY created_at DESC`,
+        taskId,
+      )
+      .map(mapAssignment);
   }
 
   listActiveAssignments(taskId?: string): AssignmentRecord[] {

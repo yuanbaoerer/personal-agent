@@ -71,6 +71,24 @@ export interface AuditEvent {
   occurredAt: string;
 }
 
+export interface AuditFeedItem {
+  cursor: number;
+  event: string;
+  subjectType?: string;
+  subjectId?: string;
+  traceId: string;
+  occurredAt: string;
+}
+
+interface AuditRow {
+  cursor: number;
+  event: string;
+  subject_type: string | null;
+  subject_id: string | null;
+  trace_id: string;
+  occurred_at: string;
+}
+
 interface IdentityRow {
   id: string;
   channel: string;
@@ -289,6 +307,22 @@ export class Store {
     const row = this.#db.all<ConversationRow>(
       "SELECT * FROM pa_conversations WHERE id = ?",
       id,
+    )[0];
+    return row === undefined ? undefined : mapConversation(row);
+  }
+
+  /**
+   * The local Client API reuses the owner's most recent bound conversation so
+   * task replies and approval cards still travel through a real channel. It
+   * must never invent an `api` conversation that the outbox cannot deliver.
+   */
+  latestConversation(ownerId: string): ConversationRecord | undefined {
+    const row = this.#db.all<ConversationRow>(
+      `SELECT * FROM pa_conversations
+       WHERE owner_id = ?
+       ORDER BY created_at DESC, rowid DESC
+       LIMIT 1`,
+      ownerId,
     )[0];
     return row === undefined ? undefined : mapConversation(row);
   }
@@ -671,6 +705,33 @@ export class Store {
       event.after === undefined ? null : JSON.stringify(event.after),
       event.traceId,
     );
+  }
+
+  /**
+   * Replayable event feed. The monotonic audit seq is the cursor (rowid can
+   * change on VACUUM); payloads (goal/message text, action args) are
+   * deliberately excluded so a client event subscription cannot become a
+   * second leak path for private content.
+   */
+  listAuditAfter(cursor: number, limit = 100): AuditFeedItem[] {
+    return this.#db
+      .all<AuditRow>(
+        `SELECT seq AS cursor, event, subject_type, subject_id, trace_id, occurred_at
+         FROM pa_audit
+         WHERE seq > ?
+         ORDER BY seq ASC
+         LIMIT ?`,
+        cursor,
+        limit,
+      )
+      .map((row) => ({
+        cursor: Number(row.cursor),
+        event: row.event,
+        subjectType: row.subject_type ?? undefined,
+        subjectId: row.subject_id ?? undefined,
+        traceId: row.trace_id,
+        occurredAt: row.occurred_at,
+      }));
   }
 }
 
