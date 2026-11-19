@@ -50,6 +50,7 @@ export interface AppDeps {
   budgetLimits?: {
     maxCallsPerTask: number;
     maxCallsPerDay?: number;
+    maxToolCallsPerTask: number;
   };
   /** Host/extension seam for additional tools; keep writes in ActionService. */
   registerTools?: (registry: ToolRegistry) => void;
@@ -96,6 +97,7 @@ export function createApp(deps: AppDeps): AppServices {
     maxCallsPerDay: deps.budgetLimits?.maxCallsPerDay,
     now: deps.now,
   });
+  const maxToolCallsPerTask = deps.budgetLimits?.maxToolCallsPerTask ?? 20;
   const tasks = new TaskRepository(db);
   const actions = new ActionRepository(db);
   const effects = new EffectRepository(db);

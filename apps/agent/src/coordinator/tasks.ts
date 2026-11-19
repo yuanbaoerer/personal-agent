@@ -35,7 +35,7 @@ export interface ActionProposer {
     task: TaskRecord,
     assignment: AssignmentRecord,
     proposed: ProposedAction[],
-  ): { count: number; autoApprove: string[] };
+  ): { count: number; autoApprove: string[]; rejected: number };
   finalizeReportedActions?(actionIds: readonly string[]): void;
 }
 
@@ -853,14 +853,26 @@ export class TaskService {
         const persisted = this.#proposer?.proposeForReport(task, assignment, proposed) ?? {
           count: 0,
           autoApprove: [],
+          rejected: 0,
         };
+        const budgetRejected = persisted.rejected > 0;
         const updated = this.#tasks.updateTask(task.id, task.revision, {
           status: persisted.count > 0 ? "waiting_external" : "failed",
           resultRef: persisted.count > 0 ? report.summary : undefined,
-          lastError: persisted.count > 0 ? undefined : "worker proposed no valid action",
+          lastError:
+            persisted.count > 0
+              ? undefined
+              : budgetRejected
+                ? "tool-call budget exhausted"
+                : "worker proposed no valid action",
           updatedAt: now,
         });
-        return { persisted: persisted.count, autoApprove: persisted.autoApprove, updated };
+        return {
+          persisted: persisted.count,
+          autoApprove: persisted.autoApprove,
+          rejected: persisted.rejected,
+          updated,
+        };
       });
       if (result.updated === undefined) {
         return { status: "done" };
@@ -870,21 +882,43 @@ export class TaskService {
         // only after the task transition has committed.
         this.#proposer?.finalizeReportedActions?.(result.autoApprove);
       }
+      if (result.rejected > 0) {
+        this.#store.recordAudit({
+          event: "task.tool_budget_exhausted",
+          subjectType: "task",
+          subjectId: task.id,
+          after: { rejected: result.rejected, persisted: result.persisted },
+          traceId: `task:${task.id}`,
+          occurredAt: now,
+        });
+      }
       if (result.persisted > 0) {
         const remainingApprovals = result.persisted - result.autoApprove.length;
+        const suffix =
+          result.rejected > 0
+            ? ` 另有 ${result.rejected} 个动作超出单任务工具调用预算，未创建。`
+            : "";
         this.#reply(
           task,
           remainingApprovals > 0 ? "clarify" : "status",
-          remainingApprovals > 0
+          (remainingApprovals > 0
             ? `任务需要主人批准 ${remainingApprovals} 个动作后继续。`
-            : `任务已按只读授权执行 ${result.autoApprove.length} 个动作，等待结果。`,
+            : `任务已按只读授权执行 ${result.autoApprove.length} 个动作，等待结果。`) +
+            suffix,
           remainingApprovals > 0
             ? `approval-needed:${assignment.id}`
             : `preauthorized:${assignment.id}`,
         );
         void this.#wake.wake();
       } else {
-        this.#reply(task, "failure", "任务失败：Worker 提出的动作无效。", `failed:${assignment.id}`);
+        this.#reply(
+          task,
+          "failure",
+          result.rejected > 0
+            ? "任务已停止：单任务工具调用预算已耗尽。"
+            : "任务失败：Worker 提出的动作无效。",
+          `failed:${assignment.id}`,
+        );
       }
       return { status: "done" };
     }

@@ -42,6 +42,7 @@ export interface AppConfig {
   budget: {
     maxCallsPerTask: number;
     maxCallsPerDay?: number;
+    maxToolCallsPerTask: number;
   };
   ownerOpenId?: string;
   eventMode: FeishuEventMode;
@@ -178,6 +179,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
               1,
               100_000,
             ),
+      maxToolCallsPerTask: parseInteger(
+        read("BUDGET_MAX_TOOL_CALLS_PER_TASK") ?? "20",
+        "BUDGET_MAX_TOOL_CALLS_PER_TASK",
+        1,
+        1_000,
+      ),
     },
     ownerOpenId: read("OWNER_FEISHU_OPEN_ID"),
     eventMode: eventModeRaw,

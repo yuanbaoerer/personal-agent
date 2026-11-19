@@ -90,6 +90,7 @@ describe("model-call budget config", () => {
     const config = loadConfig(BASE);
     assert.equal(config.budget.maxCallsPerTask, 10);
     assert.equal(config.budget.maxCallsPerDay, undefined);
+    assert.equal(config.budget.maxToolCallsPerTask, 20);
   });
 
   it("parses explicit task and daily limits", () => {
@@ -97,9 +98,11 @@ describe("model-call budget config", () => {
       ...BASE,
       BUDGET_MAX_MODEL_CALLS_PER_TASK: "3",
       BUDGET_MAX_MODEL_CALLS_PER_DAY: "25",
+      BUDGET_MAX_TOOL_CALLS_PER_TASK: "7",
     });
     assert.equal(config.budget.maxCallsPerTask, 3);
     assert.equal(config.budget.maxCallsPerDay, 25);
+    assert.equal(config.budget.maxToolCallsPerTask, 7);
   });
 
   it("rejects out-of-range limits", () => {
@@ -110,6 +113,10 @@ describe("model-call budget config", () => {
     assert.throws(
       () => loadConfig({ ...BASE, BUDGET_MAX_MODEL_CALLS_PER_DAY: "0" }),
       /BUDGET_MAX_MODEL_CALLS_PER_DAY/,
+    );
+    assert.throws(
+      () => loadConfig({ ...BASE, BUDGET_MAX_TOOL_CALLS_PER_TASK: "0" }),
+      /BUDGET_MAX_TOOL_CALLS_PER_TASK/,
     );
   });
 });

@@ -78,6 +78,45 @@ describe("persistent model-call budget", () => {
     assert.match(await budget.summaryText(), /upstream/);
   });
 
+  it("caps cumulative action proposals for one task", () => {
+    const services = createServices({
+      now: () => NOW,
+      maxToolCallsPerTask: 1,
+    });
+    const task = services.taskService.create({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "budget:tool-calls",
+      goal: "tool budget target",
+      completionCriteria: "done",
+      mandate: {
+        resources: ["chat", "state"],
+        tools: ["state.summary", "reminder.list"],
+      },
+    });
+    const claimed = services.tasks.claimNext(NOW.toISOString(), 60_000, 2);
+    assert.ok(claimed);
+    const result = services.actionService.proposeForReport(
+      claimed.task,
+      claimed.assignment,
+      [
+        { tool: "state.summary", args: {} },
+        { tool: "reminder.list", args: { limit: 5, offset: 0 } },
+      ],
+    );
+    assert.equal(result.count, 1);
+    assert.equal(result.rejected, 1);
+    assert.equal(services.actions.listByTask(task.id).length, 1);
+    assert.equal(
+      services.actionService.propose(
+        claimed.task,
+        claimed.assignment,
+        { tool: "state.summary", args: {} },
+      ),
+      undefined,
+    );
+  });
+
   it("requeues a timed budget pause without consuming an attempt", async () => {
     let checks = 0;
     const services = createServices({
