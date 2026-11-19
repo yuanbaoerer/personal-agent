@@ -970,6 +970,30 @@ export class TaskRepository {
     );
   }
 
+  /** A time-scoped budget pause is not a task attempt. */
+  requeueBudgetPausedTask(
+    taskId: string,
+    assignmentId: string,
+    previousAttempts: number,
+    now: string,
+  ): void {
+    this.#db.transaction(() => {
+      this.#db.run(
+        `UPDATE pa_assignments SET status = 'expired', updated_at = ?
+         WHERE id = ? AND status = 'active'`,
+        now,
+        assignmentId,
+      );
+      this.#db.run(
+        `UPDATE pa_tasks SET status = 'queued', attempts = ?, updated_at = ?
+         WHERE id = ? AND status = 'running'`,
+        previousAttempts,
+        now,
+        taskId,
+      );
+    });
+  }
+
   requeueExpiredTask(taskId: string, now: string): void {
     this.#db.run(
       `UPDATE pa_tasks SET status = 'queued', updated_at = ?

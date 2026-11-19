@@ -84,3 +84,32 @@ describe("Feishu event mode config", () => {
     );
   });
 });
+
+describe("model-call budget config", () => {
+  it("defaults to 10 calls per task with no daily cap", () => {
+    const config = loadConfig(BASE);
+    assert.equal(config.budget.maxCallsPerTask, 10);
+    assert.equal(config.budget.maxCallsPerDay, undefined);
+  });
+
+  it("parses explicit task and daily limits", () => {
+    const config = loadConfig({
+      ...BASE,
+      BUDGET_MAX_MODEL_CALLS_PER_TASK: "3",
+      BUDGET_MAX_MODEL_CALLS_PER_DAY: "25",
+    });
+    assert.equal(config.budget.maxCallsPerTask, 3);
+    assert.equal(config.budget.maxCallsPerDay, 25);
+  });
+
+  it("rejects out-of-range limits", () => {
+    assert.throws(
+      () => loadConfig({ ...BASE, BUDGET_MAX_MODEL_CALLS_PER_TASK: "0" }),
+      /BUDGET_MAX_MODEL_CALLS_PER_TASK/,
+    );
+    assert.throws(
+      () => loadConfig({ ...BASE, BUDGET_MAX_MODEL_CALLS_PER_DAY: "0" }),
+      /BUDGET_MAX_MODEL_CALLS_PER_DAY/,
+    );
+  });
+});

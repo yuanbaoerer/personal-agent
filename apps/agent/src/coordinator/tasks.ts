@@ -458,21 +458,6 @@ export class TaskService {
       if (this.#isPastDeadline(task, now)) {
         return this.#failForDeadline(task, now);
       }
-      const budget = await this.#budget?.check();
-      if (budget !== undefined && !budget.ok) {
-        this.#reply(
-          task,
-          "status",
-          `订阅额度不足，任务已暂停：${budget.reason ?? "未知原因"}。额度恢复后会自动继续。`,
-          `budget-paused:${task.id}`,
-        );
-        return {
-          status: "retry",
-          at: new Date(now.getTime() + 60_000).toISOString(),
-          reason: `subscription budget: ${budget.reason ?? "unavailable"}`,
-          maxAttempts: 30 * 24 * 60,
-        };
-      }
     }
 
     const claimed = this.#tasks.claimNext(
@@ -516,6 +501,57 @@ export class TaskService {
         this.#now().toISOString(),
       );
       return this.#failForDeadline(claimed.task, now);
+    }
+
+    const budget = await this.#budget?.check({
+      role: "worker",
+      taskId: claimed.task.id,
+    });
+    if (budget !== undefined && !budget.ok) {
+      const at = this.#now().toISOString();
+      this.#tasks.markAssignmentExpired(claimed.assignment.id, at);
+      if (budget.permanent === true) {
+        this.#tasks.updateTask(claimed.task.id, claimed.task.revision, {
+          status: "failed",
+          lastError: budget.reason ?? "model-call budget exhausted",
+          updatedAt: at,
+        });
+        this.#store.recordAudit({
+          event: "task.budget_exhausted",
+          subjectType: "task",
+          subjectId: claimed.task.id,
+          after: { reason: budget.reason ?? null },
+          traceId: `task:${claimed.task.id}`,
+          occurredAt: at,
+        });
+        this.#reply(
+          claimed.task,
+          "status",
+          `任务已停止：${budget.reason ?? "模型请求预算已耗尽"}。`,
+          `budget-failed:${claimed.task.id}`,
+        );
+        return { status: "done" };
+      }
+      this.#tasks.requeueBudgetPausedTask(
+        claimed.task.id,
+        claimed.assignment.id,
+        Math.max(0, claimed.assignment.attempt - 1),
+        at,
+      );
+      const retryAt =
+        budget.retryAt ?? new Date(now.getTime() + 60_000).toISOString();
+      this.#reply(
+        claimed.task,
+        "status",
+        `模型请求已暂停：${budget.reason ?? "预算不足"}。${budget.retryAt === undefined ? "额度恢复后会自动继续。" : `预计 ${budget.retryAt} 后恢复。`}`,
+        `budget-paused:${claimed.task.id}`,
+      );
+      return {
+        status: "retry",
+        at: retryAt,
+        reason: `model budget: ${budget.reason ?? "unavailable"}`,
+        maxAttempts: 30 * 24 * 60,
+      };
     }
 
     try {

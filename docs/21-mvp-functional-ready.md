@@ -7,7 +7,7 @@
 
 一个 owner、一个常驻 Agent Core、一个真实模型、一个真实飞书私聊入口。通过自然语言对话/创建任务/查询状态/补充/修改/取消、真实 GitHub 只读查询、明确确认的记忆和一次/周期提醒、授权的定期汇报，关闭客户端仍可执行并收回结果。已有本地 CLI/TUI 辅助管理；不要求远程多设备或 Desktop。私有首版只读优先，真实外部写默认不启用；若必须验证写操作，仅隔离测试资源、明确审批和可核对结果。
 
-当前证据：MVP-01 的六个 owner-scope state tools、确定性状态问答路径与 state-read verifier 已合并（PR #43），MVP-02 结构化 Intent 与 Intent Handler 已合并（PR #44/#46），仓库记录 362 个确定性测试通过；本地 API/CLI/TUI/SSE、OpenAPI、macOS arm64/Windows x64 CI、clean-install smoke 已有记录。真实 Feishu 长连接入站、D19 复测与 M02/M03 仍 pending；飞书/真实模型/短提醒只有部分真实记录。SSE 主进程 SIGKILL 恢复不是任务/模型恢复证据。真实 GitHub OAuth/G1、并发 G2、计划 G3、持续运行仍待验收。不要增加 E1 数量来代替真实业务结果。
+当前证据：MVP-01 的六个 owner-scope state tools、确定性状态问答路径与 state-read verifier 已合并（PR #43），MVP-02 结构化 Intent 与 Intent Handler 已合并（PR #44/#46），仓库记录 370 个确定性测试通过；本地 API/CLI/TUI/SSE、OpenAPI、macOS arm64/Windows x64 CI、clean-install smoke 已有记录。真实 Feishu 长连接入站、D19 复测与 M02/M03 仍 pending；飞书/真实模型/短提醒只有部分真实记录。SSE 主进程 SIGKILL 恢复不是任务/模型恢复证据。真实 GitHub OAuth/G1、并发 G2、计划 G3、持续运行仍待验收。不要增加 E1 数量来代替真实业务结果。
 
 ## 2. 工作包与依赖
 
@@ -40,7 +40,7 @@
 2. 再接入任务指代/上下文消歧，所有控制操作复用 TaskService 与 revision 栅栏。
 3. 最后补记忆、提醒、计划草稿/确认/取消的自然语言入口与确认展示；新增分支放入小型 Intent Handler，Router 保留编排与鉴权后 dispatch。
 
-当前实现（2026-11-20，MVP-02 PR）：六个只读 target 已结构化并经 `StateReadService` 返回真实数据；任务指代支持显式 ID、唯一前缀、序号、会话焦点与目标关键词，歧义时只询问不执行；复合查询+控制请求要求拆分；记忆保存/删除复用 Confirmation，提醒取消复用 ReminderService，周期计划走草稿→确认→取消。新增分支已提取到 `StateQueryHandler` / `PersonalIntentHandler`，Router 保留编排、鉴权后 dispatch 与回复投递。确定性测试合计 362 项通过（含 40 项 MVP-02 新增）。真实飞书自然语言覆盖仍待 #38/#12 人工验收，不以本地事件替代。
+当前实现（2026-11-20，MVP-02 PR）：六个只读 target 已结构化并经 `StateReadService` 返回真实数据；任务指代支持显式 ID、唯一前缀、序号、会话焦点与目标关键词，歧义时只询问不执行；复合查询+控制请求要求拆分；记忆保存/删除复用 Confirmation，提醒取消复用 ReminderService，周期计划走草稿→确认→取消。新增分支已提取到 `StateQueryHandler` / `PersonalIntentHandler`，Router 保留编排、鉴权后 dispatch 与回复投递。确定性测试合计 370 项通过（含 40 项 MVP-02 新增）。真实飞书自然语言覆盖仍待 #38/#12 人工验收，不以本地事件替代。
 
 ### MVP-03：GitHub 真实闭环
 
@@ -55,6 +55,8 @@
 复用 SchedulePolicy/Reminder 而非常驻模型 Watchdog。一次提醒、每天/工作日/每周提醒及 GitHub 报告、owner 状态日报。必要时补 weekly 与内部状态 plan 类型。草稿确认→激活/暂停/修改重确认/取消；唯一 runKey、当前授权 revision、时区、错过触发策略；真实飞书回传。激活前先通过 MVP-06。复杂 cron、任意事件订阅后置。
 
 ### MVP-06：资源与权限门槛
+
+当前实现：并发 Worker 2、Assignment 10 分钟、最多 10 次模型请求/Task、每日请求上限可选、工具超时 15 秒；请求计数持久化，永久超限停止任务，每日超限暂停到 UTC 次日且不消耗 task attempt。仍待实现：token/费用采集、周期执行 20 次/日、owner 确认的实际 Provider 成本阈值。
 
 建议起始值（待 owner 确认、可配置，不表示现状）：并发 Worker 2、单 Task 10 分钟总时长（区别于 Assignment lifetime）、最多 10 次模型请求/Task、失败自动重试 2 次、周期执行 20 次/日、工具默认 15 秒且尊重更严格声明。持久化计数、提前拒绝超额新调用、说明失败/暂停；后台预算未知 fail-closed，不依赖 Magpie 在线；有可观测的真实调用/失败记录，未知金额不编造。用户确认具体 Provider、每日成本/Token 上限后运行；无硬预算不得激活无人值守付费计划。保留既有权限、审批、撤销、unknown/reconcile；对实际 GitHub 文本注入、越权读取、外部文本诱导副作用/记忆、凭据泄漏做最少负例，实际越权或重复副作用阻断。正式 SEC01–SEC08 与 K 契约不降低。
 

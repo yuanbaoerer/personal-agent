@@ -423,7 +423,7 @@ export class Router implements InboundHandler {
     }
     // Re-attaching to a run that already consumed budget must not be aborted
     // just because the window crossed the threshold while it was in flight.
-    const budget = attempts <= 1 ? await this.#budget?.check() : undefined;
+    const budget = attempts <= 1 ? await this.#budget?.check({ role: "router" }) : undefined;
     if (budget !== undefined && !budget.ok) {
       // A deterministic state answer uses no model request; use it as the
       // budget-exhausted fallback instead of hiding real state behind a quota
