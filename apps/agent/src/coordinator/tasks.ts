@@ -4,6 +4,7 @@ import type {
   Evidence,
   ProposedAction,
   TaskInputRecord,
+  GithubClaim,
   MemoryRecord,
   StateClaim,
   TaskRecord,
@@ -1231,6 +1232,15 @@ function workerPrompt(
       "Claims are checked against the receipt; omit unverifiable free-text numbers.",
     );
   }
+  if (task.mandate.tools.includes("github.read")) {
+    lines.push(
+      "GitHub receipts contain the API fields under previous action results.",
+      "For every issue/PR/commit field you state, add a githubClaim:",
+      '{"githubClaims":[{"kind":"github_item","repo":"owner/name","operation":"issues","item":"123","field":"state","value":"open"},',
+      '{"kind":"github_item","repo":"owner/name","operation":"pulls","item":"45","field":"merged","value":true}]}',
+      "Claims are checked against the matching GitHub receipt; omit unverifiable free text.",
+    );
+  }
   if (inputs.length > 0) {
     lines.push(
       `Owner input (authoritative, ${inputs.length} item(s); a ready report must address all of them):`,
@@ -1340,6 +1350,57 @@ function parseStateClaims(value: unknown): StateClaim[] | undefined {
   return claims.length > 0 ? claims : undefined;
 }
 
+const GITHUB_CLAIM_FIELDS: Record<GithubClaim["operation"], readonly string[]> = {
+  issues: ["state", "title", "author", "url"],
+  pulls: ["state", "title", "author", "url", "merged", "draft"],
+  commits: ["date", "message", "author", "url"],
+};
+
+function parseGithubClaims(value: unknown): GithubClaim[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const claims: GithubClaim[] = [];
+  for (const item of value.slice(0, STATE_CLAIM_LIMIT)) {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) {
+      continue;
+    }
+    const record = item as Record<string, unknown>;
+    if (record.kind !== "github_item") {
+      continue;
+    }
+    const repo = record.repo;
+    const operation = record.operation;
+    const key = record.item;
+    const field = record.field;
+    const claimValue = record.value;
+    if (
+      typeof repo !== "string" ||
+      !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo) ||
+      (operation !== "issues" &&
+        operation !== "pulls" &&
+        operation !== "commits") ||
+      (typeof key !== "string" && typeof key !== "number") ||
+      String(key).length === 0 ||
+      String(key).length > 64 ||
+      typeof field !== "string" ||
+      !GITHUB_CLAIM_FIELDS[operation].includes(field) ||
+      !["string", "number", "boolean"].includes(typeof claimValue)
+    ) {
+      continue;
+    }
+    claims.push({
+      kind: "github_item",
+      repo: repo.toLowerCase(),
+      operation,
+      item: String(key),
+      field: field as GithubClaim["field"],
+      value: claimValue as string | number | boolean,
+    });
+  }
+  return claims.length > 0 ? claims : undefined;
+}
+
 export function parseWorkerReport(text: string): WorkerReport | undefined {
   const start = text.indexOf("{");
   const end = text.lastIndexOf("}");
@@ -1429,6 +1490,7 @@ export function parseWorkerReport(text: string): WorkerReport | undefined {
         )
       : undefined,
     stateClaims: parseStateClaims(record.stateClaims),
+    githubClaims: parseGithubClaims(record.githubClaims),
   };
 }
 

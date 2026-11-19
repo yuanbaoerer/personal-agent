@@ -1,5 +1,6 @@
 import type {
   ActionRecord,
+  GithubClaim,
   StateClaim,
   TaskRecord,
   TaskVerification,
@@ -304,6 +305,59 @@ function findSnapshotItem(
     (item) => typeof item.id === "string" && item.id.startsWith(id),
   );
   return prefixed.length === 1 ? prefixed[0] : undefined;
+}
+
+function validateGithubClaim(
+  claim: GithubClaim,
+  actions: readonly ActionRecord[],
+): string | undefined {
+  const candidates = actions.filter(
+    (candidate) =>
+      typeof candidate.args.repo === "string" &&
+      candidate.args.repo.toLowerCase() === claim.repo &&
+      candidate.args.operation === claim.operation,
+  );
+  if (candidates.length === 0) {
+    return `github_action_missing:${claim.repo}:${claim.operation}`;
+  }
+  let found = false;
+  let fieldSeen = false;
+  for (const action of candidates) {
+    const items = action.evidence?.items;
+    if (!Array.isArray(items)) {
+      continue;
+    }
+    for (const candidate of items) {
+      if (
+        typeof candidate !== "object" ||
+        candidate === null ||
+        Array.isArray(candidate)
+      ) {
+        continue;
+      }
+      const item = candidate as Record<string, unknown>;
+      const matchesItem =
+        claim.operation === "commits"
+          ? typeof item.sha === "string" && item.sha.startsWith(claim.item)
+          : Number(item.number) === Number(claim.item);
+      if (!matchesItem) {
+        continue;
+      }
+      found = true;
+      if (Object.hasOwn(item, claim.field)) {
+        fieldSeen = true;
+        if (item[claim.field] === claim.value) {
+          return undefined;
+        }
+      }
+    }
+  }
+  if (!found) {
+    return `github_item_missing:${claim.operation}:${claim.item}`;
+  }
+  return fieldSeen
+    ? `github_field_mismatch:${claim.operation}:${claim.item}:${claim.field}`
+    : `github_field_missing:${claim.operation}:${claim.field}`;
 }
 
 const COUNT_CLAIM_PATH =
@@ -904,7 +958,7 @@ export class TaskCompletionVerifier {
           evidenceRefs: accepted
             .map((action) => action.externalRef ?? `action:${action.id}`)
             .filter((value): value is string => typeof value === "string"),
-          externalFactsVerified: true,
+          externalFactsVerified: false,
         },
         at,
       );
@@ -931,28 +985,60 @@ export class TaskCompletionVerifier {
           evidenceRefs: accepted
             .map((action) => action.externalRef ?? `action:${action.id}`)
             .filter((value): value is string => typeof value === "string"),
-          externalFactsVerified: true,
+          externalFactsVerified: false,
         },
         at,
       );
     }
 
+    const githubClaims = report.githubClaims ?? [];
+    const claimMissing: string[] = [];
+    const claimChecked: string[] = [];
+    for (const claim of githubClaims) {
+      const mismatch = validateGithubClaim(claim, accepted);
+      if (mismatch !== undefined) {
+        claimMissing.push(`claim:${mismatch}`);
+      } else {
+        claimChecked.push(`claim:github:${claim.operation}:${claim.field}`);
+      }
+    }
+    const checkedAll = [
+      ...structural.checked,
+      "github_action_receipt",
+      "github_repository_match",
+      "github_source_url",
+      ...stateCheck.checked,
+      ...claimChecked,
+      "claim:free_text_unverified",
+    ];
+    if (claimMissing.length > 0) {
+      return this.#verdict(
+        "github-read",
+        "needs_review",
+        "github structured claims do not match the source receipts",
+        {
+          checked: checkedAll,
+          missing: claimMissing,
+          evidenceRefs: accepted
+            .map((action) => action.externalRef ?? `action:${action.id}`)
+            .filter((value): value is string => typeof value === "string"),
+          externalFactsVerified: false,
+        },
+        at,
+      );
+    }
     return this.#verdict(
       "github-read",
       "succeeded",
-      "github action and source URL verified",
+      githubClaims.length > 0
+        ? `github action and source URL verified; ${githubClaims.length} structured claim(s) matched; remaining free text was not independently verified`
+        : "github action and source URL verified; free-text claims were not independently verified",
       {
-        checked: [
-          ...structural.checked,
-          "github_action_receipt",
-          "github_repository_match",
-          "github_source_url",
-          ...stateCheck.checked,
-        ],
+        checked: checkedAll,
         evidenceRefs: accepted
           .map((action) => action.externalRef ?? `action:${action.id}`)
           .filter((value): value is string => typeof value === "string"),
-        externalFactsVerified: true,
+        externalFactsVerified: false,
       },
       at,
     );

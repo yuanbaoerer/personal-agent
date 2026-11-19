@@ -270,6 +270,16 @@ export type StateClaim =
       dueAt: string;
     };
 
+export type GithubClaim = {
+  kind: "github_item";
+  repo: string;
+  operation: "issues" | "pulls" | "commits";
+  /** Issue/PR number or commit SHA, as a string. */
+  item: string;
+  field: "state" | "title" | "message" | "author" | "url" | "merged" | "draft" | "date";
+  value: string | number | boolean;
+};
+
 export interface WorkerReport {
   status: ReportStatus;
   summary: string;
@@ -283,6 +293,7 @@ export interface WorkerReport {
   unverifiedClaims?: string[];
   /** Structured facts the program can compare with executor receipts. */
   stateClaims?: StateClaim[];
+  githubClaims?: GithubClaim[];
 }
 
 export type ActionStatus =
