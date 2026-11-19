@@ -306,6 +306,9 @@ function findSnapshotItem(
   return prefixed.length === 1 ? prefixed[0] : undefined;
 }
 
+const COUNT_CLAIM_PATH =
+  /^(?:tasks\.counts\.(?:queued|running|waiting_user|waiting_external|succeeded|needs_review|failed|cancelling|cancelled)|tasks\.total|reminders\.pending|memories\.(?:global|project)|schedules\.counts\.(?:draft|active|paused|cancelled|expired))$/;
+
 /**
  * Compare one model-declared fact with the executor snapshot. The program
  * never trusts the report's free text; only these structured claims are
@@ -316,6 +319,9 @@ function validateStateClaim(
   snapshot: Record<string, unknown>,
 ): string | undefined {
   if (claim.kind === "count") {
+    if (!COUNT_CLAIM_PATH.test(claim.path)) {
+      return `count_path_not_allowed:${claim.path}`;
+    }
     const actual = snapshotPath(snapshot, claim.path);
     if (typeof actual !== "number") {
       return `count_path_missing:${claim.path}`;

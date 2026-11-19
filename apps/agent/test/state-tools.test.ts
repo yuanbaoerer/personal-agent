@@ -1486,6 +1486,34 @@ describe("structured state claims", () => {
     );
   });
 
+  it("rejects a count claim outside the allowed fact paths", () => {
+    const services = setup();
+    const task = createStateTask(services, {
+      tools: ["state.summary"],
+      key: "state:claim-count-path",
+    });
+    const state = insertSucceededStateAction(services, task);
+    const verdict = verifier(services).verify(task, {
+      ...readyReport([
+        { kind: "state_snapshot", value: state.snapshot.snapshotHash },
+      ]),
+      stateClaims: [
+        {
+          kind: "count",
+          snapshotHash: state.snapshot.snapshotHash,
+          path: "scope.ownerId",
+          value: 1,
+        },
+      ],
+    });
+    assert.equal(verdict.verdict, "needs_review");
+    assert.ok(
+      verdict.verification.missing.some((item) =>
+        item.startsWith("claim:count_path_not_allowed:"),
+      ),
+    );
+  });
+
   it("rejects a claim that points at a different snapshot", () => {
     const services = setup();
     const task = createStateTask(services, {
