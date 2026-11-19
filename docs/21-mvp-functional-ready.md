@@ -1,6 +1,6 @@
 # 21 · MVP Functional Ready：私有自用主体功能实施纲领
 
-> 2026-11-20 · 总跟踪 [#41](https://github.com/yuanbaoerer/personal-agent/issues/41) · 实施基线 `b93e0ad`（MVP-01 实现 PR #43 已合并，CI run 44560344296 通过）。
+> 2026-11-20 · 总跟踪 [#41](https://github.com/yuanbaoerer/personal-agent/issues/41) · 实施基线 `b93e0ad`（MVP-01 PR #43 已合并）；MVP-02 PR #44 已合并至 `68f7756`，CI run 44573381332 通过。
 > 这是 v0.2 Reliable Core 主线内的近期私有试用检查点，**不是新版本发布或放宽 v0.2/v0.3/v0.4 的正式门槛**。本文优先决定近期任务顺序；长期设计保留。
 
 ## 1. 目标与边界
@@ -99,7 +99,7 @@ Web Search/Fetch 在 P0 后再做，复用工具执行路径。公开内容、�
 
 保留现有 CLI/TUI/API，不再扩展 Desktop、TUI 美化、远程多设备、DO 驱逐、Organization、完整 Coding Mode、多模型动态路由、自动记忆/向量检索、国际化/公开发行、插件生态。上述长期计划不删除，原 Issues 不关闭。MVP-P0 优先于原 P1/P2 中非阻断性工作；P1 增强可在真实闭环后做。
 
-每个功能 Issue 用 feature branch、独立 PR、CI、Review；真实验收附证据，禁止在测试缺失时关闭验收 Issue。描述代码与测试、失败复现、受影响不变量、已验证环境与未验证边界。更新 #41 checklist 与 README 事实基线，不提交秘密，不重建已存在模块，不做巨型 PR。#43 已交付 MVP-01 代码；下一开发 PR 为 #39，真实 E3/M02 验收与工程可并行。
+每个功能 Issue 用 feature branch、独立 PR、CI、Review；真实验收附证据，禁止在测试缺失时关闭验收 Issue。描述代码与测试、失败复现、受影响不变量、已验证环境与未验证边界。更新 #41 checklist 与 README 事实基线，不提交秘密，不重建已存在模块，不做巨型 PR。#43 已交付 MVP-01 代码，#44 已交付 MVP-02 代码；真实 E3/M02 验收与工程可并行。下一开发 PR 在 #10 与 #7 之间按 #41 选择，周期计划无人值守激活前必须先过 #7/#28。
 
 ## 6. 待 owner 确认 / 配置
 
