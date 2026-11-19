@@ -10,7 +10,7 @@
 npm run install:smoke
 ```
 
-脚本排除 `.git`、`node_modules`、`data`、`.env`、backups/exports/reports，执行 `npm ci`、typecheck、275 tests、`pa help`，再用合成 env 临时启动并检查 `/healthz`/API health。CI 的 `install-smoke` job 会执行同一脚本。它不代表第二开发者或真实 OS 安装包验收。
+脚本排除 `.git`、`node_modules`、`data`、`.env`、backups/exports/reports，执行 `npm ci`、typecheck、275 tests、`pa help`，再用合成 env 临时启动并检查 `/healthz`/API health。CI 的 `install-smoke` job 会执行同一脚本（首次 run `44509079800` 通过）。它不代表第二开发者或真实 OS 安装包验收。
 
 ## 1. 前提
 

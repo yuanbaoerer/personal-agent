@@ -421,7 +421,7 @@ npm run install:smoke
 | 安装 | `npm ci --no-audit --no-fund` |
 | 验证 | `npm run typecheck` + `npm test`（275 tests）+ `pa help` |
 | 启动 | 合成非敏感 env，临时 SQLite，`/healthz` 与 `/api/v1/health` 200，SIGTERM 关闭 |
-| CI | `install-smoke` Ubuntu job 执行同一脚本 |
+| CI | `install-smoke` Ubuntu job 执行同一脚本（run `44509079800` 通过） |
 
 边界：同一开发机上的 clean-room smoke；不是第二开发者、macOS/Windows 安装包或真实 Provider/Feishu E3。PA-16 保持 OPEN。
 
