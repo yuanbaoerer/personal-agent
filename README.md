@@ -46,7 +46,7 @@ npm start
 干净目录安装冒烟（不复制 `node_modules/.env/data/.git`，会执行 `npm ci`、typecheck、275 tests、CLI help、临时启动 + `/healthz`）：
 
 ```bash
-npm run install:smoke
+npm run install:smoke   # also run by the Ubuntu install-smoke CI job
 ```
 
 本地操作（服务启动后）：
