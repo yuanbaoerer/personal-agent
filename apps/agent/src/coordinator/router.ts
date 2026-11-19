@@ -101,6 +101,15 @@ export interface RouterDeps {
 
 const GITHUB_REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const TASK_FOCUS_PREFIX = "router.task_focus:";
+const REDIRECTABLE_CONTROL_ACTIONS: ReadonlySet<RouterDecision["action"]> = new Set([
+  "supplement_task",
+  "revise_task",
+  "cancel_task",
+  "forget_memory",
+  "cancel_reminder",
+  "confirm_schedule",
+  "cancel_schedule",
+]);
 
 /**
  * The router model supplies completion criteria, but a github.read task must
@@ -513,16 +522,7 @@ export class Router implements InboundHandler {
       );
       return { status: "done" };
     }
-    const redirectableControls: ReadonlySet<RouterDecision["action"]> = new Set([
-      "supplement_task",
-      "revise_task",
-      "cancel_task",
-      "forget_memory",
-      "cancel_reminder",
-      "confirm_schedule",
-      "cancel_schedule",
-    ]);
-    if (redirectableControls.has(decision.action)) {
+    if (REDIRECTABLE_CONTROL_ACTIONS.has(decision.action)) {
       // A read-only question misrouted as a control must not mutate anything.
       const query = inferStateQuery(context.text);
       if (query !== undefined) {
@@ -1909,6 +1909,17 @@ export class Router implements InboundHandler {
     const query = requested ?? inferStateQuery(text) ?? { target: "summary" };
     // An explicit owner flag wins over a model-proposed scope.
     const project = flagProject ?? query.project;
+    if (
+      project !== undefined &&
+      (query.target === "reminders" || query.target === "schedules")
+    ) {
+      this.#reply(
+        context,
+        "提醒和周期计划是 owner 级数据，不支持项目范围；请去掉项目筛选。",
+        "failure",
+      );
+      return;
+    }
 
     let taskId: string | undefined;
     if (query.target === "task") {

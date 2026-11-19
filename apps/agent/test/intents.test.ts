@@ -309,6 +309,26 @@ describe("natural language state intents", () => {
     assert.match(outbox(services), /summary reminder/);
   });
 
+  it("rejects a project filter for owner-level reminder reads", async () => {
+    const services = setup();
+    await services.reminders.create({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      text: "owner-level reminder",
+      dueAt: new Date(NOW.getTime() + 3_600_000).toISOString(),
+      timezone: "UTC",
+    });
+    services.model.push({
+      action: "query_status",
+      text: "",
+      query: { target: "reminders" },
+    });
+    await sendText(services, "--project=alpha 我有哪些提醒", "evt_intent_reminder_project");
+    const text = outbox(services);
+    assert.match(text, /不支持项目范围/);
+    assert.doesNotMatch(text, /owner-level reminder/);
+  });
+
   it("redirects a read question misrouted as cancel instead of mutating", async () => {
     const services = setup();
     const task = insertTask(services, TASK_A, "must survive", {
