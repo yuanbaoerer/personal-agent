@@ -529,7 +529,7 @@ export class Router implements InboundHandler {
         const ownerProject = extractProjectFlag(context.text);
         const requested = decision.task.mandate ?? { resources: ["chat"], tools: [] };
         const directQuery = inferStateQuery(context.text);
-        const sustained = /(?:分析|报告|总结|后台|持续|定期|每天|每周|周期)/.test(
+        const sustained = /(?:分析|报告|后台|持续|定期|每天|每周|周期)/.test(
           context.text,
         );
         if (

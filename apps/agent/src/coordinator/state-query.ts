@@ -242,7 +242,7 @@ export function resolveTaskReference(
   const all = tasks.listByOwner(ownerId, PREFIX_SCAN_LIMIT);
   const scoped = all.filter((task) => task.conversationId === conversationId);
 
-  if (/^[0-9a-f]{4,64}$/i.test(value) || /^[0-9a-f-]{8,64}$/i.test(value)) {
+  if (/^[0-9a-f]{8,64}$/i.test(value) || /^[0-9a-f][0-9a-f-]{7,63}$/i.test(value)) {
     const resolved = resolveTaskId(ownerId, value, tasks);
     if (resolved.status === "ok") {
       const task = all.find((item) => item.id === resolved.id);

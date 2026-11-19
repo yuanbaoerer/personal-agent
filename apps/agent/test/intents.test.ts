@@ -282,6 +282,32 @@ describe("natural language state intents", () => {
     assert.equal(services.runtime.opened.length, 0);
   });
 
+  it("redirects a simple state summary away from a Worker even when tools are proposed", async () => {
+    const services = setup();
+    insertTask(services, TASK_A, "summary target");
+    await services.reminders.create({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      text: "summary reminder",
+      dueAt: new Date(NOW.getTime() + 3_600_000).toISOString(),
+      timezone: "UTC",
+    });
+    services.model.push({
+      action: "create_task",
+      text: "ok",
+      task: {
+        goal: "用三点总结当前任务和提醒状态",
+        completionCriteria: "三点",
+        mandate: { resources: ["chat", "state"], tools: ["reminder.list"] },
+      },
+    });
+    await sendText(services, "用三点总结当前任务和提醒状态", "evt_intent_direct_summary");
+    assert.equal(services.tasks.listByOwner(services.owner.id).length, 1);
+    assert.equal(services.runtime.opened.length, 0);
+    assert.match(outbox(services), /summary target/);
+    assert.match(outbox(services), /summary reminder/);
+  });
+
   it("asks instead of guessing when a mutation reference is ambiguous", async () => {
     const services = setup();
     const alpha = insertTask(services, TASK_A, "alpha task");
