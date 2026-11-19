@@ -30,7 +30,7 @@
 | Magpie 用量/预算：可选读取 quotas/usage/limit，OpenCode Go 窗口低于阈值或 key 限额时阻止新模型请求，`/usage` 附带订阅窗口 | 当前 Magpie 工作区无 OpenCode Go 卡；真实配额/重置未验证 |
 | 周期计划：草稿→确认、daily/weekdays、IANA 时区/DST、确定性 runKey、暂停/恢复/取消/修改、计划级 repo 只读授权、DO wake | 真实 Feishu/GitHub G3、生产 alarm 观察 |
 | 完成验证器：GitHub Action 回执/来源 URL、Action receipt、结构校验；needs_review 终态 + `/ack` | 真实 G1/G3 外部判据、文本人审质量 |
-| 272 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务；本地 API/CLI/TUI PTY smoke、SSE HTTP test、SQLite 重开 cursor；macos-26-arm64 CI 连续成功（最新 run 44497249108）；windows-2025-vs2026 job 首次成功（win32 x64，272 tests） | 远程 TLS/设备配对、分布式限流、真实进程/DO 重连、Windows 实机、真实中断演练 |
+| 273 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务；本地 API/CLI/TUI PTY smoke、SSE HTTP test、SQLite 重开 cursor；macos-26-arm64 CI 连续成功（最新 run 44497249108）；windows-2025-vs2026 job 首次成功（win32 x64，272 tests） | 远程 TLS/设备配对、分布式限流、真实进程/DO 重连、Windows 实机、真实中断演练 |
 
 
 ## 2. 下一步待办
@@ -401,12 +401,12 @@ npm run export:data -- --data ./data --out ./exports/agent.json
 | 鉴权 | `ADMIN_TOKEN` bootstrap；`pa_client_tokens` 只存 SHA-256，scope `read/write/approve`，可撤销/可设 TTL；每 credential 600 + 每 IP 1200 req/min；日志不记录 token/body/query | `client-api.test.ts`、`client-http.test.ts` |
 | 控制面 | `/api/v1` health/status/tasks/cancel/revise/supplement/approvals/approve/deny/memories/reminders/diagnostics/usage/events/tokens | `client-api.test.ts` |
 | 幂等/一致性 | 任务创建/补充必须 `Idempotency-Key`；修订必须 `expectedRevision`；审批必须绑定 nonce/argsHash/revision；所有写操作仍走 TaskService/ActionService | `client-api.test.ts` |
-| 事件 | 轮询 cursor + SSE `/events/stream`（Last-Event-ID、心跳、1s replay、单连接重连 + SQLite 重开测试）；不含 goal/正文/Action args | `client-api.test.ts`、`client-http.test.ts`、`sse-restart.test.ts`、`cli.test.ts` |
+| 事件 | 轮询 cursor + SSE `/events/stream`（Last-Event-ID、心跳、1s replay、单连接重连 + SQLite 重开 + 独立 child SIGKILL）；不含 goal/正文/Action args | `client-api.test.ts`、`client-http.test.ts`、`sse-restart.test.ts`、`sse-kill.test.ts`、`cli.test.ts` |
 | CLI | `pa status/tasks/task/create/cancel/revise/supplement/approvals/approve/deny/memory/reminders/events/tokens/tui`；`--json` 稳定输出 | `cli.test.ts`；本地 smoke |
 | TUI | alternate screen、Tasks/Approvals/Reminders、j/k、cancel/approve/deny、增补/修订、提醒创建/文本/到期时间编辑/取消、换行/详情滚动、短终端底部提示、2s 刷新；只走 SDK | `tui.test.ts`；PTY 任务/提醒输入与 `q` 退出 |
 | 待定 | 远程 TLS/设备配对、代理层/分布式限流、SSE 跨进程重连/WS、macOS/Windows Terminal 实机、E3 | 需真实环境 |
 
-边界：E1；本地单 owner；TUI 覆盖任务取消、审批、增补、修订目标和提醒创建/文本/到期时间编辑/取消，并支持换行/详情滚动；完整平台验收仍 pending。全量 272 tests。
+边界：E1；本地单 owner；TUI 覆盖任务取消、审批、增补、修订目标和提醒创建/文本/到期时间编辑/取消，并支持换行/详情滚动；完整平台验收仍 pending。全量 273 tests。
 
 
 ## 3. 环境与密钥
