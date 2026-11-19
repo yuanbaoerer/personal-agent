@@ -308,6 +308,21 @@ describe("natural language state intents", () => {
     assert.match(outbox(services), /summary reminder/);
   });
 
+  it("asks to split a compound mutation-plus-query request", async () => {
+    const services = setup();
+    const task = insertTask(services, TASK_A, "compound target", {
+      status: "waiting_user",
+    });
+    services.model.push({
+      action: "cancel_task",
+      text: "",
+      taskId: task.id.slice(0, 8),
+    });
+    await sendText(services, "取消这个任务，然后查看提醒", "evt_intent_compound");
+    assert.equal(services.tasks.get(task.id)?.status, "waiting_user");
+    assert.match(outbox(services), /复合请求/);
+  });
+
   it("accepts an explicit task id prefix for reads and cancellation", async () => {
     const services = setup();
     const task = insertTask(services, TASK_A, "prefix target", {

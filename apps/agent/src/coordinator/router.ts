@@ -40,6 +40,7 @@ import {
   formatTaskCandidates,
   formatTaskNotFound,
   inferStateQuery,
+  isCompoundControlRequest,
   resolveReminderReference,
   resolveScheduleReference,
   resolveTaskId,
@@ -501,6 +502,17 @@ export class Router implements InboundHandler {
     context: { ownerId: string; conversationId: string; inboxId: string; text: string },
   ): Promise<EffectOutcome> {
     const now = this.#now().toISOString();
+    if (
+      decision.action !== "reply" &&
+      isCompoundControlRequest(context.text)
+    ) {
+      this.#reply(
+        context,
+        "这是一个复合请求：包含状态查询和改变操作。请拆成两步，先查询或先执行其中一项，我会逐项处理。",
+        "failure",
+      );
+      return { status: "done" };
+    }
     switch (decision.action) {
       case "reply": {
         // A model reply must not invent current state. Explicit read

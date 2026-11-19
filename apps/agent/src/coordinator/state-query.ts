@@ -564,6 +564,28 @@ export function inferStateQuery(text: string): StateQuery | undefined {
   return undefined;
 }
 
+const CONTROL_MUTATION =
+  /(?:取消|停|修改|更新|改|补充|删除|移除|忘记|暂停|恢复|确认|拒绝|设置提醒|加提醒|记住|保存|发送|提交)/;
+const CLAUSE_SPLIT = /[，,；;。]|(?:然后|接着|顺便|同时|之后)/;
+
+/**
+ * Detect a control mutation combined with a read request in one message.
+ * The Router asks the owner to split instead of silently executing half.
+ */
+export function isCompoundControlRequest(text: string): boolean {
+  const clauses = text
+    .split(CLAUSE_SPLIT)
+    .map((clause) => clause.trim())
+    .filter((clause) => clause.length > 0);
+  if (clauses.length < 2) {
+    return false;
+  }
+  return (
+    clauses.some((clause) => CONTROL_MUTATION.test(clause)) &&
+    clauses.some((clause) => inferStateQuery(clause) !== undefined)
+  );
+}
+
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
