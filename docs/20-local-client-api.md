@@ -151,6 +151,8 @@ npm run pa -- tui
 | 键 | 作用 |
 | --- | --- |
 | `j`/`k` 或上下 | 选择 |
+| `[` / `]` | 滚动详情（PageUp/PageDown 同义） |
+| `g` | 详情回到顶部 |
 | `tab` | Tasks → Approvals → Reminders → Tasks |
 | `n` + 文本 + Enter + ISO 到期时间 | 创建提醒（本地时区） |
 | `e` + 新文本 + Enter | 修改 pending 提醒文本 |
@@ -163,7 +165,7 @@ npm run pa -- tui
 | `r` | 刷新 |
 | `q` / Ctrl-C | 退出并恢复终端 |
 
-TUI 只通过 Client API，每 2 秒刷新；显示任务状态、目标、Action 参数/nonce/binding、提醒状态、unknown/confirm/effects 计数。输入提示固定在最后一行，短终端不会遮住；非 TTY 直接报错。没有动画、鼠标或后台常驻。
+TUI 只通过 Client API，每 2 秒刷新；显示任务状态、目标、Action 参数/nonce/binding、提醒状态、unknown/confirm/effects 计数。长 goal/criteria/args 自动换行，详情可用 `[`/`]` 滚动；输入提示固定在最后一行，短终端不会遮住。非 TTY 直接报错；没有动画、鼠标或后台常驻。
 
 ## 6. 验证与边界
 
@@ -173,9 +175,9 @@ TUI 只通过 Client API，每 2 秒刷新；显示任务状态、目标、Actio
 - `apps/agent/test/reminders.test.ts`：dueAt/时区更新、host timer 重排、timer 失败回滚、非 pending 拒绝。
 - `apps/agent/test/client-http.test.ts`：真实 HTTP mount、Bearer 鉴权、token 不进入日志。
 - `apps/agent/test/cli.test.ts`：CLI/SDK header/idempotency、SSE 数据帧、错误映射、approve 必须有 `--yes`。
-- `apps/agent/test/tui.test.ts`：帧渲染、任务/审批绑定、增补/提醒输入/编辑提示、短终端底部提示。
+- `apps/agent/test/tui.test.ts`：帧渲染、任务/审批绑定、增补/提醒输入/编辑提示、换行/详情滚动、短终端底部提示。
 - 本地 Node PTY smoke：`pa tui` 进入 alternate screen 并由 `q` 干净退出。
-- 全量 `npm test`：270 个确定性测试通过（2026-11-19）。
+- 全量 `npm test`：271 个确定性测试通过（2026-11-19）。
 
 仍 pending：
 

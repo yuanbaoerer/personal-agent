@@ -49,6 +49,7 @@ export interface TuiState {
   detail?: TaskDetail;
   status?: unknown;
   input?: InputState;
+  detailOffset: number;
   message: string;
   busy: boolean;
 }
@@ -60,6 +61,7 @@ export function initialTuiState(): TuiState {
     tasks: [],
     approvals: [],
     reminders: [],
+    detailOffset: 0,
     message: "Loading…",
     busy: true,
   };
@@ -71,6 +73,35 @@ function truncate(value: string, width: number): string {
   // rewrite the terminal or inject ANSI sequences.
   const clean = value.replace(/[\u0000-\u001f\u007f]/g, " ");
   return clean.length <= width ? clean : `${clean.slice(0, Math.max(0, width - 1))}…`;
+}
+
+function wrapText(value: string, width: number): string[] {
+  const clean = value.replace(/[\u0000-\u001f\u007f]/g, " ");
+  const limit = Math.max(1, width);
+  const words = clean.split(/\s+/).filter((word) => word.length > 0);
+  const lines: string[] = [];
+  let current = "";
+  for (const word of words) {
+    if (current.length === 0) {
+      current = word;
+    } else if (current.length + 1 + word.length <= limit) {
+      current += ` ${word}`;
+    } else {
+      lines.push(current);
+      current = word;
+    }
+  }
+  if (current.length > 0) lines.push(current);
+  if (lines.length === 0) return [""];
+  // A single long token (URL/JSON) still must not overflow the row.
+  return lines.flatMap((line) => {
+    if (line.length <= limit) return [line];
+    const chunks: string[] = [];
+    for (let index = 0; index < line.length; index += limit) {
+      chunks.push(line.slice(index, index + limit));
+    }
+    return chunks;
+  });
 }
 
 function shortId(id: string): string {
@@ -107,13 +138,13 @@ export function renderFrame(state: TuiState, width: number, height: number): str
   const lines: string[] = [];
   lines.push(`Personal Agent  ${state.busy ? "[busy]" : ""}`);
   lines.push(truncate(diagnosticsSummary(state.status), widthSafe));
-  lines.push(
+  const controls =
     state.mode === "tasks"
-      ? "Tasks  [tab] next  [j/k] select  [s] supplement  [v] revise  [c] cancel  [r] refresh  [q] quit"
+      ? "Tasks  [tab] next  [j/k] select  [s] supplement  [v] revise  [c] cancel  [/] scroll  [r] refresh  [q] quit"
       : state.mode === "approvals"
-        ? "Approvals  [tab] next  [j/k] select  [a] approve  [d] deny  [r] refresh  [q] quit"
-        : "Reminders  [tab] next  [j/k] select  [n] new  [e] edit  [d] due  [x] cancel  [r] refresh  [q] quit",
-  );
+        ? "Approvals  [tab] next  [j/k] select  [a] approve  [d] deny  [/] scroll  [r] refresh  [q] quit"
+        : "Reminders  [tab] next  [j/k] select  [n] new  [e] edit  [d] due  [x] cancel  [/] scroll  [r] refresh  [q] quit";
+  lines.push(truncate(controls, widthSafe));
   lines.push("─".repeat(widthSafe));
 
   const items =
@@ -169,38 +200,49 @@ export function renderFrame(state: TuiState, width: number, height: number): str
   }
 
   lines.push("─".repeat(widthSafe));
+  const detailLines: string[] = [];
   if (state.mode === "tasks" && state.detail !== undefined) {
     const task = state.detail.task;
-    lines.push(truncate(`Selected ${task.id}  ${task.status}  revision ${task.revision}`, widthSafe));
-    lines.push(truncate(`goal: ${task.goal}`, widthSafe));
-    lines.push(truncate(`criteria: ${task.completionCriteria}`, widthSafe));
+    detailLines.push(`Selected ${task.id}  ${task.status}  revision ${task.revision}`);
+    detailLines.push(...wrapText(`goal: ${task.goal}`, widthSafe));
+    detailLines.push(...wrapText(`criteria: ${task.completionCriteria}`, widthSafe));
     if (state.detail.actions.length > 0) {
-      lines.push("actions:");
-      for (const action of state.detail.actions.slice(0, 5)) {
-        lines.push(
-          truncate(
-            `- ${shortId(action.id)} ${action.tool} ${action.status}`,
-            widthSafe,
-          ),
+      detailLines.push("actions:");
+      for (const action of state.detail.actions) {
+        detailLines.push(
+          ...wrapText(`- ${shortId(action.id)} ${action.tool} ${action.status} ${JSON.stringify(action.args)}`, widthSafe),
         );
       }
     }
   } else if (state.mode === "reminders" && state.reminders.length > 0) {
     const reminder = state.reminders[Math.min(state.selected, state.reminders.length - 1)];
     if (reminder !== undefined) {
-      lines.push(truncate(`Selected ${reminder.id}  ${reminder.status}`, widthSafe));
-      lines.push(truncate(`due: ${reminder.dueAt}  timezone: ${reminder.timezone}`, widthSafe));
-      lines.push(truncate(`text: ${reminder.text}`, widthSafe));
+      detailLines.push(`Selected ${reminder.id}  ${reminder.status}`);
+      detailLines.push(...wrapText(`due: ${reminder.dueAt}  timezone: ${reminder.timezone}`, widthSafe));
+      detailLines.push(...wrapText(`text: ${reminder.text}`, widthSafe));
     }
   } else if (state.mode === "approvals" && state.approvals.length > 0) {
     const action = state.approvals[Math.min(state.selected, state.approvals.length - 1)];
     if (action !== undefined) {
-      lines.push(truncate(`Selected ${action.id}  ${action.tool}`, widthSafe));
-      lines.push(truncate(`args: ${JSON.stringify(action.args)}`, widthSafe));
-      lines.push(truncate(`expires: ${action.expiresAt}`, widthSafe));
-      lines.push(truncate(`nonce: ${action.nonce}`, widthSafe));
-      lines.push(truncate(`binding: ${action.argsHash} rev ${action.taskRevision}`, widthSafe));
+      detailLines.push(`Selected ${action.id}  ${action.tool}`);
+      detailLines.push(...wrapText(`args: ${JSON.stringify(action.args)}`, widthSafe));
+      detailLines.push(...wrapText(`expires: ${action.expiresAt}`, widthSafe));
+      detailLines.push(...wrapText(`nonce: ${action.nonce}`, widthSafe));
+      detailLines.push(...wrapText(`binding: ${action.argsHash} rev ${action.taskRevision}`, widthSafe));
     }
+  }
+  const available = Math.max(0, Math.max(1, height) - lines.length - 1);
+  if (available > 0 && detailLines.length > 0) {
+    const maxOffset = Math.max(0, detailLines.length - available);
+    const offset = Math.min(Math.max(0, state.detailOffset), maxOffset);
+    const visible = detailLines.slice(offset, offset + available);
+    if (offset > 0 && visible.length > 0) {
+      visible[0] = truncate(`↑ ${visible[0]}`, widthSafe);
+    }
+    if (offset + available < detailLines.length && visible.length > 0) {
+      visible[visible.length - 1] = truncate(`${visible[visible.length - 1]} ↓`, widthSafe);
+    }
+    lines.push(...visible);
   }
   const footer =
     state.input !== undefined
@@ -483,6 +525,7 @@ export async function runTui(client: ClientApiClient, io: TuiIo = {
       const next = (modes.indexOf(state.mode) + 1) % modes.length;
       state.mode = modes[next] ?? "tasks";
       state.selected = 0;
+      state.detailOffset = 0;
       state.detail = undefined;
       state.message = "Switched view.";
       draw();
@@ -490,6 +533,7 @@ export async function runTui(client: ClientApiClient, io: TuiIo = {
       return;
     }
     if (name === "j" || name === "down") {
+      state.detailOffset = 0;
       const length =
         state.mode === "tasks"
           ? state.tasks.length
@@ -503,8 +547,24 @@ export async function runTui(client: ClientApiClient, io: TuiIo = {
     }
     if (name === "k" || name === "up") {
       state.selected = Math.max(0, state.selected - 1);
+      state.detailOffset = 0;
       draw();
       void refresh();
+      return;
+    }
+    if (name === "[" || name === "pageup") {
+      state.detailOffset = Math.max(0, state.detailOffset - 3);
+      draw();
+      return;
+    }
+    if (name === "]" || name === "pagedown") {
+      state.detailOffset += 3;
+      draw();
+      return;
+    }
+    if (name === "g") {
+      state.detailOffset = 0;
+      draw();
       return;
     }
     if (name === "r") {

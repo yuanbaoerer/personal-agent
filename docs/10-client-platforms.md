@@ -83,7 +83,7 @@ Core 不应在普通业务流程中直接使用 os.platform() 分支和 OS 专�
 ## 6. 跨平台测试矩阵与验收
 
 ### CI 基线
-- 将现有 ubuntu-latest 单机 CI 扩展为 ubuntu-latest、macos runner、windows-latest；npm ci、tsc、确定性测试均通过。
+- 已有 ubuntu-latest 完整 CI；2026-11-19 新增 macOS job（npm ci、typecheck、test、secret scan）。Windows-latest 与完整的 macos 双架构验收仍 pending。
 - 按实际 runner 架构明确每份证据；macOS Intel 和 Apple Silicon 是两个不同 target；不能因同一个 macos-latest job 成功就宣称两个架构全部通过。
 - Windows 原生 smoke：SQLite 创建/重启/文件锁、Feishu 事件 normalize、CLI 子进程生命周期、路径与空格/中文文件名。
 - macOS x64/arm64 分别在真实机器或可信对应 runner 验证 Node/Pi 运行时、SQLite 恢复、CLI/TUI 行为。

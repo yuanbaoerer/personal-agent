@@ -107,6 +107,24 @@ describe("TUI frame", () => {
     assert.match(frame, /\[x\] cancel/);
   });
 
+  it("wraps long detail and exposes a scroll indicator", () => {
+    const state = initialTuiState();
+    const longTask = {
+      ...task,
+      goal: "check a very long goal that must wrap across several terminal rows without overflowing",
+      completionCriteria:
+        "criteria that also needs wrapping and should remain visible while the detail viewport moves",
+    } as TaskRecord;
+    state.tasks = [longTask];
+    state.detail = { task: longTask, assignments: [], actions: [action], inputs: [] };
+    state.detailOffset = 1;
+    state.status = { diagnostics: { effects: {} } };
+    state.message = "Ready.";
+    const frame = renderFrame(state, 52, 12);
+    assert.match(frame, /↑/);
+    assert.match(frame, /criteria|goal/);
+  });
+
   it("keeps the prompt visible when the terminal is short", () => {
     const state = initialTuiState();
     state.tasks = [task];
