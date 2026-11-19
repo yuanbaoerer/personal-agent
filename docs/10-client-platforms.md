@@ -1,6 +1,6 @@
 # 10 · 跨平台客户端与桌面部署规划（macOS / Windows）
 
-> 2026-11-14 规划修订。目标：一个 Personal Agent Core，多种客户端，macOS 和 Windows 都能够原生使用。本文是目标设计，不代表 CLI、TUI、Desktop 或本地运行环境已经完成。
+> 2026-11-14 规划修订；2026-11-19 状态更新。目标：一个 Personal Agent Core，多种客户端，macOS 和 Windows 都能够原生使用。**当前已有本地 Node 的最小 Client API、`pa` CLI 和 `pa tui`（E1）**；远程设备鉴权、SSE/WS、跨平台安装/键盘/终端验收和 Desktop 仍未完成。
 > 对应主规划：[07 · 长期路线图](07-long-term-roadmap.md)、[08 · 评测](08-evaluation.md)、[09 · 开源](09-open-source-plan.md)、[ADR-0001 · 运行时](adr/0001-runtime-hosting.md)。
 
 ## 1. 基本原则：One Agent Core / Multiple Clients / Cross-platform

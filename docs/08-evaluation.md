@@ -154,3 +154,16 @@ K13 与 K14 必须包含至少一个可控竞态复现测试；应用的锁、�
 新增 [13 · Model Routing & Gateway](13-model-routing-gateway.md) 定义的独立 `MRT01–MRT10` 合同评测：不同 Router/Worker/Assignment 的真实 Session 模型隔离、热更新不漂移、能力不满足时拒绝、Direct/Gateway 协议、路由组的实际模型来源、超时/流中断/工具副作用时的安全 Fallback、Task/Node 预算、数据出站安全、Node/Cloudflare 运行恢复，以及单模型与角色模型分配的成本质量对照。
 
 **统计口径**：MRT 与固定 40 场景、K01–K17、SEC01–SEC08、MODE01–MODE10 **各自统计**，不能把新增测试数量算作旧测试通过。至少验证两个真实 Provider 配置；Magpie Gateway 的流式、工具调用和多轮会话要有独立 E2/E3 证据，不能只测 `/v1/models`。模型请求结果未知时不盲目重新执行可能带外部副作用的请求，继续遵守 K03/K08–K14。每次报告明确 requestedModel、真实 observed model（未知则 unknown）、路由组、重试、token、费用依据、预算以及测试版本。
+
+## 13. 本地 Client API / CLI / TUI 补充（2026-11-19，E1）
+
+PA-17/18/19 的最小本地实现已接入：`/api/v1` 鉴权控制面、hashed device token（read/write/approve/revoke）、任务创建/取消/修订/补充、审批绑定、记忆/提醒、诊断/用量和可重放 event cursor；`pa` CLI 与 `pa tui` 复用同一 TypeScript SDK，不直接读取 SQLite。
+
+当前证据：
+
+- `client-api.test.ts`：Bearer/admin/token scope/revoke、任务/补充幂等冲突、stale revision、审批 nonce/argsHash/revision 绑定、错误 owner。
+- `client-http.test.ts`：真实 HTTP mount、鉴权负例、token 不进入日志。
+- `cli.test.ts`：SDK header/idempotency、CLI JSON、approve `--yes` 门槛、结构化错误。
+- `tui.test.ts`：任务/审批帧与绑定可见性；本地 PTY smoke 能进入 alternate screen 并由 `q` 复原。
+
+这**不是 K15/K16 通过**：K15 的双客户端并发 cancel/approve 与 K16 的 SSE/WebSocket 断线重连/重放上限尚未实测；event cursor 只覆盖轮询 replay。TUI 的 macOS Terminal/iTerm2、Windows Terminal/ConPTY、窄屏/无色和 E3 也未验收。

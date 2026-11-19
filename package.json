@@ -2,6 +2,9 @@
   "name": "personal-agent",
   "version": "0.1.0",
   "private": true,
+  "bin": {
+    "pa": "bin/pa"
+  },
   "type": "module",
   "workspaces": [
     "apps/*"
@@ -21,6 +24,7 @@
     "scan:secrets": "node scripts/scan-secrets.ts",
     "scan:secrets:history": "node scripts/scan-secrets.ts --history",
     "start": "node --env-file-if-exists=.env apps/agent/src/main.ts",
+    "pa": "node --env-file-if-exists=.env apps/agent/src/cli.ts",
     "dev:cloudflare": "wrangler dev --config infra/wrangler.jsonc",
     "deploy:dry-run": "wrangler deploy --config infra/wrangler.jsonc --dry-run --outdir .wrangler/dry-run",
     "deploy": "wrangler deploy --config infra/wrangler.jsonc"

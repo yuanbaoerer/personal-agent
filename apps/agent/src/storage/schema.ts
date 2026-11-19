@@ -417,6 +417,13 @@ const migrations: readonly (readonly string[])[] = [
     `CREATE INDEX pa_client_tokens_owner_idx
        ON pa_client_tokens (owner_id, revoked_at)`,
   ],
+  [
+    // Stable event cursor. SQLite rowid can change on VACUUM; audit seq is
+    // assigned by recordAudit and never reused.
+    `ALTER TABLE pa_audit ADD COLUMN seq INTEGER`,
+    `UPDATE pa_audit SET seq = rowid`,
+    `CREATE UNIQUE INDEX pa_audit_seq_idx ON pa_audit (seq)`,
+  ],
 ];
 
 /** Highest schema version this build can read/migrate. */

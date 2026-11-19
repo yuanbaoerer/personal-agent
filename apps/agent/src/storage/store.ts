@@ -690,11 +690,14 @@ export class Store {
   }
 
   recordAudit(event: AuditEvent): void {
+    const next =
+      this.#db.all<{ seq: number }>("SELECT COALESCE(MAX(seq), 0) + 1 AS seq FROM pa_audit")[0]
+        ?.seq ?? 1;
     this.#db.run(
       `INSERT INTO pa_audit
         (id, occurred_at, actor_id, event, subject_type, subject_id,
-         before_json, after_json, trace_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         before_json, after_json, trace_id, seq)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       randomUUID(),
       event.occurredAt,
       event.actorId ?? null,
@@ -704,6 +707,7 @@ export class Store {
       event.before === undefined ? null : JSON.stringify(event.before),
       event.after === undefined ? null : JSON.stringify(event.after),
       event.traceId,
+      Number(next),
     );
   }
 

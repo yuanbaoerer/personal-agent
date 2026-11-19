@@ -201,7 +201,7 @@ PA-13 的扩展契约已部分落地 E1：`MODEL_PROVIDER` 配置校验、实验
 下一步执行顺序：先 PA-01/02/03，合并通过后开展 PA-04/05/06；形成 v0.2 后验证 GitHub 真工具与连续自用。
 ## 11. 多终端与 macOS / Windows 兼容路线（2026-11-14 补充）
 
-Desktop、CLI、TUI、Web、IM 均应作为统一 Agent Core 的独立客户端，不得各自管理一套 Task/Memory/Approval 数据。长期支持 macOS Apple Silicon/Intel 与 Windows 11 x64 原生客户端及本机运行路径；Windows ARM64 先验证后承诺；Linux 继续作为服务器/CI 基线。v0.2 仍聚焦真实运行闭环；v0.3 增加 Client API/CLI，v0.4 逐步纳入 TUI 和跨平台验收；Desktop 先 Spike，正式发布可晚于 v0.4。完整支持矩阵、协议、OS adapter、K15–K17 与 PA-17～PA-22 见 [10 · 跨平台客户端规划](10-client-platforms.md)。
+Desktop、CLI、TUI、Web、IM 均应作为统一 Agent Core 的独立客户端，不得各自管理一套 Task/Memory/Approval 数据。长期支持 macOS Apple Silicon/Intel 与 Windows 11 x64 原生客户端及本机运行路径；Windows ARM64 先验证后承诺；Linux 继续作为服务器/CI 基线。v0.2 仍聚焦真实运行闭环；v0.3 增加 Client API/CLI（本地 E1 最小版已实现），v0.4 逐步纳入 TUI 和跨平台验收（最小 TUI 已在本地接入，平台验收未完成）；Desktop 先 Spike，正式发布可晚于 v0.4。完整支持矩阵、协议、OS adapter、K15–K17 与 PA-17～PA-22 见 [10 · 跨平台客户端规划](10-client-platforms.md)。
 
 ## 12. 全球开源社区准备度（2026-11-14 补充）
 

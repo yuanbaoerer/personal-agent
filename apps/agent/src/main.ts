@@ -2,6 +2,7 @@ import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
 import { createApp } from "./app.ts";
+import { ClientApiService } from "./client-api.ts";
 import { FeishuAdapter } from "./channels/feishu/adapter.ts";
 import { FeishuLongConnection } from "./channels/feishu/long-connection.ts";
 import { GitHubOAuthService } from "./personal/github-oauth.ts";
@@ -176,11 +177,30 @@ async function main(): Promise<void> {
     retryBaseMs: config.outbox.retryBaseMs,
   });
 
+  const clientApi =
+    owner === undefined || config.adminToken === undefined
+      ? undefined
+      : new ClientApiService({
+          store,
+          services: app,
+          ownerId: owner.id,
+          adminToken: config.adminToken,
+        });
+  if (clientApi === undefined) {
+    logger.info("client_api_disabled", {
+      message:
+        owner === undefined || config.adminToken === undefined
+          ? "client API needs a bound owner and ADMIN_TOKEN"
+          : "client API disabled",
+    });
+  }
+
   const server = createHttpServer({
     feishu,
     ingress: app.ingress,
     logger,
     adminToken: config.adminToken,
+    clientApi,
     oauth:
       githubOAuth === undefined
         ? undefined

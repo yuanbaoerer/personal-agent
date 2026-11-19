@@ -1,6 +1,6 @@
 # Personal Agent
 
-> **多端与跨平台规划（2026-11-14）**：长期支持 macOS（Apple Silicon / Intel）和 Windows 11 x64 的 CLI / TUI / Desktop，采用一个 Agent Core + 统一 Client API，而非多套独立任务状态。详见 [10 · 跨平台客户端规划](docs/10-client-platforms.md)。这仍是待实施目标，当前服务端可用性以本文下方现状为准。
+> **多端与跨平台规划（2026-11-14，2026-11-19 更新）**：长期支持 macOS（Apple Silicon / Intel）和 Windows 11 x64 的 CLI / TUI / Desktop，采用一个 Agent Core + 统一 Client API。**本地 Node 的最小 Client API / `pa` CLI / `pa tui` 已实现（E1）**；远程设备鉴权、SSE 推送、Windows Terminal 实机验收和 Desktop 仍 pending。详见 [10 · 跨平台客户端规划](docs/10-client-platforms.md) 与 [20 · 本地 Client API](docs/20-local-client-api.md)。
 
 > **长期规划更新（2026-11-14）**：当前唯一工程主线为 v0.2 Reliable Core。完整的长期自用与开源规划见 [07 · 长期路线图](docs/07-long-term-roadmap.md)，评测门槛见 [08 · Evaluation](docs/08-evaluation.md)，开源与部署见 [09 · Open-source](docs/09-open-source-plan.md)，宿主选型见 [ADR-0001](docs/adr/0001-runtime-hosting.md)。这份规划不代表功能已经完成，下面的“当前阶段”仍为事实基线。实施任务以 GitHub Issues 为准。
 
@@ -28,6 +28,7 @@
 | 提醒 / 记忆 | 一次性提醒、runKey、TTL、聊天取消/列表；显式记忆查改删；project 作用域（全局/项目）与 Worker 按 Mandate.project 注入；模型解读的记忆/提醒先进入最长 10 分钟确认（提醒以到期时间为上限），owner 校验，取消/过期不写入 | 真实模型误触发/提示注入负例、语义检索与周期提醒未做 |
 | 备份/校验 | `npm run backup`：`VACUUM INTO` 复制 agent/pi SQLite，manifest SHA-256 + integrity_check，目录/文件 700/600；`--verify` 重新校验 | 恢复/升级自动化、加密与保留期策略未做 |
 | 本地服务 | `POST /webhooks/feishu`、`GET /healthz`、Node SQLite + 进程内 pi-durable | 配置 `OPENCODE_API_KEY` 后本地执行模型任务；未配置时模型任务明确失败 |
+| 本地 Client API / CLI / TUI | `/api/v1` 鉴权控制面，device token（hash + scope + revoke），任务/审批/记忆/提醒/诊断/事件游标；`pa` CLI；`pa tui` 任务/审批面板 | E1 本地；远程 TLS/设备配对、SSE/WS、Windows Terminal/ConPTY 与 E3 未验证；客户端不直接读 SQLite |
 | Cloudflare DO | `Assistant` + PiHarness + Lifecycle、DO SQLite 中的 `pa_*`、webhook、jobs | 已真实部署；飞书回调入口超时待解；驱逐恢复未验证 |
 | 本地真实模型 | `opencode-go/deepseek-v4.1-flash`，本地 key；`apps/agent/src/runtime/node-pi.ts` 是 Node 运行时 | spike 单会话/三会话并发通过；应用侧目前只有 faux provider 的确定性测试，真实模型端到端待验证 |
 | Cloudflare DO 运行 | 真实部署 + 真实模型 | `/healthz`、`/admin/*` 鉴权、`/ask` 真实模型通过；飞书侧未切到 Worker |
@@ -41,6 +42,19 @@ npm run typecheck
 cp .env.example .env   # 填入飞书应用凭据与主人 open_id
 npm start
 ```
+
+本地操作（服务启动后）：
+
+```bash
+npm run pa -- status
+npm run pa -- tasks
+npm run pa -- approvals
+npm run pa -- tui
+# 需要 copy 一次 token 时：
+npm run pa -- tokens create --name laptop --scopes read,write
+```
+
+CLI/TUI 只走 `http://127.0.0.1:8787/api/v1`，使用 `PA_API_TOKEN`（或本地 bootstrap 的 `ADMIN_TOKEN`）；不会直接打开 SQLite。详见 [20 · 本地 Client API](docs/20-local-client-api.md)。
 
 默认数据库为 `./data/agent.sqlite`（`pa_*` 应用状态）与 `./data/pi.sqlite`（`pi_*` Pi 会话），两者都要备份；`OWNER_FEISHU_OPEN_ID` 是显式操作员绑定，不从昵称或消息正文推断。宿主方向见 [ADR-0001](docs/adr/0001-runtime-hosting.md)。
 
@@ -108,7 +122,7 @@ curl -fsS http://127.0.0.1:8787/healthz
 - `pa_memories` 增加 `project` 作用域（空为全局）；`/remember [--project=名称] key=value`、`/memory [--project=名称]`、`/forget [--project=名称] key`；同一 key 可在不同项目并存。
 - Worker prompt 只注入全局 + 当前 Task `mandate.project` 的记忆，最多 20 条/每条 1000 字符，不注入其他项目；Router 不注入记忆。项目名只允许 1–64 位字母/数字/点/下划线/连字符。
 - 模型 `save_memory` 可带 project，确认卡显示项目后再写入；`/confirm` 仍按项目隔离复核。
-- `npm test`：249 个确定性测试通过（当前）。
+- `npm test`：262 个确定性测试通过（当前）；包含 Client API/CLI/TUI 契约。
 - 证据边界：E1；真实模型误触发/提示注入负例、语义检索与项目权限模型仍 pending。
 
 **2026-11-18 验证（PA-07 部分）：**
@@ -160,7 +174,7 @@ curl -fsS http://127.0.0.1:8787/healthz
 - Node 入口新增 GitHub OAuth App 流程：`/oauth/github/start`、`/oauth/github/callback`、`/oauth/github/status`、`/oauth/github/disconnect`；admin token 保护 start/status/disconnect，state 一次性 10 分钟，回调只换 token。
 - OAuth token 使用 AES-256-GCM 加密写入 `pa_github_credentials`，`github.read` 每次执行时解密；不写日志、不返回 status。浏览器打开 `/oauth/github`，输入一次 `ADMIN_TOKEN` 后即可点击连接，无需 curl/URL query token。
 - 保留 `GITHUB_ALLOWED_REPOS` 白名单；OAuth 不等于全仓库访问。`repo` scope 较宽，应用只发 GET；私有仓库细粒度只读仍需 GitHub App。
-- 249 个确定性测试通过；真实 OAuth App/回调/G1 仍需配置与验收。
+- 262 个确定性测试通过；本地 Client API/CLI/TUI 已接 HTTP seam；真实 OAuth App/回调/G1 仍需配置与验收。
 - 文档：[19 · GitHub OAuth](docs/19-github-oauth.md)。
 
 **2026-11-18 验证（PA-15 开源治理，E1 部分）：**
@@ -271,6 +285,7 @@ flowchart TB
 | [05 · JD 附录](docs/05-jd-appendix.md) | 原始岗位样本，不作为功能清单 |
 | [12 · Mode Architecture](docs/12-mode-architecture.md) | WorkProfile × ExecutionStrategy：Coding / General / Research 与智能组织工作流（设计提案，未实现） |
 | [13 · Model Routing & Gateway](docs/13-model-routing-gateway.md) | ModelPolicy、Router/Worker 会话级模型绑定、Magpie 可选中转、Fallback 与成本评测（长期设计，未实现） |
+| [20 · 本地 Client API / CLI / TUI](docs/20-local-client-api.md) | `/api/v1`、device token/scope、`pa` 命令、TUI 按键与安全边界（E1） |
 | [本地 spike](spikes/pi-durable-smoke/README.md) | Pi 本地验证与证据边界 |
 
 ## 已有 spike

@@ -1,12 +1,12 @@
 # 15 · 实施进度与待决策事项
 
-> 更新：2026-11-18。仅列需要主人/产品负责人决定的事项；工程可确定的内容仍直接实施。
+> 更新：2026-11-19。仅列需要主人/产品负责人决定的事项；工程可确定的内容仍直接实施。
 
 ## 1. 当前进度
 
 | 项 | 状态 | 证据 |
 | --- | --- | --- |
-| PA-01～PA-09 核心闭环 | E1，部分 E2 | 230 个确定性测试；见各 Issue |
+| PA-01～PA-09 核心闭环 | E1，部分 E2 | 262 个确定性测试；见各 Issue |
 | PA-10 确认/项目记忆 | E1 | `e9aee02` + `4f9047a`；记忆 global/project 隔离、修订保留 project、Worker 注入 |
 | PA-11 固定 40 场景目录 + JSON/Markdown 报告 | E1 | `evals/scenarios.ts`、`scripts/eval-report.ts`；37/40 确定性执行通过，3 条真实 pending |
 | PA-11 真实模型 10×3、G1–G3 E3、7 天自用 | 未开始 | 需 D01–D04 决策与真实凭据 |
@@ -16,6 +16,8 @@
 | PA-15 开源治理 | E1 部分 | `7017ca4`；SECURITY/CONTRIBUTING/CHANGELOG/模板、工作树/history secret scan、许可清单；LICENSE/历史/visibility pending |
 | 真实飞书验证修复 | 已提交 | `9f2e9a1` 裸 `ack`；`1ef8e81` 多行 slash 命令；短提醒投递通过 |
 | GitHub OAuth | E1 已实现，当前未配置 | `c0cf4d5` + `b83ca96`；OAuth App start/callback/status/disconnect、浏览器 admin 登录、AES-GCM token、执行时 provider；真实 OAuth/G1 pending |
+| PA-17 Client API / PA-18 CLI | E1 最小实现 | 待提交（2026-11-19）；`/api/v1`、device token/scope/revoke、幂等/修订/审批绑定、事件 cursor、`pa` CLI；远程 TLS/SSE 与 E3 pending |
+| PA-19 TUI | E1 最小实现 | 待提交（2026-11-19）；任务/审批切换、取消/批准/拒绝二次确认、PTY smoke；平台终端与完整操作 pending |
 | PA-12/PA-13 部分 | E1/pending | 见路线图 |
 
 固定 40 场景分类为渠道 8、任务 10、权限 10、恢复 8、记忆 4。K01–K14 映射由 `evals/scenarios.ts` 维护；pending 不计入成功分母。报告命令：
@@ -187,9 +189,9 @@ npm run eval:report:critical  # CI 关键集
 
 ### D23 TUI 优先级与交付顺序
 
-- 已规划：PA-17 Client API/SDK（v0.3）→ PA-18 CLI（v0.3）→ PA-19 TUI（v0.4）→ PA-20 Desktop；TUI 复用 Client API，不直接访问 SQLite。
-- 需决定：是否把 TUI 提前到当前阶段。提前会需要先做 Client API/设备鉴权和事件订阅，否则 TUI 会成为第二套状态/权限实现；也会推迟 PA-16 发布候选。
-- 建议：保持顺序，先做最小 Client API + CLI；CLI 已能显著改善工程验证，TUI 在其后做任务/审批/告警面板。
+- 已实施：PA-17 最小 Client API/SDK + PA-18 `pa` CLI + PA-19 最小 `pa tui`；TUI 复用 Client API，不直接访问 SQLite。
+- 仍待决定：是否把 TUI 完整版（修订/提醒编辑、SSE/WS、多设备）提前到 PA-16 发布候选之前；这会扩大跨平台验收范围并推迟自托管发布。
+- 建议：先以 CLI/TUI 最小版做本地验证；PA-19 完整验收和 Windows/macOS 终端证据另列，不把它们当作 Client API 的阻塞项。
 - [ ] 已审核：________________
 
 ## 3. 决策后的实施顺序

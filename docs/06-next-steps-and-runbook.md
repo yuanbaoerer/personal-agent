@@ -30,7 +30,8 @@
 | Magpie 用量/预算：可选读取 quotas/usage/limit，OpenCode Go 窗口低于阈值或 key 限额时阻止新模型请求，`/usage` 附带订阅窗口 | 当前 Magpie 工作区无 OpenCode Go 卡；真实配额/重置未验证 |
 | 周期计划：草稿→确认、daily/weekdays、IANA 时区/DST、确定性 runKey、暂停/恢复/取消/修改、计划级 repo 只读授权、DO wake | 真实 Feishu/GitHub G3、生产 alarm 观察 |
 | 完成验证器：GitHub Action 回执/来源 URL、Action receipt、结构校验；needs_review 终态 + `/ack` | 真实 G1/G3 外部判据、文本人审质量 |
-| 249 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务 | 客户端收到确认、真实中断演练 |
+| 262 个确定性测试、typecheck、DO dry-run、workerd webhook/鉴权/真实模型任务；本地 API/CLI/TUI PTY smoke | 远程 TLS/设备配对、SSE、Windows Terminal、真实中断演练 |
+
 
 ## 2. 下一步待办
 
@@ -393,6 +394,21 @@ npm run export:data -- --data ./data --out ./exports/agent.json
 
 边界：E1；真实 GitHub OAuth/G1 未通过。PA-07/PA-13 仍 OPEN。
 
+### 2.21 2026-11-19 实施进展（PA-17 Client API / PA-18 CLI / PA-19 TUI 最小版，E1）
+
+| 内容 | 实现 | 证据 |
+| --- | --- | --- |
+| 鉴权 | `ADMIN_TOKEN` bootstrap；`pa_client_tokens` 只存 SHA-256，scope `read/write/approve`，可撤销；日志不记录 token/body/query | `client-api.test.ts`、`client-http.test.ts` |
+| 控制面 | `/api/v1` health/status/tasks/cancel/revise/supplement/approvals/approve/deny/memories/reminders/diagnostics/usage/events/tokens | `client-api.test.ts` |
+| 幂等/一致性 | 任务创建/补充必须 `Idempotency-Key`；修订必须 `expectedRevision`；审批必须绑定 nonce/argsHash/revision；所有写操作仍走 TaskService/ActionService | `client-api.test.ts` |
+| 事件 | 轮询 `after` cursor，返回 event/subject/trace/time，不含 goal/正文/Action args | `client-api.test.ts` |
+| CLI | `pa status/tasks/task/create/cancel/revise/supplement/approvals/approve/deny/memory/reminders/events/tokens/tui`；`--json` 稳定输出 | `cli.test.ts`；本地 smoke |
+| TUI | alternate screen、任务/审批切换、j/k、cancel/approve/deny 二次确认、2s 刷新；只走 SDK | `tui.test.ts`；PTY `q` 干净退出 |
+| 待定 | 远程 TLS/设备配对、速率限制、SSE/WS、macOS/Windows Terminal 实机、TUI 修订/提醒编辑、E3 | 需真实环境 |
+
+边界：E1；本地单 owner；TUI 最小版只覆盖任务取消与审批，不代表 PA-19 全部验收。全量 262 tests。
+
+
 ## 3. 环境与密钥
 
 ```bash
@@ -418,6 +434,7 @@ cp infra/.dev.vars.example infra/.dev.vars  # 本地 workerd
 | `MAGPIE_URL` / `MAGPIE_GATEWAY_KEY` / `MAGPIE_MIN_REMAINING_PERCENT` | 可选 Magpie 用量/预算；URL 例 `http://127.0.0.1:3425`；默认 key `magpie-personal-agent`；窗口剩余低于百分比（默认 5）时暂停新模型请求 |
 | `DATABASE_PATH` | 本地 Node SQLite（`pa_*` 应用状态），默认 `./data/agent.sqlite` |
 | `PI_DATABASE_PATH` | Pi 会话库（`pi_*`），默认 `./data/pi.sqlite`；与上一项成对备份 |
+| `PA_API_URL` / `PA_API_TOKEN` | CLI/TUI 目标与 device token；未设置 token 时回退 `ADMIN_TOKEN`；不要放命令行参数 |
 | `OUTBOX_*` | 租约、重试次数、退避 |
 
 `.env`、`infra/.dev.vars` 已在 `.gitignore`；不要提交、不要贴日志。密钥轮换时同时更新 `.env`、`infra/.dev.vars` 和 `wrangler secret put`。

@@ -1,0 +1,7 @@
+#!/usr/bin/env node
+try {
+  process.loadEnvFile?.(".env");
+} catch {
+  // .env is optional.
+}
+await import("../apps/agent/src/cli.ts");

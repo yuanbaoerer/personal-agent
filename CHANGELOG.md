@@ -12,6 +12,7 @@ All notable changes are recorded here. This project does not yet have a stable r
 - Optional Magpie quota/budget gating; Docker/Compose self-host path and preflight.
 - Fixed 40-scenario deterministic evaluation catalog and JSON/Markdown reports.
 - Backup manifest v2, verified restore, agent JSON export, secret scanner, governance/security docs.
+- Local authenticated `/api/v1` Client API + TypeScript SDK, `pa` CLI, and minimal `pa tui`; device token hashes/scopes/revocation, idempotent task/input operations, bound approvals, and replayable event cursor.
 
 ## Version history
 
