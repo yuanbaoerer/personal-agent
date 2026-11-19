@@ -46,7 +46,7 @@ cp .env.example .env   # 填入飞书应用凭据与主人 open_id
 npm start
 ```
 
-干净目录安装冒烟（不复制 `node_modules/.env/data/.git`，会执行 `npm ci`、typecheck、356 tests、CLI help、临时启动 + `/healthz`）：
+干净目录安装冒烟（不复制 `node_modules/.env/data/.git`，会执行 `npm ci`、typecheck、360 tests、CLI help、临时启动 + `/healthz`）：
 
 ```bash
 npm run install:smoke   # also run by the Ubuntu install-smoke CI job
@@ -131,7 +131,7 @@ curl -fsS http://127.0.0.1:8787/healthz
 - `pa_memories` 增加 `project` 作用域（空为全局）；`/remember [--project=名称] key=value`、`/memory [--project=名称]`、`/forget [--project=名称] key`；同一 key 可在不同项目并存。
 - Worker prompt 只注入全局 + 当前 Task `mandate.project` 的记忆，最多 20 条/每条 1000 字符，不注入其他项目；Router 不注入记忆。项目名只允许 1–64 位字母/数字/点/下划线/连字符。
 - 模型 `save_memory` 可带 project，确认卡显示项目后再写入；`/confirm` 仍按项目隔离复核。
-- `npm test`：356 个确定性测试通过（当前）；`npm run install:smoke` 在临时干净副本通过。包含 Client API/CLI/TUI 契约；macos-26-arm64 与 windows-2025-vs2026 CI 均已通过；SSE child/main SIGKILL/重启测试通过。
+- `npm test`：360 个确定性测试通过（当前）；`npm run install:smoke` 在临时干净副本通过。包含 Client API/CLI/TUI 契约；macos-26-arm64 与 windows-2025-vs2026 CI 均已通过；SSE child/main SIGKILL/重启测试通过。
 - 证据边界：E1；真实模型误触发/提示注入负例、语义检索与项目权限模型仍 pending。
 
 **2026-11-18 验证（PA-07 部分）：**
@@ -195,7 +195,7 @@ curl -fsS http://127.0.0.1:8787/healthz
 - Review 复核（`db81e0c`）：修复 mixed GitHub+state 永远 `needs_review`、修订可移除项目 scope、补充后旧快照仍通过、tail/empty page 回执、reconcile 未复核授权并回传完整状态、项目查询 1000 行截断、Client API 项目名校验不一致，以及预算耗尽时 mutation 被确定性状态快照吞掉。
 - 真实模型/飞书（代码基线 `d359dc8`）：`opencode-go/deepseek-v4.1-flash` 对“用三点总结当前任务和提醒状态”选择 `query_status`，确定性快照回执被真实飞书 API 接受；显式后台任务正确生成 `resources:["chat","state"]`、`tools:["state.summary","reminder.list"]` 与 `state-read` criteria，两个回执自动执行，最终 `state-read` succeeded，报告引用两个 `snapshotHash`，真实飞书接受最终结果（修复前同类任务因 `reminder.list` 快照缺少 scope.project 正确进入 `needs_review`）。
 - 边界：真实运行使用 Node + 真实模型 + 真实飞书出站 API + 真实 webhook token/app_id/owner 校验，但入站事件由本地按 Feishu 2.0 结构注入，不是 owner 在飞书客户端键入；`.env` 未配置 `FEISHU_ENCRYPT_KEY`，签名头路径未执行。因此记为 E2+/E3-partial，不标记完整 E3/M02 通过。
-- 状态（2026-11-20）：MVP-01 PR #43、MVP-02 PR #44 与 Intent Handler PR #46 已合并；确定性测试 356 项与 typecheck 通过；state-read 新增结构化 `stateClaims` 与回执字段对照，自由文本仍标记未独立核验。真实 E3 owner 键入仍 pending，MVP-01/M02 checklist 不勾选。
+- 状态（2026-11-20）：MVP-01 PR #43、MVP-02 PR #44 与 Intent Handler PR #46 已合并；确定性测试 360 项与 typecheck 通过；state-read/GitHub 新增结构化 `stateClaims`/`githubClaims` 与回执字段对照，自由文本仍标记未独立核验。真实 E3 owner 键入仍 pending，MVP-01/M02 checklist 不勾选。
 
 **2026-11-18 验证（PA-15 开源治理，E1 部分）：**
 

@@ -91,6 +91,43 @@ function insertSucceededAction(
   return action;
 }
 
+function insertSucceededGithubList(
+  services: TestServices,
+  taskId: string,
+  assignment: ReturnType<typeof claim>,
+  operation: "issues" | "pulls" | "commits",
+  items: Record<string, unknown>[],
+) {
+  const repo = "owner/repo";
+  const { action } = services.actions.insert({
+    ownerId: services.owner.id,
+    conversationId: services.conversation.id,
+    taskId,
+    taskRevision: assignment.assignment.taskRevision,
+    fencingToken: assignment.assignment.fencingToken,
+    tool: "github.read",
+    args: { operation, repo },
+    argsHash: `hash-${operation}`,
+    expiresAt: "2026-01-01T00:10:00.000Z",
+    nonce: `nonce-${Math.random()}`,
+    createdAt: START.toISOString(),
+  });
+  services.store.db.run(
+    `UPDATE pa_actions SET status = 'succeeded', evidence_json = ?,
+       external_ref = ?, updated_at = ? WHERE id = ?`,
+    JSON.stringify({
+      operation,
+      repo,
+      source: `https://github.com/${repo}`,
+      items,
+    }),
+    `https://github.com/${repo}`,
+    START.toISOString(),
+    action.id,
+  );
+  return action;
+}
+
 function ready(
   summary = "repo checked",
   evidence: { kind: string; value: string }[] = [
@@ -105,6 +142,60 @@ function ready(
 }
 
 describe("TaskCompletionVerifier", () => {
+  it("parses only well-formed GitHub claims", () => {
+    const report = parseWorkerReport(
+      JSON.stringify({
+        status: "ready",
+        summary: "ok",
+        evidence: [{ kind: "github", value: "https://github.com/owner/repo" }],
+        githubClaims: [
+          {
+            kind: "github_item",
+            repo: "Owner/Repo",
+            operation: "issues",
+            item: 12,
+            field: "state",
+            value: "open",
+          },
+          {
+            kind: "github_item",
+            repo: "owner/repo",
+            operation: "commits",
+            item: "abcdef",
+            field: "message",
+            value: "fix",
+          },
+          {
+            kind: "github_item",
+            repo: "owner/repo",
+            operation: "issues",
+            item: 13,
+            field: "merged",
+            value: true,
+          },
+        ],
+      }),
+    );
+    assert.deepEqual(report?.githubClaims, [
+      {
+        kind: "github_item",
+        repo: "owner/repo",
+        operation: "issues",
+        item: "12",
+        field: "state",
+        value: "open",
+      },
+      {
+        kind: "github_item",
+        repo: "owner/repo",
+        operation: "commits",
+        item: "abcdef",
+        field: "message",
+        value: "fix",
+      },
+    ]);
+  });
+
   it("preserves optional report metadata without trusting it", () => {
     const report = parseWorkerReport(
       JSON.stringify({
@@ -195,8 +286,113 @@ describe("TaskCompletionVerifier", () => {
     assert.equal(current?.status, "succeeded");
     assert.equal(current?.verification?.verdict, "succeeded");
     assert.equal(current?.verification?.verifierVersion, VERIFIER_VERSION);
-    assert.equal(current?.verification?.externalFactsVerified, true);
+    assert.equal(current?.verification?.externalFactsVerified, false);
+    assert.match(current?.verification?.reason ?? "", /free-text claims/);
     assert.match(current?.verification?.evidenceRefs.join(",") ?? "", /github\.com\/owner\/repo/);
+  });
+
+  it("accepts an issue claim that matches the GitHub receipt", () => {
+    const services = setup();
+    const task = createTask(services);
+    const assignment = claim(services);
+    insertSucceededGithubList(services, task.id, assignment, "issues", [
+      { number: 12, title: "bug", state: "open", author: "alice", url: "https://github.com/owner/repo/issues/12" },
+    ]);
+    services.taskService.report(
+      assignment.assignment.id,
+      assignment.assignment.fencingToken,
+      assignment.assignment.taskRevision,
+      {
+        ...ready(),
+        githubClaims: [
+          {
+            kind: "github_item",
+            repo: "owner/repo",
+            operation: "issues",
+            item: "12",
+            field: "state",
+            value: "open",
+          },
+        ],
+      },
+    );
+    const current = services.tasks.get(task.id);
+    assert.equal(current?.status, "succeeded");
+    assert.ok(
+      current?.verification?.checked.includes("claim:github:issues:state"),
+    );
+    assert.ok(
+      current?.verification?.checked.includes("claim:free_text_unverified"),
+    );
+    assert.equal(current?.verification?.externalFactsVerified, false);
+  });
+
+  it("rejects an issue state that conflicts with the GitHub receipt", () => {
+    const services = setup();
+    const task = createTask(services);
+    const assignment = claim(services);
+    insertSucceededGithubList(services, task.id, assignment, "issues", [
+      { number: 12, title: "bug", state: "open", author: "alice", url: "https://github.com/owner/repo/issues/12" },
+    ]);
+    services.taskService.report(
+      assignment.assignment.id,
+      assignment.assignment.fencingToken,
+      assignment.assignment.taskRevision,
+      {
+        ...ready(),
+        githubClaims: [
+          {
+            kind: "github_item",
+            repo: "owner/repo",
+            operation: "issues",
+            item: "12",
+            field: "state",
+            value: "closed",
+          },
+        ],
+      },
+    );
+    const current = services.tasks.get(task.id);
+    assert.equal(current?.status, "needs_review");
+    assert.ok(
+      current?.verification?.missing.some((item) =>
+        item.startsWith("claim:github_field_mismatch:issues:12:state"),
+      ),
+    );
+  });
+
+  it("rejects a claim for an item absent from the GitHub receipt", () => {
+    const services = setup();
+    const task = createTask(services);
+    const assignment = claim(services);
+    insertSucceededGithubList(services, task.id, assignment, "pulls", [
+      { number: 7, title: "pr", state: "open", merged: false },
+    ]);
+    services.taskService.report(
+      assignment.assignment.id,
+      assignment.assignment.fencingToken,
+      assignment.assignment.taskRevision,
+      {
+        ...ready(),
+        githubClaims: [
+          {
+            kind: "github_item",
+            repo: "owner/repo",
+            operation: "pulls",
+            item: "8",
+            field: "merged",
+            value: false,
+          },
+        ],
+      },
+    );
+    const current = services.tasks.get(task.id);
+    assert.equal(current?.status, "needs_review");
+    assert.ok(
+      current?.verification?.missing.some((item) =>
+        item.startsWith("claim:github_item_missing:pulls:8"),
+      ),
+    );
   });
 
   it("rejects fabricated evidence kinds and mismatched report sources", () => {
