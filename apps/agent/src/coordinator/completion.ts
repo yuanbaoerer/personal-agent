@@ -311,43 +311,53 @@ function validateGithubClaim(
   claim: GithubClaim,
   actions: readonly ActionRecord[],
 ): string | undefined {
-  const action = actions.find(
+  const candidates = actions.filter(
     (candidate) =>
       typeof candidate.args.repo === "string" &&
       candidate.args.repo.toLowerCase() === claim.repo &&
       candidate.args.operation === claim.operation,
   );
-  if (action === undefined) {
+  if (candidates.length === 0) {
     return `github_action_missing:${claim.repo}:${claim.operation}`;
   }
-  const evidence = action.evidence;
-  const items = evidence?.items;
-  if (!Array.isArray(items)) {
-    return `github_items_missing:${claim.operation}`;
+  let found = false;
+  let fieldSeen = false;
+  for (const action of candidates) {
+    const items = action.evidence?.items;
+    if (!Array.isArray(items)) {
+      continue;
+    }
+    for (const candidate of items) {
+      if (
+        typeof candidate !== "object" ||
+        candidate === null ||
+        Array.isArray(candidate)
+      ) {
+        continue;
+      }
+      const item = candidate as Record<string, unknown>;
+      const matchesItem =
+        claim.operation === "commits"
+          ? typeof item.sha === "string" && item.sha.startsWith(claim.item)
+          : Number(item.number) === Number(claim.item);
+      if (!matchesItem) {
+        continue;
+      }
+      found = true;
+      if (Object.hasOwn(item, claim.field)) {
+        fieldSeen = true;
+        if (item[claim.field] === claim.value) {
+          return undefined;
+        }
+      }
+    }
   }
-  const item = items.find((candidate) => {
-    if (typeof candidate !== "object" || candidate === null || Array.isArray(candidate)) {
-      return false;
-    }
-    const record = candidate as Record<string, unknown>;
-    if (claim.operation === "commits") {
-      return (
-        typeof record.sha === "string" &&
-        record.sha.startsWith(claim.item)
-      );
-    }
-    return Number(record.number) === Number(claim.item);
-  }) as Record<string, unknown> | undefined;
-  if (item === undefined) {
+  if (!found) {
     return `github_item_missing:${claim.operation}:${claim.item}`;
   }
-  if (!Object.hasOwn(item, claim.field)) {
-    return `github_field_missing:${claim.operation}:${claim.field}`;
-  }
-  const actual = item[claim.field];
-  return actual === claim.value
-    ? undefined
-    : `github_field_mismatch:${claim.operation}:${claim.item}:${claim.field}`;
+  return fieldSeen
+    ? `github_field_mismatch:${claim.operation}:${claim.item}:${claim.field}`
+    : `github_field_missing:${claim.operation}:${claim.field}`;
 }
 
 const COUNT_CLAIM_PATH =
