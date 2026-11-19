@@ -9,7 +9,7 @@ All notable changes are recorded here. This project does not yet have a stable r
 - Sharded task completion verification with `needs_review` and `/ack`.
 - Confirmed recurring schedule policies with deterministic run keys and plan-scoped read authorization.
 - Global/project-scoped memory with Worker-only injection and confirmation cards.
-- Optional Magpie quota/budget gating; Docker/Compose self-host path and preflight.
+- Optional Magpie quota/budget gating; persistent local model-request limits per task/day; Docker/Compose self-host path and preflight.
 - Fixed 40-scenario deterministic evaluation catalog and JSON/Markdown reports.
 - Backup manifest v2, verified restore, agent JSON export, secret scanner, governance/security docs.
 - Local authenticated `/api/v1` Client API + TypeScript SDK, `pa` CLI, and minimal `pa tui`; device token hashes/scopes/revocation, idempotent task/input operations, bound approvals, replayable event cursor/SSE stream, device-token TTL/IP+credential rate limiting, SSE Last-Event-ID reconnect, SQLite-reopen, child and full-main SIGKILL/restart coverage, OpenAPI 3.1 contract, and a clean-install smoke (also in CI), and TUI supplement/revise/reminder controls, and pending-reminder text/due-time editing, TUI wrapping/detail scrolling, and macOS/Windows CI jobs, both passing.

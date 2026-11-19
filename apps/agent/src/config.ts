@@ -39,6 +39,10 @@ export interface AppConfig {
     gatewayKey?: string;
     minRemainingPercent: number;
   };
+  budget: {
+    maxCallsPerTask: number;
+    maxCallsPerDay?: number;
+  };
   ownerOpenId?: string;
   eventMode: FeishuEventMode;
   feishu: FeishuConfig;
@@ -157,6 +161,23 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
         0,
         100,
       ),
+    },
+    budget: {
+      maxCallsPerTask: parseInteger(
+        read("BUDGET_MAX_MODEL_CALLS_PER_TASK") ?? "10",
+        "BUDGET_MAX_MODEL_CALLS_PER_TASK",
+        1,
+        1_000,
+      ),
+      maxCallsPerDay:
+        read("BUDGET_MAX_MODEL_CALLS_PER_DAY") === undefined
+          ? undefined
+          : parseInteger(
+              read("BUDGET_MAX_MODEL_CALLS_PER_DAY") as string,
+              "BUDGET_MAX_MODEL_CALLS_PER_DAY",
+              1,
+              100_000,
+            ),
     },
     ownerOpenId: read("OWNER_FEISHU_OPEN_ID"),
     eventMode: eventModeRaw,

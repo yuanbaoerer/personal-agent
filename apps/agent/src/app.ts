@@ -12,7 +12,12 @@ import { MemoryService } from "./personal/memory.ts";
 import { ConfirmationService } from "./personal/confirmations.ts";
 import { PreauthorizationService } from "./personal/preauthorizations.ts";
 import { SchedulePolicyService } from "./personal/schedule-policies.ts";
-import { MagpieBudget, type MagpieConfig } from "./observability/magpie.ts";
+import {
+  MagpieBudget,
+  type BudgetService,
+  type MagpieConfig,
+} from "./observability/magpie.ts";
+import { CallBudget } from "./observability/call-budget.ts";
 import { ReminderService, noopReminderTimer, type ReminderTimer } from "./personal/reminders.ts";
 import type { AgentRuntime, WakeScheduler } from "./runtime/types.ts";
 import { ActionRepository } from "./storage/actions.ts";
@@ -41,6 +46,11 @@ export interface AppDeps {
   github?: GitHubReadConfig;
   /** Optional Magpie usage/quotas adapter; omitted means local-only reporting. */
   magpie?: MagpieConfig;
+  /** Local persistent request-count limits. */
+  budgetLimits?: {
+    maxCallsPerTask: number;
+    maxCallsPerDay?: number;
+  };
   /** Host/extension seam for additional tools; keep writes in ActionService. */
   registerTools?: (registry: ToolRegistry) => void;
   now?: () => Date;
@@ -64,7 +74,7 @@ export interface AppServices {
   preauthorization: PreauthorizationService;
   schedulePolicy: SchedulePolicyService;
   state: StateReadService;
-  budget?: MagpieBudget;
+  budget?: BudgetService;
   router: Router;
   ingress: IngressService;
   effectDispatcher: EffectDispatcher;
@@ -77,8 +87,15 @@ export interface AppServices {
 export function createApp(deps: AppDeps): AppServices {
   const { store } = deps;
   const db = store.db;
-  const budget =
+  const upstreamBudget =
     deps.magpie?.baseUrl === undefined ? undefined : new MagpieBudget(deps.magpie);
+  const budget = new CallBudget({
+    store,
+    upstream: upstreamBudget,
+    maxCallsPerTask: deps.budgetLimits?.maxCallsPerTask ?? 10,
+    maxCallsPerDay: deps.budgetLimits?.maxCallsPerDay,
+    now: deps.now,
+  });
   const tasks = new TaskRepository(db);
   const actions = new ActionRepository(db);
   const effects = new EffectRepository(db);

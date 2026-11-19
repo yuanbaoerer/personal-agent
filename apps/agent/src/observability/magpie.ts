@@ -1,13 +1,23 @@
+export interface BudgetCheckContext {
+  role: "router" | "worker";
+  /** Worker attempts are counted against this task's hard limit. */
+  taskId?: string;
+}
+
 export interface BudgetCheck {
   ok: boolean;
   /** Present when a subscription window or gateway-key budget is exhausted. */
   reason?: string;
   /** Magpie was unreachable; direct providers are unaffected. */
   degraded?: boolean;
+  /** The limit is permanent for this task; do not retry it. */
+  permanent?: boolean;
+  /** A time-scoped limit; retry no earlier than this ISO timestamp. */
+  retryAt?: string;
 }
 
 export interface BudgetService {
-  check(): Promise<BudgetCheck>;
+  check(context?: BudgetCheckContext): Promise<BudgetCheck>;
   summaryText(): Promise<string>;
 }
 
