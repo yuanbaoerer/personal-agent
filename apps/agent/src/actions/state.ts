@@ -529,7 +529,7 @@ export class StateReadService {
     );
     return {
       tool,
-      scope: { ownerId: scope.ownerId },
+      scope: { ownerId: scope.ownerId, project: null },
       limit: args.limit,
       offset: args.offset,
       total,
@@ -577,7 +577,7 @@ export class StateReadService {
     );
     return {
       tool,
-      scope: { ownerId: scope.ownerId },
+      scope: { ownerId: scope.ownerId, project: null },
       limit: args.limit,
       offset: args.offset,
       total,
@@ -908,7 +908,15 @@ function readScope(
     return undefined;
   }
   const ownerId = stringOf(scope, "ownerId");
-  const project = stringOrNull(scope, "project");
+  // An absent project means owner-level/global scope, not a malformed scope.
+  const project =
+    scope.project === undefined
+      ? null
+      : scope.project === null
+        ? null
+        : typeof scope.project === "string"
+          ? scope.project
+          : undefined;
   if (ownerId === undefined || project === undefined) {
     return undefined;
   }
