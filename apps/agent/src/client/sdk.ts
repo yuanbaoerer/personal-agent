@@ -7,6 +7,10 @@ import type {
   TaskRecord,
   TaskStatus,
 } from "../domain/types.ts";
+import type {
+  PluginLifecycleResult,
+  PluginView,
+} from "../plugins/types.ts";
 
 export class ClientApiError extends Error {
   readonly status: number;
@@ -89,6 +93,30 @@ export class ClientApiClient {
 
   async usage(): Promise<Record<string, unknown>> {
     return this.#request("/usage");
+  }
+
+  async listPlugins(): Promise<PluginView[]> {
+    const result = await this.#request<{ plugins: PluginView[] }>("/plugins");
+    return result.plugins;
+  }
+
+  async getPlugin(id: string): Promise<PluginView> {
+    const result = await this.#request<{ plugin: PluginView }>(
+      `/plugins/${encodeURIComponent(id)}`,
+    );
+    return result.plugin;
+  }
+
+  async enablePlugin(id: string): Promise<PluginLifecycleResult> {
+    return this.#request(`/plugins/${encodeURIComponent(id)}/enable`, {
+      method: "POST",
+    });
+  }
+
+  async disablePlugin(id: string): Promise<PluginLifecycleResult> {
+    return this.#request(`/plugins/${encodeURIComponent(id)}/disable`, {
+      method: "POST",
+    });
   }
 
   async listTasks(options: { status?: TaskStatus; limit?: number } = {}): Promise<TaskRecord[]> {

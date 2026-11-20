@@ -1,4 +1,3 @@
-import { GitHubReadTool, type GitHubReadConfig } from "./github.ts";
 import {
   ToolRejectedError,
   ToolRegistry,
@@ -112,7 +111,6 @@ export class MockLampTool implements ActionTool {
 export function createDefaultToolRegistry(
   store: Store,
   now?: () => Date,
-  github?: GitHubReadConfig,
   state?: StateReadService,
 ): {
   registry: ToolRegistry;
@@ -125,14 +123,6 @@ export function createDefaultToolRegistry(
     for (const tool of createStateTools(state)) {
       registry.register(tool);
     }
-  }
-  if (
-    github !== undefined &&
-    (github.tokenProvider !== undefined ||
-      (github.token !== undefined && github.token.trim().length > 0)) &&
-    github.allowedRepos.length > 0
-  ) {
-    registry.register(new GitHubReadTool(github));
   }
   return { registry, lamp };
 }

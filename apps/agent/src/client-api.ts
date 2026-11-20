@@ -9,6 +9,7 @@ import {
 } from "./storage/client-tokens.ts";
 import { buildDiagnostics } from "./observability/diagnostics.ts";
 import { buildUsage } from "./observability/usage.ts";
+import { PluginNotFoundError } from "./plugins/catalog.ts";
 import type { AuditFeedItem, Store } from "./storage/store.ts";
 import type {
   ActionRecord,
@@ -67,6 +68,7 @@ export interface ClientApiDeps {
     | "memory"
     | "reminders"
     | "confirmation"
+    | "plugins"
   >;
   ownerId: string;
   /** Local bootstrap credential; device token hashes are also accepted. */
@@ -514,6 +516,42 @@ export class ClientApiService {
       if (id !== undefined && method === "PATCH") {
         this.#require(auth, "write");
         return this.#updateReminder(id, request);
+      }
+    }
+
+    if (resource === "plugins") {
+      if (id === undefined && method === "GET") {
+        this.#require(auth, "read");
+        return { status: 200, body: { plugins: await this.#services.plugins.list() } };
+      }
+      if (id !== undefined && action === undefined && method === "GET") {
+        this.#require(auth, "read");
+        const plugin = await this.#services.plugins.get(id);
+        if (plugin === undefined) {
+          throw new ApiError(404, "plugin_not_found");
+        }
+        return { status: 200, body: { plugin } };
+      }
+      if (
+        id !== undefined &&
+        (action === "enable" || action === "disable") &&
+        method === "POST"
+      ) {
+        this.#require(auth, "write");
+        const actorId =
+          auth.kind === "admin" ? "admin" : `token:${auth.record.id}`;
+        try {
+          const result =
+            action === "enable"
+              ? await this.#services.plugins.enable(id, actorId)
+              : await this.#services.plugins.disable(id, actorId);
+          return { status: 200, body: result };
+        } catch (error) {
+          if (error instanceof PluginNotFoundError) {
+            throw new ApiError(404, "plugin_not_found");
+          }
+          throw error;
+        }
       }
     }
 

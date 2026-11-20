@@ -30,6 +30,10 @@ export interface HttpServerDeps {
   ingress: IngressService;
   logger: AppLogger;
   oauth?: GitHubOAuthHttpHandler;
+  /** Invalidate catalog-bound approvals after login/logout/account switch. */
+  onCredentialChange?: (
+    event: "connected" | "disconnected",
+  ) => void | Promise<void>;
   adminToken?: string;
   /** Local authenticated control/event API; omitted means 404. */
   clientApi?: ClientApiService;
@@ -383,6 +387,7 @@ async function handleGitHubOAuth(
     }
     try {
       const result = await deps.oauth.complete(code, state);
+      await notifyCredentialChange(deps, "connected");
       sendHtml(
         response,
         200,
@@ -410,11 +415,32 @@ async function handleGitHubOAuth(
       sendJson(response, 401, { error: "unauthorized" });
       return 401;
     }
-    sendJson(response, 200, { disconnected: deps.oauth.disconnect() });
+    const disconnected = deps.oauth.disconnect();
+    if (disconnected) {
+      await notifyCredentialChange(deps, "disconnected");
+    }
+    sendJson(response, 200, { disconnected });
     return 200;
   }
   sendJson(response, 404, { error: "not_found" });
   return 404;
+}
+
+async function notifyCredentialChange(
+  deps: HttpServerDeps,
+  event: "connected" | "disconnected",
+): Promise<void> {
+  if (deps.onCredentialChange === undefined) {
+    return;
+  }
+  try {
+    await deps.onCredentialChange(event);
+  } catch (error) {
+    deps.logger.error("credential_change_not_applied", {
+      event,
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 function oauthLoginPage(failed: boolean): string {

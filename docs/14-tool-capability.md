@@ -20,6 +20,12 @@
 
 `ToolRegistry.describe()` 返回已注册工具的 `name/resource/readOnly/replayPolicy/timeoutMs` 元数据，供宿主诊断；真正参数校验仍由 `canonicalize` 完成，不能只依赖描述。
 
+## 插件能力目录（V1）
+
+`PluginCatalog` 是宿主内唯一的插件能力来源。内置插件先通过 `parsePluginManifest`/`validatePluginSet` 校验 id、语义版本、apiVersion、`<plugin-id>.` 工具命名空间、声明与导出一致性及重复冲突；再持久化 `pa_plugins` lifecycle。启用插件时先在旁边构建完整工具列表，校验返回工具与 manifest 声明的 `resource/readOnly/replayPolicy` 一致后，用 `ToolRegistry.swap()` 原子发布；任一冲突只将该插件标记为 `error`，不破坏 Core。
+
+Catalog generation 在启用、停用、版本/摘要变化或凭据轮换时单调递增。`TaskRecord.extension` 固定创建/修订时的 plugin/version/digest/generation；`ActionRecord` 固定提案时的 plugin binding/generation。ActionService 在提案、claim、执行完成和 reconcile 前都重新核对；generation 变化使旧审批失效。禁用插件会 supersede 待执行动作；已运行写入只能进入 unknown/reconcile，不能盲目重试。V1 只允许静态链接的内置 provider，不接受任意 import、下载包或第三方代码。
+
 ## 最小只读工具
 
 ```ts

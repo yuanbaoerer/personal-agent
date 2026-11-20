@@ -1,6 +1,12 @@
 # 25 · Extension Platform：Plugin / Skills / MCP / Credential Architecture
 
-> 2026-11-20 · [#73 总跟踪](https://github.com/yuanbaoerer/personal-agent/issues/73) · 基线 c42243b · 设计与待办，非已实现能力。Extension Platform 为一级长期架构模块，完整开放插件生态为必选产品路线。保留 #41 Reliable Core 和 #65 GitHub 垂直场景以及原发布门槛。
+> 2026-11-20 · [#73 总跟踪](https://github.com/yuanbaoerer/personal-agent/issues/73) · 基线 c42243b · Extension Platform 为一级长期架构模块，完整开放插件生态为必选产品路线。保留 #41 Reliable Core 和 #65 GitHub 垂直场景以及原发布门槛。
+>
+> **实施状态（2026-11-20）**
+>
+> - **EXT-01 已实现（Node）**：`plugins/manifest.ts`/`catalog.ts` 提供内置 manifest 校验、命名空间/冲突拒绝、持久 lifecycle、原子 ToolRegistry swap 与 catalog generation；`pa_plugins` 保存 installed/enabled/disabled/error，connection 独立派生；Task 固定 plugin/version/digest/generation，Action 固定 plugin binding/generation；Router、Mandate sanitize、Worker prompt、Action proposal/execute/reconcile 共用 catalog；禁用会 supersede 待执行审批、暂停未派工任务，运行中写入进入 unknown/reconcile。`pa plugins list/status/enable/disable` 与 `/api/v1/plugins` 已接入，enabled 状态跨重启保留，generation 单调递增。
+> - **EXT-02 首批已实现**：GitHub 由 `plugins/github.ts` 包装既有 `GitHubReadTool`，保留 `github.read`、PAT/OAuth、白名单、预授权和加密凭据路径；OAuth 连接/断开/换账号通过 `ExtensionService.credentialChanged` 推进 generation 并撤销旧审批。真实 G1 仍需 owner 凭据与真实仓库，当前 **BLOCKED**，不得用 fake 测试替代。
+> - **EXT-03/04 未实现**：MCP Host 与 Skills Runtime 尚未落地；V1 完整验收（真实 MCP 对照、按需 Skill、真实 GitHub 只读）未通过。V1 热启停只承诺 Node，Durable Object 不宣称支持动态加载。V2 SDK/隔离、V3 Registry/分发不变。
 
 ## 1. 产品决策
 
@@ -10,7 +16,7 @@ One Agent Core + WorkProfile × ExecutionStrategy × ModelPolicy + ExtensionPoli
 
 ## 2. 现状与迁移边界
 
-当前 app.ts 调用 createDefaultToolRegistry 并通过 registerTools 注入；actions/tools.ts 静态注册 GitHubReadTool，GitHubReadConfig 按 env/tokenProvider 决定是否注册；pi-router.ts 对 github.read/resource 存在静态白名单与 prompt；Task 报告、Verifier、SchedulePolicy、OAuth 路由亦存在 GitHub 专有逻辑。应先识别所有消费工具与授权的入口，迁移到同一 Capability Catalog，而不是另包一层却保留双重真源。保留 actions/tooling.ts 的 ActionTool/ToolRegistry 契约和已验证的 github.read、OAuth URL、历史 Task/receipt/claims、预授权、DB 迁移及原测试。Core 内建 state tools 与测试 lamp 保持受控；不强制所有内部组件插件化。Node V1 先行，DO 只支持明确可用的平台能力，不假称支持动态执行。
+迁移前，`app.ts` 通过 `createDefaultToolRegistry` 与 `registerTools` 注入工具，`actions/tools.ts` 静态注册 `GitHubReadTool`，`pi-router.ts` 维护静态工具/resource 白名单。2026-11-20 的 EXT-01/02 已移除这条 GitHub 双注册路径：registry factory 只保留 Core 工具，`PluginCatalog` 负责 GitHub 内置插件与原子发布；Router prompt/sanitize、Worker prompt、Action proposal/execute/reconcile 读取同一 catalog。仍保留的 GitHub 专有逻辑是 `github-read` completion verifier、SchedulePolicy 的 repo/version 读取授权和 OAuth 管理页；这些是已验证的业务契约，后续在对应垂直工作包中迁移，不在本轮重写。保留 `actions/tooling.ts` 的 `ActionTool`/`ToolRegistry` 契约和已验证的 `github.read`、OAuth URL、历史 Task/receipt/claims、预授权、DB 迁移及原测试。Core 内建 state tools 与测试 lamp 保持受控；不强制所有内部组件插件化。Node V1 先行；Durable Object 复用持久 schema，但不承诺动态加载或插件管理入口。
 
 ## 3. 目标架构
 

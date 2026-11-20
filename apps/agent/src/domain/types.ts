@@ -145,6 +145,18 @@ export interface Mandate {
   project?: string;
 }
 
+/** Plugin identity pinned when a task revision is created. */
+export interface TaskExtensionBinding {
+  id: string;
+  version: string;
+  digest: string;
+}
+
+export interface TaskExtensionSnapshot {
+  catalogGeneration: number;
+  plugins: TaskExtensionBinding[];
+}
+
 export interface TaskRecord {
   id: string;
   ownerId: string;
@@ -167,6 +179,8 @@ export interface TaskRecord {
   acknowledgedBy?: string;
   /** Set when this task was created by an authorized schedule policy. */
   schedulePolicyId?: string;
+  /** Capability catalog identity pinned at task creation/revision. */
+  extension?: TaskExtensionSnapshot;
   createdAt: string;
   updatedAt: string;
 }
@@ -333,6 +347,11 @@ export interface ActionRecord {
   /** Plan-scoped read authorization for tasks created by a schedule. */
   schedulePolicyId?: string;
   schedulePolicyVersion?: number;
+  /** Plugin identity and catalog generation pinned at proposal time. */
+  pluginId?: string;
+  pluginVersion?: string;
+  pluginDigest?: string;
+  catalogGeneration?: number;
   createdAt: string;
   updatedAt: string;
 }

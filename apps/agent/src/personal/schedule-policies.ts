@@ -3,6 +3,7 @@ import type {
   SchedulePolicyRecord,
   TaskRecord,
 } from "../domain/types.ts";
+import type { CapabilityView } from "../plugins/fence.ts";
 import type { SchedulePolicyRepository } from "../storage/schedule-policies.ts";
 import type { Store } from "../storage/store.ts";
 import { assertTimezone } from "./reminders.ts";
@@ -31,6 +32,8 @@ export interface SchedulePolicyDeps {
   defaultExpiryMs?: number;
   /** Hard cap on dispatched schedule runs per UTC day. */
   maxRunsPerDay?: number;
+  /** Live catalog; a schedule must not fire a disabled capability. */
+  capabilities?: CapabilityView;
 }
 
 export interface ScheduleDraftInput {
@@ -207,6 +210,7 @@ export class SchedulePolicyService {
   readonly #maxLatenessMs: number;
   readonly #defaultExpiryMs: number;
   readonly #maxRunsPerDay: number;
+  readonly #capabilities?: CapabilityView;
 
   constructor(deps: SchedulePolicyDeps) {
     this.#store = deps.store;
@@ -218,6 +222,7 @@ export class SchedulePolicyService {
     this.#maxLatenessMs = deps.maxLatenessMs ?? 60 * 60_000;
     this.#defaultExpiryMs = deps.defaultExpiryMs ?? 30 * 24 * 60 * 60_000;
     this.#maxRunsPerDay = Math.max(1, deps.maxRunsPerDay ?? 20);
+    this.#capabilities = deps.capabilities;
   }
 
   createDraft(
@@ -499,6 +504,16 @@ export class SchedulePolicyService {
       this.#audit("schedule_policy.skipped", policy, now, {
         scheduledAt,
         reason: "missed_by_more_than_grace",
+      });
+      return 0;
+    }
+
+    if (this.#capabilities !== undefined && this.#capabilities.toolInfo("github.read") === undefined) {
+      this.#policies.recordRun(policy.id, scheduledAt, "skipped", undefined, nowIso);
+      this.#advanceAfterRun(policy, scheduledAt, now, undefined, nowIso);
+      this.#audit("schedule_policy.skipped", policy, now, {
+        scheduledAt,
+        reason: "capability_unavailable",
       });
       return 0;
     }

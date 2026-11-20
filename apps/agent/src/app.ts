@@ -3,6 +3,10 @@ import { StateReadService } from "./actions/state.ts";
 import { createDefaultToolRegistry } from "./actions/tools.ts";
 import type { ToolRegistry } from "./actions/tools.ts";
 import type { GitHubReadConfig } from "./actions/github.ts";
+import { PluginCatalog } from "./plugins/catalog.ts";
+import { createGithubPlugin } from "./plugins/github.ts";
+import { ExtensionService } from "./plugins/service.ts";
+import type { BuiltinPlugin } from "./plugins/types.ts";
 import { IngressService } from "./coordinator/ingress.ts";
 import type { RouterModel } from "./coordinator/router.ts";
 import { Router } from "./coordinator/router.ts";
@@ -55,6 +59,8 @@ export interface AppDeps {
   };
   /** Host/extension seam for additional tools; keep writes in ActionService. */
   registerTools?: (registry: ToolRegistry) => void;
+  /** Override the built-in plugin set (tests and future trust tiers). */
+  builtinPlugins?: readonly BuiltinPlugin[];
   now?: () => Date;
   maxActiveWorkers?: number;
 }
@@ -77,6 +83,8 @@ export interface AppServices {
   schedulePolicy: SchedulePolicyService;
   state: StateReadService;
   budget?: BudgetService;
+  catalog: PluginCatalog;
+  plugins: ExtensionService;
   router: Router;
   ingress: IngressService;
   effectDispatcher: EffectDispatcher;
@@ -116,8 +124,14 @@ export function createApp(deps: AppDeps): AppServices {
     schedulePolicies,
     now: deps.now,
   });
-  const { registry } = createDefaultToolRegistry(store, deps.now, deps.github, state);
+  const { registry } = createDefaultToolRegistry(store, deps.now, state);
   deps.registerTools?.(registry);
+  const catalog = new PluginCatalog({
+    store,
+    registry,
+    plugins: deps.builtinPlugins ?? [createGithubPlugin(deps.github)],
+    now: deps.now,
+  });
 
   const taskService = new TaskService({
     store,
@@ -131,6 +145,8 @@ export function createApp(deps: AppDeps): AppServices {
     budget,
     memories,
     state,
+    extensions: catalog,
+    capabilities: catalog,
   });
   const preauthorization = new PreauthorizationService({
     store,
@@ -145,6 +161,7 @@ export function createApp(deps: AppDeps): AppServices {
     allowedRepos: deps.github?.allowedRepos ?? [],
     now: deps.now,
     maxRunsPerDay: maxScheduleRunsPerDay,
+    capabilities: catalog,
   });
   const actionService = new ActionService({
     store,
@@ -158,8 +175,13 @@ export function createApp(deps: AppDeps): AppServices {
     preauthorizations: preauthorization,
     schedulePolicies: schedulePolicy,
     onSettled: (taskId) => taskService.onActionSettled(taskId),
+    capabilities: catalog,
   });
   taskService.setActionProposer(actionService);
+  const plugins = new ExtensionService({
+    catalog,
+    actions: actionService,
+  });
 
   const reminders = new ReminderService({
     store,
@@ -192,6 +214,7 @@ export function createApp(deps: AppDeps): AppServices {
     model: deps.model,
     wake: deps.wake,
     now: deps.now,
+    capabilities: catalog,
   });
 
   const effectDispatcher = new EffectDispatcher({ effects });
@@ -219,6 +242,8 @@ export function createApp(deps: AppDeps): AppServices {
     schedulePolicy,
     state,
     budget,
+    catalog,
+    plugins,
     router,
     ingress,
     effectDispatcher,

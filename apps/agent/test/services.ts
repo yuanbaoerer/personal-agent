@@ -6,6 +6,10 @@ import {
   type ToolRegistry,
 } from "../src/actions/tools.ts";
 import type { GitHubReadConfig } from "../src/actions/github.ts";
+import { PluginCatalog } from "../src/plugins/catalog.ts";
+import { createGithubPlugin } from "../src/plugins/github.ts";
+import { ExtensionService } from "../src/plugins/service.ts";
+import type { BuiltinPlugin } from "../src/plugins/types.ts";
 import { Router, StaticRouterModel } from "../src/coordinator/router.ts";
 import { IngressService } from "../src/coordinator/ingress.ts";
 import { TaskService } from "../src/coordinator/tasks.ts";
@@ -53,6 +57,8 @@ export interface TestServices {
   schedulePolicy: SchedulePolicyService;
   state: StateReadService;
   budget?: BudgetService;
+  catalog: PluginCatalog;
+  plugins: ExtensionService;
   router: Router;
   ingress: IngressService;
   model: StaticRouterModel;
@@ -70,6 +76,7 @@ export function createServices(options: {
   actionTtlMs?: number;
   model?: StaticRouterModel;
   github?: GitHubReadConfig;
+  builtinPlugins?: readonly BuiltinPlugin[];
   reminderTimer?: ReminderTimer;
   maxConcurrentTools?: number;
   maxToolCallsPerTask?: number;
@@ -116,9 +123,14 @@ export function createServices(options: {
   const { registry, lamp } = createDefaultToolRegistry(
     store,
     now,
-    options.github,
     state,
   );
+  const catalog = new PluginCatalog({
+    store,
+    registry,
+    plugins: options.builtinPlugins ?? [createGithubPlugin(options.github)],
+    now,
+  });
   const runtime = new FakeRuntime();
   const wake = options.wake ?? noopWake;
 
@@ -138,6 +150,8 @@ export function createServices(options: {
     maxTaskAttempts: options.maxTaskAttempts,
     memories,
     state,
+    extensions: catalog,
+    capabilities: catalog,
   });
   const preauthorization = new PreauthorizationService({
     store,
@@ -152,6 +166,7 @@ export function createServices(options: {
     allowedRepos: options.github?.allowedRepos ?? [],
     now,
     maxRunsPerDay: options.maxScheduleRunsPerDay,
+    capabilities: catalog,
   });
   const actionService = new ActionService({
     store,
@@ -167,8 +182,10 @@ export function createServices(options: {
     preauthorizations: preauthorization,
     schedulePolicies: schedulePolicy,
     onSettled: (taskId) => taskService.onActionSettled(taskId),
+    capabilities: catalog,
   });
   taskService.setActionProposer(actionService);
+  const plugins = new ExtensionService({ catalog, actions: actionService });
 
   const reminders = new ReminderService({
     store,
@@ -197,6 +214,7 @@ export function createServices(options: {
     model,
     wake,
     now,
+    capabilities: catalog,
   });
 
   const effectDispatcher = new EffectDispatcher({ effects, now, maxAttempts: 20 });
@@ -230,6 +248,8 @@ export function createServices(options: {
     schedulePolicy,
     state,
     budget,
+    catalog,
+    plugins,
     router,
     ingress,
     model,

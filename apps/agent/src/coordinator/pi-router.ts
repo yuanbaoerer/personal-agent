@@ -9,6 +9,7 @@ import { parseStateQuery } from "./state-query.ts";
 import type { Store } from "../storage/store.ts";
 import type { AgentRuntime } from "../runtime/types.ts";
 import type { RouterModel } from "./router.ts";
+import type { CapabilityView } from "../plugins/fence.ts";
 
 const ROUTER_SESSION_KEY = "router.session_id";
 
@@ -55,9 +56,12 @@ export class PiRouterModel implements RouterModel {
     this.#runtime = runtime;
   }
 
-  async decide(input: RouterInput): Promise<RouterDecision> {
+  async decide(
+    input: RouterInput,
+    capabilities?: CapabilityView,
+  ): Promise<RouterDecision> {
     try {
-      return await this.#decideOnce(input);
+      return await this.#decideOnce(input, capabilities);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       // Only a stale session id after a database reset cannot recover by
@@ -70,16 +74,19 @@ export class PiRouterModel implements RouterModel {
       }
       console.warn("router_session_retry", { message });
       this.#store.metaSet(ROUTER_SESSION_KEY, "");
-      return this.#decideOnce(input);
+      return this.#decideOnce(input, capabilities);
     }
   }
 
-  async #decideOnce(input: RouterInput): Promise<RouterDecision> {
+  async #decideOnce(
+    input: RouterInput,
+    capabilities?: CapabilityView,
+  ): Promise<RouterDecision> {
     const sessionId = await this.#ensureSession();
     const operationId = `router:${input.inboxId}`;
     await this.#runtime.submit(
       sessionId,
-      routerPrompt(input),
+      routerPrompt(input, capabilities),
       operationId,
       "app.router",
     );
@@ -93,7 +100,7 @@ export class PiRouterModel implements RouterModel {
       return { action: "reply", text: "这次没有理解成功，请再说一次。" };
     }
 
-    const decision = parseRouterDecision(answer.text);
+    const decision = parseRouterDecision(answer.text, capabilities);
     if (decision === undefined) {
       console.warn("router_decision_invalid", {
         // Never log model output: it can contain private chat or secrets.
@@ -125,11 +132,23 @@ export class PiRouterModel implements RouterModel {
   }
 }
 
-export function routerPrompt(input: RouterInput): string {
+export function routerPrompt(
+  input: RouterInput,
+  capabilities?: CapabilityView,
+): string {
   const taskLines = (input.taskContext ?? []).slice(0, 10).map(
     (task) =>
       `- id=${task.id} status=${task.status}${task.project === undefined ? "" : ` project=${task.project}`} goal=${task.goal.slice(0, 120)}`,
   );
+  const tools =
+    capabilities === undefined
+      ? Object.keys(ALLOWED_TOOLS).sort()
+      : capabilities.toolNames();
+  const resources =
+    capabilities === undefined
+      ? Object.keys(ALLOWED_RESOURCES).sort()
+      : capabilities.resources();
+  const githubEnabled = tools.includes("github.read");
   return [
     "You are the Router for a personal assistant.",
     "Understand the owner's message and return one JSON object only.",
@@ -150,6 +169,8 @@ export function routerPrompt(input: RouterInput): string {
     "Rules:",
     "- Do not approve or execute actions; the owner does that explicitly.",
     "- Include a tool in mandate.tools only when the owner explicitly asks for that capability.",
+    `- Enabled tools (only these may appear in mandate.tools): ${tools.join(", ") || "none"}.`,
+    `- Enabled resources (only these may appear in mandate.resources): ${resources.join(", ") || "chat"}.`,
     "- Use a task when the request needs sustained work; use reply for chat.",
     "- Read-only questions about current tasks, reminders, memories, schedules or service status must use query_status with the most specific target. Never answer state questions from memory or create a Worker just to restate state.",
     "- query_status fields are validated by the program. Omit fields the target does not support; do not invent task ids or project names.",
@@ -162,8 +183,14 @@ export function routerPrompt(input: RouterInput): string {
     "- Set save_memory/forget_memory/task mandate project only when the owner explicitly names a project (or uses --project=name); otherwise omit it. Project memories must not be mixed.",
     "- Use remind only when the owner explicitly asks for a reminder; use cancel_reminder only when the owner explicitly asks to cancel one.",
     "- For draft_schedule, use the existing GitHub schedule policy: repo, local wall-clock time, daily/weekdays cadence, goal, timezone and optional until. If any required field is missing or ambiguous, reply and ask instead of guessing. A draft never activates until the owner confirms.",
-    "- For read-only GitHub requests, set mandate.resources to include \"github\" and mandate.tools to [\"github.read\"]; do not promise write access.",
-    "- For github.read tasks, completionCriteria must be JSON with repo set to the exact owner/name requested (for example {\"repo\":\"owner/name\",\"requiredEvidenceKinds\":[\"github\"]}); never omit repo.",
+    ...(githubEnabled
+      ? [
+          "- For read-only GitHub requests, set mandate.resources to include \"github\" and mandate.tools to [\"github.read\"]; do not promise write access.",
+          "- For github.read tasks, completionCriteria must be JSON with repo set to the exact owner/name requested (for example {\"repo\":\"owner/name\",\"requiredEvidenceKinds\":[\"github\"]}); never omit repo.",
+        ]
+      : [
+          "- The GitHub plugin is not enabled in this generation; do not promise GitHub reads or create a GitHub task.",
+        ]),
     "- Internal read-only state tools: state.summary, task.list, task.get, reminder.list, memory.list, schedule.list. They are owner-scoped; never use them for another person's data.",
     "- Only when a task needs current state for further work, put the needed state tools in mandate.tools and include \"state\" in mandate.resources. For those tasks set completionCriteria to JSON with {\"verifier\":\"state-read\",\"requiredEvidenceKinds\":[\"state_snapshot\"]}.",
     "- Never infer personal facts, preferences, or plans; only remember what the owner explicitly asks to remember.",
@@ -175,7 +202,10 @@ export function routerPrompt(input: RouterInput): string {
   ].join("\n");
 }
 
-export function parseRouterDecision(text: string): RouterDecision | undefined {
+export function parseRouterDecision(
+  text: string,
+  capabilities?: CapabilityView,
+): RouterDecision | undefined {
   const start = text.indexOf("{");
   const end = text.lastIndexOf("}");
   if (start < 0 || end <= start) {
@@ -261,7 +291,7 @@ export function parseRouterDecision(text: string): RouterDecision | undefined {
       parsed.priority = changes.priority;
     }
     if (typeof changes.mandate === "object" && changes.mandate !== null) {
-      parsed.mandate = sanitizeMandate(changes.mandate);
+      parsed.mandate = sanitizeMandate(changes.mandate, capabilities);
     }
     if (Object.keys(parsed).length > 0) {
       decision.changes = parsed;
@@ -289,7 +319,7 @@ export function parseRouterDecision(text: string): RouterDecision | undefined {
   if (typeof record.task === "object" && record.task !== null) {
     const task = record.task as Record<string, unknown>;
     if (typeof task.goal === "string" && task.goal.trim().length > 0) {
-      const mandate = sanitizeMandate(task.mandate);
+      const mandate = sanitizeMandate(task.mandate, capabilities);
       decision.task = {
         goal: task.goal,
         completionCriteria:
@@ -331,9 +361,22 @@ function parseScheduleIntent(value: unknown): ScheduleIntent | undefined {
 }
 
 /** Derive required resources from the exact tool set; never trust model text. */
-export function ensureMandateResources(mandate: Mandate): Mandate {
+export function ensureMandateResources(
+  mandate: Mandate,
+  capabilities?: CapabilityView,
+): Mandate {
   const resources = [...mandate.resources];
-  if (mandate.tools.includes("github.read") && !resources.includes("github")) {
+  if (capabilities !== undefined) {
+    for (const tool of mandate.tools) {
+      const resource = capabilities.resourceForTool(tool);
+      if (resource !== undefined && !resources.includes(resource)) {
+        resources.push(resource);
+      }
+    }
+  } else if (
+    mandate.tools.includes("github.read") &&
+    !resources.includes("github")
+  ) {
     resources.push("github");
   }
   if (mandate.tools.some(isStateToolName) && !resources.includes("state")) {
@@ -342,31 +385,42 @@ export function ensureMandateResources(mandate: Mandate): Mandate {
   return { ...mandate, resources: resources.length > 0 ? resources : ["chat"] };
 }
 
-function sanitizeMandate(value: unknown): Mandate {
+function sanitizeMandate(value: unknown, capabilities?: CapabilityView): Mandate {
   if (typeof value !== "object" || value === null) {
     return { resources: ["chat"], tools: [] };
   }
   const record = value as Record<string, unknown>;
+  const allowedResources = capabilities?.resources();
+  const allowedTools = capabilities?.toolNames();
   const resources = Array.isArray(record.resources)
     ? record.resources.filter(
         (item): item is string =>
-          typeof item === "string" && Object.hasOwn(ALLOWED_RESOURCES, item),
+          typeof item === "string" &&
+          (allowedResources === undefined
+            ? Object.hasOwn(ALLOWED_RESOURCES, item)
+            : allowedResources.includes(item)),
       )
     : [];
   const tools = Array.isArray(record.tools)
     ? record.tools.filter(
         (item): item is string =>
-          typeof item === "string" && Object.hasOwn(ALLOWED_TOOLS, item),
+          typeof item === "string" &&
+          (allowedTools === undefined
+            ? Object.hasOwn(ALLOWED_TOOLS, item)
+            : allowedTools.includes(item)),
       )
     : [];
-  return ensureMandateResources({
-    resources,
-    tools,
-    notes: typeof record.notes === "string" ? record.notes : undefined,
-    project:
-      typeof record.project === "string" &&
-      /^[A-Za-z0-9._-]{1,64}$/.test(record.project)
-        ? record.project
-        : undefined,
-  });
+  return ensureMandateResources(
+    {
+      resources,
+      tools,
+      notes: typeof record.notes === "string" ? record.notes : undefined,
+      project:
+        typeof record.project === "string" &&
+        /^[A-Za-z0-9._-]{1,64}$/.test(record.project)
+          ? record.project
+          : undefined,
+    },
+    capabilities,
+  );
 }
