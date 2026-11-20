@@ -15,6 +15,8 @@ import type { BuiltinPlugin, PluginConnection } from "./types.ts";
 
 const ID_PATTERN = /^[a-z][a-z0-9-]{0,63}$/;
 const TOOL_SUFFIX = /^[a-z][a-z0-9_.-]{0,100}$/;
+const VERSION_PATTERN =
+  /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$/;
 const AUTH_ENV = /^PA_MCP_[A-Z0-9_]{1,80}$/;
 const MAX_TOOLS = 50;
 const MAX_TEXT_BYTES = 32 * 1024;
@@ -145,10 +147,14 @@ export async function connectMcpPlugins(
   const plugins: BuiltinPlugin[] = [];
   const errors: { id: string; error: string }[] = [];
   for (const definition of definitions) {
-    const result = await connectMcpPlugin(definition, options);
-    plugins.push(result.plugin);
-    if (result.error !== undefined) {
-      errors.push({ id: definition.id, error: result.error });
+    try {
+      const result = await connectMcpPlugin(definition, options);
+      plugins.push(result.plugin);
+      if (result.error !== undefined) {
+        errors.push({ id: definition.id, error: result.error });
+      }
+    } catch (error) {
+      errors.push({ id: definition.id, error: errorMessage(error) });
     }
   }
   return { plugins, errors };
@@ -196,13 +202,17 @@ function parseServer(value: unknown, index: number): McpServerDefinition {
   const tools = record.tools.map((tool, toolIndex) =>
     parseTool(tool, `servers[${index}].tools[${toolIndex}]`),
   );
+  const version =
+    record.version === undefined
+      ? undefined
+      : stringValue(record.version, `servers[${index}].version`, 64);
+  if (version !== undefined && !VERSION_PATTERN.test(version)) {
+    throw new Error(`servers[${index}].version must be a semantic version`);
+  }
   return {
     id,
     name,
-    version:
-      record.version === undefined
-        ? undefined
-        : stringValue(record.version, `servers[${index}].version`, 64),
+    version,
     url,
     authEnv,
     allowInsecureLocalhost: record.allowInsecureLocalhost === true,
@@ -279,6 +289,9 @@ function parseArg(value: unknown, field: string): McpArgSpec {
     if (!record.enum.every((item) => typeof item === "string")) {
       throw new Error(`${field}.enum entries must be strings`);
     }
+    if (type !== "string") {
+      throw new Error(`${field}.enum is only supported for string arguments`);
+    }
     spec.enum = record.enum as string[];
   }
   return spec;
@@ -295,9 +308,13 @@ function normalizeDefinition(definition: McpServerDefinition): McpServerDefiniti
       throw new Error(`duplicate MCP tool name: ${id}.${tool.name}`);
     }
     names.add(tool.name);
+    const resource = tool.resource ?? id;
+    if (resource !== id && !resource.startsWith(`${id}.`)) {
+      throw new Error(`MCP tool resource ${resource} is outside the ${id} namespace`);
+    }
     return {
       ...tool,
-      resource: tool.resource ?? id,
+      resource,
     };
   });
   return {
@@ -576,21 +593,24 @@ async function assertSafeUrl(raw: string, allowLocalhost: boolean): Promise<void
   if (url.username.length > 0 || url.password.length > 0) {
     throw new Error("MCP url must not contain credentials");
   }
+  const hostname =
+    url.hostname.startsWith("[") && url.hostname.endsWith("]")
+      ? url.hostname.slice(1, -1)
+      : url.hostname;
   const localhost =
-    url.hostname === "localhost" ||
-    url.hostname === "127.0.0.1" ||
-    url.hostname === "[::1]" ||
-    url.hostname === "::1";
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "::1";
   if (url.protocol !== "https:" && !(allowLocalhost && localhost && url.protocol === "http:")) {
     throw new Error("MCP url must use https (http is only allowed for explicit localhost tests)");
   }
-  if (isIP(url.hostname) !== 0) {
-    if (!(allowLocalhost && localhost) && isPrivateAddress(url.hostname)) {
+  if (isIP(hostname) !== 0) {
+    if (!(allowLocalhost && localhost) && isPrivateAddress(hostname)) {
       throw new Error("MCP url resolves to a private address");
     }
     return;
   }
-  const addresses = await lookup(url.hostname, { all: true, verbatim: true });
+  const addresses = await lookup(hostname, { all: true, verbatim: true });
   if (
     addresses.length === 0 ||
     addresses.some((address) => isPrivateAddress(address.address))
