@@ -1,5 +1,7 @@
 # 24 · GitHub Project Management MVP 与 Development Orchestrator
 
+> **2026-11-20 插件化依赖更新（本条优先于原工作包入口）**：见 [25 · Extension Platform](25-extension-platform.md) / [#73](https://github.com/yuanbaoerer/personal-agent/issues/73)。GH-00/01 与 EXT-01 并行，EXT-02 迁移现有 GitHub connector/OAuth；GH-02 #60 依赖共同 catalog/broker，EXT-03 官方 MCP 只读对照与 REST 扩展并行（保留已验证 REST 回退）；GH-03 #61 写能力通过 plugin typed Action 与 Core 审批/核验，GH-04 #62 使用 EXT-04 skills。GH-05 #63 是第二类 Runtime Plugin，GH-06 独立审查/主动汇报，验证 V2 SDK；V3 长期必选但不阻断 L2。避免先实现 GitHub 专用第二套 registry。所有 #41/#65 原验收及安全前置不变。
+
 > 2026-11-20 · 总跟踪 [#65](https://github.com/yuanbaoerer/personal-agent/issues/65) · 设计基线 `c42243b`。尚未实现本篇新增能力。保留 [21 · MVP Functional Ready](21-mvp-functional-ready.md) 及原 v0.2/v0.3 发布门槛。本篇定义第一个垂直产品交付，不另建 Core。
 
 ## 1. 产品目标与检查点
