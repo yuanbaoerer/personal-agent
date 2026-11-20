@@ -1,5 +1,7 @@
 # Personal Agent
 
+> **Extension Platform（2026-11-20，规划）**：[25 · Plugin / Skills / MCP / Credential Architecture](docs/25-extension-platform.md)（[#73](https://github.com/yuanbaoerer/personal-agent/issues/73)）为一级长期架构模块。V1 内置插件热启停、凭据、MCP、Skills；GitHub 首插件，Coding Agent 第二类插件；V2 正式 SDK 与隔离，V3 可信分发与社区。先 #67/#68，再 #69/#70，与 #65 实际业务交付并行；不降低 #41 真实验收。尚未实现新增插件能力。
+
 > **下一垂直产品交付（2026-11-20，规划）**：[GitHub Project Management MVP → Development Orchestrator](docs/24-github-project-management.md)，总跟踪 [#65](https://github.com/yuanbaoerer/personal-agent/issues/65)。先真实 GitHub G1、项目绑定/源码证据、审批式 Issue 维护与项目评估，再接一个 Coding Agent、隔离 Draft PR 与独立 Review。现有 #41 Reliable Core 真实验收及安全预算前置不降低；当前 GitHub 仍只读 E1，新增写入/开发调度尚未实施。
 
 > **当前优先交付（2026-11-19）：MVP Functional Ready**。在 v0.2 Reliable Core 主线内先实现可持续私有自用的主体功能，见 [21 · MVP 实施纲领](docs/21-mvp-functional-ready.md)、[22 · 验收 Runbook](docs/22-mvp-acceptance-runbook.md)、[23 · 安全威胁模型](docs/23-security-redteam.md) 与 [#41 总任务](https://github.com/yuanbaoerer/personal-agent/issues/41)。MVP-01 [#38 状态感知](https://github.com/yuanbaoerer/personal-agent/issues/38) 与 MVP-02 [#39 自然语言主入口](https://github.com/yuanbaoerer/personal-agent/issues/39) 代码已合并；真实 E3/M02 仍待 owner 在飞书客户端实际键入；下一步按 #41 在 #10/#7 中选择，真实 GitHub、常驻 Node、主动工作、预算安全与 14 条验收继续保留。现有 CLI/TUI 保留，暂停扩建非阻断能力。D19/D20 已记录部分真实飞书/模型/短提醒成功及状态类任务的语义缺陷；完整 G1–G3/E3/E4 和长期证明仍待验收。本文历史段落的 pending 以对应时点理解，不把 275 个确定性测试当真实业务通过。
