@@ -1,5 +1,7 @@
 # 12 · Mode Architecture：Work Profiles × Execution Strategies
 
+> **2026-11-20 扩展维度**：增加 ExtensionPolicy（见 [25 · Extension Platform](25-extension-platform.md) / [#73](https://github.com/yuanbaoerer/personal-agent/issues/73)），在 WorkProfile × ExecutionStrategy × ModelPolicy 上选择 Plugin/Skill/Tool/Runtime 能力并收紧权限。不是新的执行模式或平行授权系统，最终约束仍由 Core Mandate/ActionService 执行。GitHub 与 Coding Runtime 验证可组合能力；本篇原第三维设计保留。
+
 > **状态：设计方案（2026-11-17），尚未实施。** 本文记录经讨论确认的架构方向，非已上线功能清单。运行事实以 [README](../README.md)、源码和真实验收记录为准。
 >
 > **核心定位：One Agent Core + Pluggable Work Profiles + Bounded Execution Strategies。**
