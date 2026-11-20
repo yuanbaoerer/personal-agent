@@ -48,6 +48,8 @@ export interface AppConfig {
   ownerOpenId?: string;
   /** Optional SKILL.md root; absent means use ./skills when it exists. */
   skillsDir?: string;
+  /** Optional read-only MCP server config JSON. */
+  mcpConfigPath?: string;
   eventMode: FeishuEventMode;
   feishu: FeishuConfig;
   outbox: {
@@ -197,6 +199,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     },
     ownerOpenId: read("OWNER_FEISHU_OPEN_ID"),
     skillsDir: read("PA_SKILLS_DIR"),
+    mcpConfigPath: read("PA_MCP_CONFIG"),
     eventMode: eventModeRaw,
     feishu: {
       appId,

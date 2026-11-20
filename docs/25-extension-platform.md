@@ -7,7 +7,8 @@
 > - **EXT-01 已实现（Node）**：`plugins/manifest.ts`/`catalog.ts` 提供内置 manifest 校验、命名空间/冲突拒绝、持久 lifecycle、原子 ToolRegistry swap 与 catalog generation；`pa_plugins` 保存 installed/enabled/disabled/error，connection 独立派生；Task 固定 plugin/version/digest/generation，Action 固定 plugin binding/generation；Router、Mandate sanitize、Worker prompt、Action proposal/execute/reconcile 共用 catalog；禁用会 supersede 待执行审批、暂停未派工任务，运行中写入进入 unknown/reconcile。`pa plugins list/status/enable/disable` 与 `/api/v1/plugins` 已接入，enabled 状态跨重启保留，generation 单调递增。
 > - **EXT-02 首批已实现**：GitHub 由 `plugins/github.ts` 包装既有 `GitHubReadTool`，保留 `github.read`、PAT/OAuth、白名单、预授权和加密凭据路径；OAuth 连接/断开/换账号通过 `ExtensionService.credentialChanged` 推进 generation 并撤销旧审批。真实 G1 仍需 owner 凭据与真实仓库，当前 **BLOCKED**，不得用 fake 测试替代。
 > - **EXT-04 loader 已实现（Node）**：`plugins/skills.ts` 索引 `SKILL.md` 元数据（id/version/digest/plugins/permissions/priority），正文按需读取并在每次注入前重新校验 digest、路径、插件 enabled 与权限子集；单文件 64KB、单技能正文 8KB、任务总预算 16KB、最多 8 个技能；不执行任何脚本。Task revision 固定 skill binding，Worker prompt 只把已校验正文作为 guidance 注入，拒绝项进入审计/提示。内置 `github.project-review`、`github.issue-management`、`github.project-digest` 三个只读技能；`GET /api/v1/skills` 与 `pa skills list` 可用。**未完成**：WorkProfile/ExecutionStrategy/ModelPolicy 的完整 ExtensionPolicy 配置层尚未落地，技能选择目前由显式 Mandate + 当前 catalog 交集决定。
-> - **EXT-03 与 EXT-04 策略层未实现**：MCP Host 尚未落地；WorkProfile × ExecutionStrategy × ModelPolicy 的完整 ExtensionPolicy 配置层仍 pending；V1 完整验收（真实 MCP 对照、真实 GitHub 只读）未通过。V1 热启停与 Skills 只承诺 Node，Durable Object 不宣称支持动态加载。V2 SDK/隔离、V3 Registry/分发不变。
+> - **EXT-03 只读远程 MCP 已实现（Node）**：官方 SDK Streamable HTTP client；显式 server/tool allowlist、https/私网/重定向/凭据来源校验、静态参数 schema、timeout、结果截断、catalog 生命周期与禁用 fencing。`PA_MCP_CONFIG` 接入，详见 [26 · MCP Host](26-mcp-host.md)。**未完成**：真实远端/GitHub 官方 MCP 对照、MCP OAuth、stdio transport、分页/resume/重连和任何 MCP 写穿透。
+> - **EXT-04 策略层未实现**：MCP OAuth/真实对照仍未验收；WorkProfile × ExecutionStrategy × ModelPolicy 的完整 ExtensionPolicy 配置层仍 pending；V1 完整验收（真实 MCP 对照、真实 GitHub 只读）未通过。V1 热启停、Skills 与 MCP 只承诺 Node，Durable Object 不宣称支持动态加载。V2 SDK/隔离、V3 Registry/分发不变。
 
 ## 1. 产品决策
 
@@ -74,6 +75,8 @@ Catalog 为宿主内唯一能力目录；加载候选、验证依赖/schema/冲�
 ## 7. MCP Host（EXT-03）
 
 采用当前官方 SDK，先 remote Streamable HTTP；受信本地 stdio adapter 仅允许明确 executable/argv/环境，独立进程、不继承主机 secrets。支持初始化、tools/list、tools/call、取消、超时、连接状态/重连、返回及总预算，传输/能力不支持显式报错。MCP OAuth 使用对应协议 discovery、PKCE、audience/resource、redirect/state、refresh；token 不透传；远端 URL/SSRF/DNS/redirect 策略拒绝任意本地服务和重定向漏密。工具元数据和返回内容不可信，动态列表变化视为权限及 catalog 更新，不自动注册任意写工具。
+
+2026-11-20 已实现 Node 只读远程 MCP：官方 SDK 1.32.2 Streamable HTTP client；每个 server 静态声明 allowed tools/参数 schema，`tools/list` 只确认声明存在，未知工具不注册；所有工具固定只读；URL 仅 https（显式 localhost 测试例外），拒绝私网 DNS/URL credentials/重定向，Bearer 仅来自 `PA_MCP_*` 环境变量；连接、list、call 有 timeout，输出截断 32KB；通过 `PA_MCP_CONFIG` 生成内置插件并进入同一 catalog。真实远端/GitHub MCP 对照、MCP OAuth、stdio、分页/resume 与写穿透未实现，详见 [26 · MCP Host](26-mcp-host.md)。
 
 GitHub 官方 MCP 首先只读兼容测试，比较 repo/Issue/PR/源码来源与 SHA、字段、截断、延迟和授权。保留已有 REST adapter 作为可核验回退；MCP 对照失败/真实凭据缺失不耽误 REST G1 及 GH-02 的有界证据扩展。禁止通用 MCP 写穿透，GH-03 仍要求 typed action/canonicalize/批准/幂等/verify/reconcile。MCP 不是安全沙箱或权限系统。
 

@@ -1,8 +1,11 @@
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
 import { createApp } from "./app.ts";
+import { createGithubPlugin } from "./plugins/github.ts";
+import { connectMcpPlugins, parseMcpServers } from "./plugins/mcp.ts";
 import { FileSkillRuntime } from "./plugins/skills.ts";
+import type { BuiltinPlugin } from "./plugins/types.ts";
 import { ClientApiService } from "./client-api.ts";
 import { FeishuAdapter } from "./channels/feishu/adapter.ts";
 import { FeishuLongConnection } from "./channels/feishu/long-connection.ts";
@@ -93,6 +96,36 @@ function createRuntime(
   return { runtime, close: () => runtime.close() };
 }
 
+async function loadMcpPlugins(
+  configPath: string | undefined,
+  log: AppLogger,
+): Promise<BuiltinPlugin[]> {
+  if (configPath === undefined) {
+    return [];
+  }
+  try {
+    const raw = readFileSync(resolve(configPath), "utf8");
+    const definitions = parseMcpServers(JSON.parse(raw));
+    const result = await connectMcpPlugins(definitions, { env: process.env });
+    for (const failure of result.errors) {
+      log.error("mcp_plugin_unavailable", {
+        id: failure.id,
+        message: failure.error,
+      });
+    }
+    log.info("mcp_plugins_loaded", {
+      requested: definitions.length,
+      connected: result.plugins.filter((plugin) => plugin.configured).length,
+    });
+    return result.plugins;
+  } catch (error) {
+    log.error("mcp_config_invalid", {
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return [];
+  }
+}
+
 async function main(): Promise<void> {
   const config = loadConfig();
   const databasePath =
@@ -158,6 +191,7 @@ async function main(): Promise<void> {
       errors: skills.errors().length,
     });
   }
+  const mcpPlugins = await loadMcpPlugins(config.mcpConfigPath, logger);
   const app = createApp({
     store,
     runtime: local.runtime,
@@ -166,6 +200,7 @@ async function main(): Promise<void> {
     magpie: config.magpie,
     budgetLimits: config.budget,
     skills,
+    builtinPlugins: [createGithubPlugin(github), ...mcpPlugins],
     // A keyless process must not persist a placeholder session id: the next
     // run with a model key would inherit an id Pi cannot resolve.
     model:

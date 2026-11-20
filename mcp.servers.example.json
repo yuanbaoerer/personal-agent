@@ -1,0 +1,27 @@
+{
+  "servers": [
+    {
+      "id": "example-mcp",
+      "name": "Example read-only MCP",
+      "version": "0.1.0",
+      "url": "https://mcp.example.com/mcp",
+      "authEnv": "PA_MCP_EXAMPLE_TOKEN",
+      "trustedHosts": [],
+      "timeoutMs": 15000,
+      "tools": [
+        {
+          "remoteName": "search_docs",
+          "name": "search_docs",
+          "description": "Search documentation through the remote MCP server.",
+          "args": {
+            "query": {
+              "type": "string",
+              "required": true,
+              "maxLength": 200
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
