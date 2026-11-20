@@ -1,5 +1,7 @@
 # 19 · GitHub OAuth（个人开发者，E1）
 
+> **2026-11-20 插件化迁移**：[#68 EXT-02](https://github.com/yuanbaoerer/personal-agent/issues/68) 将复用本篇 OAuth/PAT 及加密存储，纳入 [25 · Credential Broker](25-extension-platform.md)；已有 URL/env/旧授权审计兼容，账号连接与插件启停、Task Mandate 分离。GitHub App 长期后台身份见 #71；MCP OAuth 独立遵循协议，不假定认证兼容。
+
 > **2026-11-20 后续能力边界**：本篇 D21 OAuth 只读 E1 路径继续保留。真实 G1 可先用 repo-scoped fine-grained read-only PAT。未来 [24 · GitHub Project Management MVP](24-github-project-management.md) / [#61](https://github.com/yuanbaoerer/personal-agent/issues/61) 受控 Issue 写入使用独立最小权限凭据与逐次审批，不能从现有 OAuth repo scope 自动继承写权限；GitHub App 是后续建议，并未实施。
 
 > 面向单 owner / 个人开发者自托管。当前 OAuth 只在 Node 入口实现；Cloudflare Worker 仍使用 `GITHUB_TOKEN` PAT。仓库仍 private，OAuth 凭据需真实 GitHub OAuth App 才能验收。
