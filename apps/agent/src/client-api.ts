@@ -7,9 +7,10 @@ import {
   type ClientScope,
   type ClientTokenRecord,
 } from "./storage/client-tokens.ts";
+import { stableStringify } from "./actions/tooling.ts";
 import { buildDiagnostics } from "./observability/diagnostics.ts";
 import { buildUsage } from "./observability/usage.ts";
-import { PluginNotFoundError } from "./plugins/catalog.ts";
+import { PluginNotFoundError, PluginNotConfiguredError } from "./plugins/catalog.ts";
 import type { AuditFeedItem, Store } from "./storage/store.ts";
 import type {
   ActionRecord,
@@ -250,9 +251,21 @@ function sameTaskRequest(
     (task.mandate.skills ?? []).join("\u0000") === (mandate.skills ?? []).join("\u0000") &&
     task.mandate.notes === mandate.notes &&
     task.mandate.project === mandate.project &&
-    JSON.stringify(task.extension?.policy ?? null) ===
-      JSON.stringify(extensionPolicy ?? null)
+    policyKey(task.extension?.policy) === policyKey(extensionPolicy)
   );
+}
+
+function policyKey(policy: ExtensionPolicy | undefined): string {
+  if (policy === undefined) {
+    return "null";
+  }
+  return stableStringify({
+    ...(policy.plugins === undefined ? {} : { plugins: policy.plugins }),
+    ...(policy.skills === undefined ? {} : { skills: policy.skills }),
+    ...(policy.permissions === undefined
+      ? {}
+      : { permissions: policy.permissions }),
+  });
 }
 
 function parseExtensionPolicy(value: unknown): ExtensionPolicy | undefined {
@@ -631,6 +644,9 @@ export class ClientApiService {
         } catch (error) {
           if (error instanceof PluginNotFoundError) {
             throw new ApiError(404, "plugin_not_found");
+          }
+          if (error instanceof PluginNotConfiguredError) {
+            throw new ApiError(409, "plugin_not_configured");
           }
           throw error;
         }

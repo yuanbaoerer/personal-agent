@@ -55,6 +55,13 @@ export class PluginNotFoundError extends Error {
   }
 }
 
+export class PluginNotConfiguredError extends Error {
+  constructor(id: string) {
+    super(`plugin is not configured: ${id}`);
+    this.name = "PluginNotConfiguredError";
+  }
+}
+
 export interface PluginCatalogDeps {
   store: Store;
   registry: ToolRegistry;
@@ -341,6 +348,9 @@ export class PluginCatalog implements CapabilityFence, CapabilityView {
     const row = this.#rows.get(id);
     if (provider === undefined || row === undefined) {
       throw new PluginNotFoundError(id);
+    }
+    if (enabled && !provider.configured) {
+      throw new PluginNotConfiguredError(id);
     }
 
     const beforeTools = this.toolNamesFor(id);

@@ -211,7 +211,7 @@ describe("action reconciliation bounds", () => {
     const outcome = await fixture.actionService.handleReconcile({ actionId: action.id }, 1);
 
     assert.equal(outcome.status, "done");
-    assert.equal(fixture.services.actions.get(action.id)?.status, "superseded");
+    assert.equal(fixture.services.actions.get(action.id)?.status, "needs_manual");
     assert.equal(fixture.lamp.getState().brightness, 0);
   });
 
@@ -226,7 +226,7 @@ describe("action reconciliation bounds", () => {
     const outcome = await fixture.actionService.handleReconcile({ actionId: action.id }, 1);
 
     assert.equal(outcome.status, "done");
-    assert.equal(fixture.services.actions.get(action.id)?.status, "superseded");
+    assert.equal(fixture.services.actions.get(action.id)?.status, "needs_manual");
     assert.equal(fixture.lamp.getState().brightness, 0);
   });
 });

@@ -47,6 +47,7 @@ async function call(
   method: string,
   path: string,
   body?: unknown,
+  idempotencyKey = `test-${Math.random()}`,
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   const request: ClientApiRequest = {
     method,
@@ -54,7 +55,7 @@ async function call(
     query: new URLSearchParams(),
     headers: {
       authorization: `Bearer ${ADMIN}`,
-      "idempotency-key": `test-${Math.random()}`,
+      "idempotency-key": idempotencyKey,
     },
     body: body === undefined ? undefined : JSON.stringify(body),
   };
@@ -209,6 +210,34 @@ describe("ExtensionPolicy", () => {
       extensionPolicy: { permissions: { "repository.read": "maybe" } },
     });
     assert.equal(invalid.status, 400);
+
+    const replayBody = {
+      goal: "read repo",
+      completionCriteria: "summary",
+      mandate: { resources: ["chat", "github"], tools: ["github.read"] },
+      extensionPolicy: {
+        permissions: { "issue.write": "deny", "repository.read": "allow" },
+      },
+    };
+    const replayFirst = await call(api, "POST", "/api/v1/tasks", replayBody, "policy-order");
+    assert.equal(replayFirst.status, 201);
+    const replaySecond = await call(
+      api,
+      "POST",
+      "/api/v1/tasks",
+      {
+        ...replayBody,
+        extensionPolicy: {
+          permissions: { "repository.read": "allow", "issue.write": "deny" },
+        },
+      },
+      "policy-order",
+    );
+    assert.equal(replaySecond.status, 200);
+    assert.equal(
+      (replaySecond.body.task as TaskRecord).id,
+      (replayFirst.body.task as TaskRecord).id,
+    );
     services.store.close();
   });
 
