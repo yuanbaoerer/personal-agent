@@ -30,6 +30,7 @@ export interface CapabilityFence {
 
 /** What Router/Worker may see about the live catalog. */
 export interface CapabilityView {
+  generation(): number;
   toolNames(): string[];
   resources(): string[];
   resourceForTool(name: string): string | undefined;

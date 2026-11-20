@@ -393,6 +393,13 @@ describe("plugin catalog", () => {
     assert.equal(result.generation, generation + 1);
     assert.equal(result.revokedActions, 1);
     assert.equal(services.actions.get(action.id)?.status, "superseded");
+    assert.equal(
+      services.actionService.propose(task, claimed.assignment, {
+        tool: "github.read",
+        args: { operation: "repo", repo: "owner/repo" },
+      }),
+      undefined,
+    );
     services.store.close();
   });
 
@@ -496,6 +503,28 @@ describe("plugin catalog", () => {
     const current = services.tasks.get(task.id);
     assert.equal(current?.status, "needs_review");
     assert.match(current?.lastError ?? "", /capability unavailable/);
+    services.store.close();
+  });
+
+  it("pauses a queued task when the catalog generation changed", async () => {
+    const services = createServices({
+      now: () => NOW,
+      github: { token: "secret", allowedRepos: ["owner/repo"] },
+    });
+    const task = services.taskService.create({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "plugin:stale-generation-task",
+      goal: "read repo",
+      completionCriteria: "summary",
+      mandate: { resources: ["chat", "github"], tools: ["github.read"] },
+    });
+    await services.plugins.disable("github", "owner");
+    await services.plugins.enable("github", "owner");
+    await services.effectDispatcher.drain(20);
+    const current = services.tasks.get(task.id);
+    assert.equal(current?.status, "needs_review");
+    assert.match(current?.lastError ?? "", /catalog generation changed/);
     services.store.close();
   });
 

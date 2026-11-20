@@ -209,6 +209,9 @@ export class PluginCatalog implements CapabilityFence, CapabilityView {
     if (binding === undefined) {
       return "plugin_not_in_task_snapshot";
     }
+    if (task.extension.catalogGeneration !== this.#generation) {
+      return "task_catalog_generation_changed";
+    }
     if (
       binding.version !== entry.pluginVersion ||
       binding.digest !== entry.pluginDigest

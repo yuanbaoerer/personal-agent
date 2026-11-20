@@ -667,6 +667,48 @@ export class TaskService {
       return { status: "done" };
     }
 
+    if (this.#capabilities !== undefined && claimed.task.extension !== undefined) {
+      const usesPluginTool = claimed.task.mandate.tools.some(
+        (tool) => this.#capabilities?.toolInfo(tool)?.pluginId !== undefined,
+      );
+      if (
+        usesPluginTool &&
+        claimed.task.extension.catalogGeneration !== this.#capabilities.generation()
+      ) {
+        const at = this.#now().toISOString();
+        this.#tasks.markAssignmentExpired(claimed.assignment.id, at);
+        const updated = this.#tasks.updateTask(
+          claimed.task.id,
+          claimed.task.revision,
+          {
+            status: "needs_review",
+            lastError: `catalog generation changed: task=${claimed.task.extension.catalogGeneration} current=${this.#capabilities.generation()}`,
+            updatedAt: at,
+          },
+        );
+        if (updated !== undefined) {
+          this.#store.recordAudit({
+            event: "task.catalog_generation_changed",
+            subjectType: "task",
+            subjectId: claimed.task.id,
+            after: {
+              taskGeneration: claimed.task.extension.catalogGeneration,
+              currentGeneration: this.#capabilities.generation(),
+            },
+            traceId: `task:${claimed.task.id}`,
+            occurredAt: at,
+          });
+          this.#reply(
+            claimed.task,
+            "failure",
+            "任务固定的插件目录版本已变化，未派工。请重新确认或新建任务。",
+            `catalog-generation-changed:${claimed.task.revision}`,
+          );
+        }
+        return { status: "done" };
+      }
+    }
+
     const budget = await this.#budget?.check({
       role: "worker",
       taskId: claimed.task.id,
