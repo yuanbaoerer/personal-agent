@@ -293,6 +293,27 @@ describe("MCP read-only plugin", () => {
     }
   });
 
+  it("rejects an MCP response that exceeds the transport byte budget", async () => {
+    const fake = await startFakeServer({
+      call: async () => ({
+        content: [{ type: "text", text: "x".repeat(3 * 1024 * 1024) }],
+      }),
+    });
+    try {
+      const result = await connectMcpPlugin(definition(fake.url));
+      assert.equal(result.error, undefined);
+      const tool = result.plugin.createTools()[0];
+      assert.ok(tool);
+      await assert.rejects(
+        () => tool.execute({ value: "x" }),
+        /2 MiB|response exceeded|MCP call failed/i,
+      );
+      result.plugin.close?.();
+    } finally {
+      await fake.close();
+    }
+  });
+
   it("times out a slow MCP call without exposing arbitrary arguments", async () => {
     const fake = await startFakeServer({
       call: async () => {

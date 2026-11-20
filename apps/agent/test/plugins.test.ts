@@ -303,6 +303,17 @@ describe("plugin catalog", () => {
     services.store.close();
   });
 
+  it("refuses to enable an unconfigured plugin", async () => {
+    const services = createServices({ now: () => NOW });
+    await assert.rejects(
+      services.plugins.enable("github", "owner"),
+      /not configured/,
+    );
+    const plugin = await services.plugins.get("github");
+    assert.equal(plugin?.enabled, false);
+    services.store.close();
+  });
+
   it("enables GitHub as a builtin plugin, disables it hot, and fences tasks", async () => {
     const services = createServices({
       now: () => NOW,
@@ -393,6 +404,13 @@ describe("plugin catalog", () => {
     assert.equal(result.generation, generation + 1);
     assert.equal(result.revokedActions, 1);
     assert.equal(services.actions.get(action.id)?.status, "superseded");
+    assert.equal(
+      services.actionService.propose(task, claimed.assignment, {
+        tool: "github.read",
+        args: { operation: "repo", repo: "owner/repo" },
+      }),
+      undefined,
+    );
     services.store.close();
   });
 
@@ -455,6 +473,54 @@ describe("plugin catalog", () => {
     services.store.close();
   });
 
+  it("keeps an in-flight write needs_manual when only the generation changed", async () => {
+    const tool = new SlowWriteTool();
+    const writePlugin: BuiltinPlugin = {
+      manifest: fakeWriteManifest(),
+      configured: true,
+      createTools: () => [tool],
+      connection: () => ({ status: "connected" }),
+    };
+    const services = createServices({
+      now: () => NOW,
+      builtinPlugins: [writePlugin],
+    });
+    const task = services.taskService.create({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "plugin:reconcile-generation",
+      goal: "write",
+      completionCriteria: "write",
+      mandate: { resources: ["chat", "fake"], tools: ["fake.write"] },
+    });
+    const claimed = services.tasks.claimNext(NOW.toISOString(), 60_000, 2);
+    assert.ok(claimed);
+    const action = services.actionService.propose(task, claimed.assignment, {
+      tool: "fake.write",
+      args: { value: "x" },
+    });
+    assert.ok(action);
+    services.actionService.approve({
+      actionId: action.id,
+      nonce: action.nonce,
+      approverId: services.owner.id,
+      conversationId: services.conversation.id,
+    });
+
+    const running = services.actionService.handleExecute({ actionId: action.id });
+    await sleep(5);
+    const rotated = await services.plugins.credentialChanged("fake", "owner");
+    assert.equal(rotated.generation, services.catalog.generation());
+    tool.release();
+    await running;
+    assert.equal(services.actions.get(action.id)?.status, "unknown");
+
+    await services.effectDispatcher.drain(20);
+    assert.equal(services.actions.get(action.id)?.status, "needs_manual");
+    assert.notEqual(services.actions.get(action.id)?.status, "superseded");
+    services.store.close();
+  });
+
   it("does not create a task for a capability that is not enabled", async () => {
     const services = createServices();
     services.model.push({
@@ -496,6 +562,28 @@ describe("plugin catalog", () => {
     const current = services.tasks.get(task.id);
     assert.equal(current?.status, "needs_review");
     assert.match(current?.lastError ?? "", /capability unavailable/);
+    services.store.close();
+  });
+
+  it("pauses a queued task when the catalog generation changed", async () => {
+    const services = createServices({
+      now: () => NOW,
+      github: { token: "secret", allowedRepos: ["owner/repo"] },
+    });
+    const task = services.taskService.create({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "plugin:stale-generation-task",
+      goal: "read repo",
+      completionCriteria: "summary",
+      mandate: { resources: ["chat", "github"], tools: ["github.read"] },
+    });
+    await services.plugins.disable("github", "owner");
+    await services.plugins.enable("github", "owner");
+    await services.effectDispatcher.drain(20);
+    const current = services.tasks.get(task.id);
+    assert.equal(current?.status, "needs_review");
+    assert.match(current?.lastError ?? "", /catalog generation changed/);
     services.store.close();
   });
 

@@ -1,6 +1,7 @@
 import type {
   ActionRecord,
   AssignmentRecord,
+  ExtensionPolicy,
   MemoryRecord,
   ScheduleRecord,
   TaskInputRecord,
@@ -139,6 +140,7 @@ export class ClientApiClient {
     goal: string;
     completionCriteria: string;
     mandate?: TaskRecord["mandate"];
+    extensionPolicy?: ExtensionPolicy;
     priority?: number;
     deadline?: string;
   }, idempotencyKey: string): Promise<TaskRecord> {

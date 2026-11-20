@@ -105,7 +105,14 @@ async function loadMcpPlugins(
   }
   try {
     const raw = readFileSync(resolve(configPath), "utf8");
-    const definitions = parseMcpServers(JSON.parse(raw));
+    const parsed = parseMcpServers(JSON.parse(raw));
+    const definitions = parsed.filter((definition) => {
+      if (definition.id === "github") {
+        log.error("mcp_plugin_reserved_id", { id: definition.id });
+        return false;
+      }
+      return true;
+    });
     const result = await connectMcpPlugins(definitions, { env: process.env });
     for (const failure of result.errors) {
       log.error("mcp_plugin_unavailable", {

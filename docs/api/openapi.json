@@ -1402,6 +1402,9 @@
             "type": "object",
             "additionalProperties": true
           },
+          "extensionPolicy": {
+            "$ref": "#/components/schemas/ExtensionPolicy"
+          },
           "priority": {
             "type": "integer",
             "minimum": 0,
@@ -1527,6 +1530,29 @@
           },
           "timezone": {
             "type": "string"
+          }
+        }
+      },
+      "ExtensionPolicy": {
+        "type": "object",
+        "properties": {
+          "plugins": {
+            "type": "array",
+            "maxItems": 20,
+            "items": { "type": "string" }
+          },
+          "skills": {
+            "type": "array",
+            "maxItems": 20,
+            "items": { "type": "string" }
+          },
+          "permissions": {
+            "type": "object",
+            "maxProperties": 50,
+            "additionalProperties": {
+              "type": "string",
+              "enum": ["allow", "require_approval", "deny"]
+            }
           }
         }
       },

@@ -63,6 +63,7 @@ async function withSkillDir(
 
 function capabilityView(): CapabilityView {
   return {
+    generation: () => 1,
     toolNames: () => ["github.read"],
     resources: () => ["chat", "github"],
     resourceForTool: (name) => (name === "github.read" ? "github" : undefined),

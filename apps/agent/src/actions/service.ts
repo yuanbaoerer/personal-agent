@@ -726,15 +726,34 @@ export class ActionService {
     const unauthorized = this.#executionGuard(action);
     if (unauthorized !== undefined) {
       const at = this.#now().toISOString();
-      if (!this.#actions.markSuperseded(action.id, "action is no longer authorized", at)) {
-        this.#actions.markNeedsManual(action.id, "action is no longer authorized", at);
-        this.#auditAction(action, "action.needs_manual", {
-          reason: "unauthorized",
-        });
+      if (tool.readOnly === true) {
+        // A read has no external side effect; it is safe to close it as not run.
+        this.#actions.markSuperseded(
+          action.id,
+          "action is no longer authorized",
+          at,
+        );
+        this.#auditAction(action, "action.superseded", { reason: unauthorized });
+        this.#reply(
+          action,
+          "failure",
+          "该只读动作已不再被授权，未核对。",
+          "superseded",
+        );
       } else {
-        this.#auditAction(action, "action.superseded", { reason: "unauthorized" });
+        // A write may have landed before the authorization changed. Never
+        // report it as unexecuted; keep it in the manual queue.
+        this.#actions.markNeedsManual(action.id, unauthorized, at);
+        this.#auditAction(action, "action.needs_manual", {
+          reason: `reconcile_unauthorized:${unauthorized}`,
+        });
+        this.#reply(
+          action,
+          "failure",
+          "动作结果未知且当前授权已失效，需要人工核对；不能宣称未执行。",
+          "needs_manual",
+        );
       }
-      this.#reply(action, "failure", "该动作已不再被授权，未核对。", "superseded");
       this.#onSettled(action.taskId);
       return { status: "done" };
     }
@@ -1165,6 +1184,9 @@ export class ActionService {
     }
     const task = this.#tasks?.get(action.taskId);
     if (task === undefined) {
+      return false;
+    }
+    if (this.#capabilities?.requiresApproval(task, tool.name) === true) {
       return false;
     }
 

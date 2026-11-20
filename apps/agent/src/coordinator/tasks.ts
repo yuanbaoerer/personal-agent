@@ -8,6 +8,7 @@ import type {
   MemoryRecord,
   StateClaim,
   SkillRejection,
+  ExtensionPolicy,
   TaskExtensionSnapshot,
   TaskRecord,
   TaskStatus,
@@ -29,6 +30,7 @@ import type { MemoryRepository } from "../storage/personal.ts";
 import type { Store } from "../storage/store.ts";
 import type { EffectDispatcher, EffectOutcome } from "../delivery/effects.ts";
 import type { BudgetService } from "../observability/magpie.ts";
+import { ExtensionPolicyError } from "../domain/errors.ts";
 import type { AgentRuntime, WakeScheduler } from "../runtime/types.ts";
 import {
   TASK_STATUSES,
@@ -87,6 +89,7 @@ export interface CreateTaskInput {
   priority?: number;
   deadline?: string;
   schedulePolicyId?: string;
+  extensionPolicy?: ExtensionPolicy;
 }
 
 const DEFAULT_MANDATE = {
@@ -166,7 +169,8 @@ export class TaskService {
   create(input: CreateTaskInput): TaskRecord {
     const now = this.#now().toISOString();
     const mandate = input.mandate ?? DEFAULT_MANDATE;
-    const extension = this.#extensionFor(mandate);
+    this.#assertPolicy(mandate, input.extensionPolicy);
+    const extension = this.#extensionFor(mandate, input.extensionPolicy);
     const { inserted, task } = this.#tasks.insert({
       ownerId: input.ownerId,
       conversationId: input.conversationId,
@@ -220,13 +224,16 @@ export class TaskService {
     return [...ids];
   }
 
-  #extensionFor(mandate: TaskRecord["mandate"]): TaskExtensionSnapshot | undefined {
+  #extensionFor(
+    mandate: TaskRecord["mandate"],
+    policy?: ExtensionPolicy,
+  ): TaskExtensionSnapshot | undefined {
     const base = this.#extensions?.snapshot();
-    if (base === undefined || this.#skills === undefined) {
-      return base;
+    if (base === undefined) {
+      return undefined;
     }
-    if (this.#capabilities === undefined) {
-      return base;
+    if (this.#skills === undefined || this.#capabilities === undefined) {
+      return policy === undefined ? base : { ...base, policy };
     }
     const selection = this.#skills.select({
       mandate,
@@ -238,7 +245,48 @@ export class TaskService {
       skills: selection.skills.length > 0 ? selection.skills : undefined,
       rejectedSkills:
         selection.rejected.length > 0 ? selection.rejected : undefined,
+      policy,
     };
+  }
+
+  #assertPolicy(
+    mandate: TaskRecord["mandate"],
+    policy: ExtensionPolicy | undefined,
+  ): void {
+    if (policy === undefined || this.#capabilities === undefined) {
+      return;
+    }
+    for (const tool of mandate.tools) {
+      const info = this.#capabilities.toolInfo(tool);
+      if (info === undefined) {
+        continue;
+      }
+      if (
+        policy.plugins !== undefined &&
+        info.pluginId !== undefined &&
+        !policy.plugins.includes(info.pluginId)
+      ) {
+        throw new ExtensionPolicyError(
+          `extensionPolicy.plugins does not allow ${info.pluginId} for ${tool}`,
+        );
+      }
+      for (const permission of info.permissions) {
+        if (policy.permissions?.[permission] === "deny") {
+          throw new ExtensionPolicyError(
+            `extensionPolicy denies ${permission} required by ${tool}`,
+          );
+        }
+      }
+    }
+    if (policy.skills !== undefined) {
+      for (const skill of mandate.skills ?? []) {
+        if (!policy.skills.includes(skill)) {
+          throw new ExtensionPolicyError(
+            `extensionPolicy.skills does not allow ${skill}`,
+          );
+        }
+      }
+    }
   }
 
   revise(
@@ -256,6 +304,12 @@ export class TaskService {
       .map((assignment) => assignment.sessionId)
       .filter((sessionId) => sessionId.length > 0);
     const current = this.#tasks.get(taskId);
+    if (current !== undefined) {
+      this.#assertPolicy(
+        changes.mandate ?? current.mandate,
+        current.extension?.policy,
+      );
+    }
     const task = this.#tasks.revise(
       taskId,
       {
@@ -263,7 +317,10 @@ export class TaskService {
         extension:
           current === undefined
             ? undefined
-            : this.#extensionFor(changes.mandate ?? current.mandate),
+            : this.#extensionFor(
+                changes.mandate ?? current.mandate,
+                current.extension?.policy,
+              ),
       },
       now,
     );
@@ -608,6 +665,48 @@ export class TaskService {
         );
       }
       return { status: "done" };
+    }
+
+    if (this.#capabilities !== undefined && claimed.task.extension !== undefined) {
+      const usesPluginTool = claimed.task.mandate.tools.some(
+        (tool) => this.#capabilities?.toolInfo(tool)?.pluginId !== undefined,
+      );
+      if (
+        usesPluginTool &&
+        claimed.task.extension.catalogGeneration !== this.#capabilities.generation()
+      ) {
+        const at = this.#now().toISOString();
+        this.#tasks.markAssignmentExpired(claimed.assignment.id, at);
+        const updated = this.#tasks.updateTask(
+          claimed.task.id,
+          claimed.task.revision,
+          {
+            status: "needs_review",
+            lastError: `catalog generation changed: task=${claimed.task.extension.catalogGeneration} current=${this.#capabilities.generation()}`,
+            updatedAt: at,
+          },
+        );
+        if (updated !== undefined) {
+          this.#store.recordAudit({
+            event: "task.catalog_generation_changed",
+            subjectType: "task",
+            subjectId: claimed.task.id,
+            after: {
+              taskGeneration: claimed.task.extension.catalogGeneration,
+              currentGeneration: this.#capabilities.generation(),
+            },
+            traceId: `task:${claimed.task.id}`,
+            occurredAt: at,
+          });
+          this.#reply(
+            claimed.task,
+            "failure",
+            "任务固定的插件目录版本已变化，未派工。请重新确认或新建任务。",
+            `catalog-generation-changed:${claimed.task.revision}`,
+          );
+        }
+        return { status: "done" };
+      }
     }
 
     const budget = await this.#budget?.check({
@@ -1437,9 +1536,31 @@ function workerPrompt(
     );
   }
   if (capabilities !== undefined) {
+    const policy = task.extension?.policy;
+    if (policy !== undefined) {
+      lines.push(
+        `ExtensionPolicy: plugins=${policy.plugins?.join(",") ?? "*"} skills=${policy.skills?.join(",") ?? "*"} permissions=${JSON.stringify(policy.permissions ?? {})}`,
+        "The policy only narrows this task; it never grants tools, resources or approvals.",
+      );
+    }
     const available = task.mandate.tools
       .map((name) => capabilities.toolInfo(name))
-      .filter((info): info is NonNullable<typeof info> => info !== undefined);
+      .filter((info): info is NonNullable<typeof info> => info !== undefined)
+      .filter((info) => {
+        if (policy === undefined) {
+          return true;
+        }
+        if (
+          policy.plugins !== undefined &&
+          info.pluginId !== undefined &&
+          !policy.plugins.includes(info.pluginId)
+        ) {
+          return false;
+        }
+        return !info.permissions.some(
+          (permission) => policy.permissions?.[permission] === "deny",
+        );
+      });
     if (available.length > 0) {
       lines.push(
         `Enabled capability catalog (generation ${task.extension?.catalogGeneration ?? "unpinned"}):`,

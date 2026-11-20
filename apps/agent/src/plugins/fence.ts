@@ -18,6 +18,8 @@ export interface CapabilityFence {
   bindingForTool(name: string): PluginToolBinding | undefined;
   /** Reject a new proposal when the task/catalog pair is stale. */
   checkProposal(task: TaskRecord, toolName: string): string | undefined;
+  /** True when the task's ExtensionPolicy forces an owner approval. */
+  requiresApproval(task: TaskRecord, toolName: string): boolean;
   /** Re-check immediately before acting on a previously approved action. */
   checkAction(
     action: ActionRecord,
@@ -28,6 +30,7 @@ export interface CapabilityFence {
 
 /** What Router/Worker may see about the live catalog. */
 export interface CapabilityView {
+  generation(): number;
   toolNames(): string[];
   resources(): string[];
   resourceForTool(name: string): string | undefined;

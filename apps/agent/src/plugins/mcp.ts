@@ -20,6 +20,7 @@ const VERSION_PATTERN =
 const AUTH_ENV = /^PA_MCP_[A-Z0-9_]{1,80}$/;
 const MAX_TOOLS = 50;
 const MAX_TEXT_BYTES = 32 * 1024;
+const MAX_MCP_RESPONSE_BYTES = 2 * 1024 * 1024;
 
 export interface McpArgSpec {
   type: "string" | "number" | "boolean";
@@ -94,12 +95,36 @@ export async function connectMcpPlugin(
     if (token !== undefined) {
       headers.authorization = `Bearer ${token}`;
     }
+    const trustedHosts = normalized.trustedHosts ?? [];
+    const baseFetch = options.fetch ?? fetch;
+    const guardedFetch: typeof fetch = async (input, init) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url;
+      await assertSafeUrl(
+        url,
+        normalized.allowInsecureLocalhost === true,
+        trustedHosts,
+      );
+      const response = await baseFetch(input, init);
+      const contentLength = response.headers.get("content-length");
+      if (
+        contentLength !== null &&
+        Number(contentLength) > MAX_MCP_RESPONSE_BYTES
+      ) {
+        throw new Error("MCP response exceeded the 2 MiB budget");
+      }
+      return capResponse(response);
+    };
     const transport = new StreamableHTTPClientTransport(new URL(normalized.url), {
       requestInit: {
         headers,
         redirect: "error",
       },
-      fetch: options.fetch,
+      fetch: guardedFetch,
     });
     client = new Client(
       { name: "personal-agent", version: "0.1.0" },
@@ -746,6 +771,30 @@ function optionalNumber(value: unknown, field: string): number | undefined {
     throw new Error(`${field} must be a finite number`);
   }
   return value;
+}
+
+function capResponse(response: Response): Response {
+  if (response.body === null) {
+    return response;
+  }
+  let total = 0;
+  const capped = response.body.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        total += chunk.byteLength;
+        if (total > MAX_MCP_RESPONSE_BYTES) {
+          controller.error(new Error("MCP response exceeded the 2 MiB budget"));
+          return;
+        }
+        controller.enqueue(chunk);
+      },
+    }),
+  );
+  return new Response(capped, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
 }
 
 function truncateUtf8(value: string, maxBytes: number): string {

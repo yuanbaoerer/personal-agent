@@ -61,7 +61,7 @@ export function createGithubPlugin(config?: GitHubReadConfig): BuiltinPlugin {
     configured,
     createTools(): ActionTool[] {
       if (!configured || config === undefined) {
-        return [];
+        throw new Error("GitHub plugin is not configured");
       }
       return [new GitHubReadTool(config)];
     },

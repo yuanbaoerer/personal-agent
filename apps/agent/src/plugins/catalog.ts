@@ -55,6 +55,13 @@ export class PluginNotFoundError extends Error {
   }
 }
 
+export class PluginNotConfiguredError extends Error {
+  constructor(id: string) {
+    super(`plugin is not configured: ${id}`);
+    this.name = "PluginNotConfiguredError";
+  }
+}
+
 export interface PluginCatalogDeps {
   store: Store;
   registry: ToolRegistry;
@@ -191,6 +198,10 @@ export class PluginCatalog implements CapabilityFence, CapabilityView {
         ? "plugin_not_enabled"
         : undefined;
     }
+    const policyReason = this.#policyRejection(task, entry);
+    if (policyReason !== undefined) {
+      return policyReason;
+    }
     if (entry.pluginId === undefined) {
       return undefined;
     }
@@ -205,6 +216,9 @@ export class PluginCatalog implements CapabilityFence, CapabilityView {
     if (binding === undefined) {
       return "plugin_not_in_task_snapshot";
     }
+    if (task.extension.catalogGeneration !== this.#generation) {
+      return "task_catalog_generation_changed";
+    }
     if (
       binding.version !== entry.pluginVersion ||
       binding.digest !== entry.pluginDigest
@@ -212,6 +226,20 @@ export class PluginCatalog implements CapabilityFence, CapabilityView {
       return "plugin_version_changed";
     }
     return undefined;
+  }
+
+  requiresApproval(task: TaskRecord, toolName: string): boolean {
+    const policy = task.extension?.policy;
+    if (policy?.permissions === undefined) {
+      return false;
+    }
+    const entry = this.#entries.get(toolName);
+    if (entry === undefined) {
+      return false;
+    }
+    return entry.permissions.some(
+      (permission) => policy.permissions?.[permission] === "require_approval",
+    );
   }
 
   checkAction(
@@ -278,6 +306,29 @@ export class PluginCatalog implements CapabilityFence, CapabilityView {
     return this.#generation;
   }
 
+  #policyRejection(
+    task: TaskRecord,
+    entry: CatalogEntry,
+  ): string | undefined {
+    const policy = task.extension?.policy;
+    if (policy === undefined) {
+      return undefined;
+    }
+    if (
+      policy.plugins !== undefined &&
+      entry.pluginId !== undefined &&
+      !policy.plugins.includes(entry.pluginId)
+    ) {
+      return "plugin_not_allowed_by_policy";
+    }
+    for (const permission of entry.permissions) {
+      if (policy.permissions?.[permission] === "deny") {
+        return "permission_denied_by_policy";
+      }
+    }
+    return undefined;
+  }
+
   async list(): Promise<PluginView[]> {
     const ids = [...this.#providers.keys()].sort();
     const views = await Promise.all(ids.map((id) => this.#view(id)));
@@ -297,6 +348,9 @@ export class PluginCatalog implements CapabilityFence, CapabilityView {
     const row = this.#rows.get(id);
     if (provider === undefined || row === undefined) {
       throw new PluginNotFoundError(id);
+    }
+    if (enabled && !provider.configured) {
+      throw new PluginNotConfiguredError(id);
     }
 
     const beforeTools = this.toolNamesFor(id);
