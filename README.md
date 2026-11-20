@@ -1,5 +1,7 @@
 # Personal Agent
 
+> **下一垂直产品交付（2026-11-20，规划）**：[GitHub Project Management MVP → Development Orchestrator](docs/24-github-project-management.md)，总跟踪 [#65](https://github.com/yuanbaoerer/personal-agent/issues/65)。先真实 GitHub G1、项目绑定/源码证据、审批式 Issue 维护与项目评估，再接一个 Coding Agent、隔离 Draft PR 与独立 Review。现有 #41 Reliable Core 真实验收及安全预算前置不降低；当前 GitHub 仍只读 E1，新增写入/开发调度尚未实施。
+
 > **当前优先交付（2026-11-19）：MVP Functional Ready**。在 v0.2 Reliable Core 主线内先实现可持续私有自用的主体功能，见 [21 · MVP 实施纲领](docs/21-mvp-functional-ready.md)、[22 · 验收 Runbook](docs/22-mvp-acceptance-runbook.md)、[23 · 安全威胁模型](docs/23-security-redteam.md) 与 [#41 总任务](https://github.com/yuanbaoerer/personal-agent/issues/41)。MVP-01 [#38 状态感知](https://github.com/yuanbaoerer/personal-agent/issues/38) 与 MVP-02 [#39 自然语言主入口](https://github.com/yuanbaoerer/personal-agent/issues/39) 代码已合并；真实 E3/M02 仍待 owner 在飞书客户端实际键入；下一步按 #41 在 #10/#7 中选择，真实 GitHub、常驻 Node、主动工作、预算安全与 14 条验收继续保留。现有 CLI/TUI 保留，暂停扩建非阻断能力。D19/D20 已记录部分真实飞书/模型/短提醒成功及状态类任务的语义缺陷；完整 G1–G3/E3/E4 和长期证明仍待验收。本文历史段落的 pending 以对应时点理解，不把 275 个确定性测试当真实业务通过。
 
 > **多端与跨平台规划（2026-11-14，2026-11-19 更新）**：长期支持 macOS（Apple Silicon / Intel）和 Windows 11 x64 的 CLI / TUI / Desktop，采用一个 Agent Core + 统一 Client API。**本地 Node 的最小 Client API / `pa` CLI / `pa tui` 已实现（E1）**；远程设备鉴权/TLS、SSE 重连与 WebSocket、真实 Terminal 验收和 Desktop 仍 pending。详见 [10 · 跨平台客户端规划](docs/10-client-platforms.md) 与 [20 · 本地 Client API](docs/20-local-client-api.md)。
@@ -291,6 +293,8 @@ flowchart TB
 > **面向全球开源社区（2026-11-14 规划）**：已补充英文优先的社区文档、地区/Provider 可用性、Agent 威胁模型、隐私数据流、供应链可信发行、长期治理和无障碍验收。详见 [11 · 全球开源社区路线图](docs/11-global-open-source-community.md)。此为规划，未完成开源或更改仓库可见性。
 
 ## 文档导航
+
+新增垂直场景规划：[24 · GitHub Project Management MVP 与 Development Orchestrator](docs/24-github-project-management.md)。
 
 | 文档 | 用途 |
 | --- | --- |
