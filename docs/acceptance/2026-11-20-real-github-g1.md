@@ -30,7 +30,7 @@
 After the read-only run, one message was sent through the existing Feishu app to the owner's latest bound p2p conversation:
 
 - Text: `[G1 acceptance] GitHub read-only: yuanbaoerer/personal-agent, commit 75df684, PR #74, plugin github@0.1.0. Feishu outbound delivery check.`
-- Feishu message ID: `om_x100b7f3272d588a0cf5f4418c45eb61`
+- Feishu message ID: `om_x100b7f…eb61` (full ID kept only in the operator's acceptance log, not in the repository)
 - Accepted at: `2026-11-20T15:14:09.550Z`
 - Conversation: `feishu` / `p2p`
 - Result: Feishu API returned a message ID (accepted). No message history was read; no inbound event was replayed.
