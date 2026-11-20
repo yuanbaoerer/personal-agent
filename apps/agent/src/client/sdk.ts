@@ -11,6 +11,7 @@ import type {
   PluginLifecycleResult,
   PluginView,
 } from "../plugins/types.ts";
+import type { SkillMetadata } from "../plugins/skills-contract.ts";
 
 export class ClientApiError extends Error {
   readonly status: number;
@@ -117,6 +118,10 @@ export class ClientApiClient {
     return this.#request(`/plugins/${encodeURIComponent(id)}/disable`, {
       method: "POST",
     });
+  }
+
+  async listSkills(): Promise<{ available: boolean; skills: SkillMetadata[] }> {
+    return this.#request("/skills");
   }
 
   async listTasks(options: { status?: TaskStatus; limit?: number } = {}): Promise<TaskRecord[]> {

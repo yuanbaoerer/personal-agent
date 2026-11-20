@@ -140,6 +140,8 @@ export interface Mandate {
   resources: string[];
   /** Tools the task may use, such as "weather.get". */
   tools: string[];
+  /** Requested SKILL.md ids; the host resolves them to pinned digests. */
+  skills?: string[];
   notes?: string;
   /** Optional project scope for project memories; absent means global. */
   project?: string;
@@ -152,9 +154,22 @@ export interface TaskExtensionBinding {
   digest: string;
 }
 
+export interface SkillBinding {
+  id: string;
+  version: string;
+  digest: string;
+}
+
+export interface SkillRejection {
+  id: string;
+  reason: string;
+}
+
 export interface TaskExtensionSnapshot {
   catalogGeneration: number;
   plugins: TaskExtensionBinding[];
+  skills?: SkillBinding[];
+  rejectedSkills?: SkillRejection[];
 }
 
 export interface TaskRecord {

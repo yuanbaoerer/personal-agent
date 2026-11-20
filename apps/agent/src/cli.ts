@@ -48,6 +48,7 @@ Usage:
   pa plugins status <id> [--json]
   pa plugins enable <id> --yes [--json]
   pa plugins disable <id> --yes [--json]
+  pa skills list [--json]
 
 Environment:
   PA_API_URL    default http://127.0.0.1:8787
@@ -512,6 +513,27 @@ export async function runCli(
           return 0;
         }
         throw new Error("plugins subcommand must be list, status, enable or disable");
+      }
+      case "skills": {
+        const sub = requirePositional(args, 0, "skills subcommand");
+        if (sub !== "list") {
+          throw new Error("skills subcommand must be list");
+        }
+        const result = await client.listSkills();
+        if (json) {
+          printJson(io, result);
+        } else if (!result.available) {
+          io.out("skills unavailable (PA_SKILLS_DIR not configured)");
+        } else if (result.skills.length === 0) {
+          io.out("no indexed skills");
+        } else {
+          for (const skill of result.skills) {
+            io.out(
+              `${skill.id}  v${skill.version}  priority=${skill.priority}  plugins=${skill.plugins.join(",") || "-"}  ${safeText(skill.description)}`,
+            );
+          }
+        }
+        return 0;
       }
       default:
         throw new Error(`unknown command: ${args.command}`);

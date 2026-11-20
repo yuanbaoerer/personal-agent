@@ -7,6 +7,7 @@ import { PluginCatalog } from "./plugins/catalog.ts";
 import { createGithubPlugin } from "./plugins/github.ts";
 import { ExtensionService } from "./plugins/service.ts";
 import type { BuiltinPlugin } from "./plugins/types.ts";
+import type { SkillRuntime } from "./plugins/skills-contract.ts";
 import { IngressService } from "./coordinator/ingress.ts";
 import type { RouterModel } from "./coordinator/router.ts";
 import { Router } from "./coordinator/router.ts";
@@ -61,6 +62,8 @@ export interface AppDeps {
   registerTools?: (registry: ToolRegistry) => void;
   /** Override the built-in plugin set (tests and future trust tiers). */
   builtinPlugins?: readonly BuiltinPlugin[];
+  /** Node-only SKILL.md index; omitted on Durable Objects. */
+  skills?: SkillRuntime;
   now?: () => Date;
   maxActiveWorkers?: number;
 }
@@ -85,6 +88,7 @@ export interface AppServices {
   budget?: BudgetService;
   catalog: PluginCatalog;
   plugins: ExtensionService;
+  skills?: SkillRuntime;
   router: Router;
   ingress: IngressService;
   effectDispatcher: EffectDispatcher;
@@ -147,6 +151,7 @@ export function createApp(deps: AppDeps): AppServices {
     state,
     extensions: catalog,
     capabilities: catalog,
+    skills: deps.skills,
   });
   const preauthorization = new PreauthorizationService({
     store,
@@ -244,6 +249,7 @@ export function createApp(deps: AppDeps): AppServices {
     budget,
     catalog,
     plugins,
+    skills: deps.skills,
     router,
     ingress,
     effectDispatcher,

@@ -10,6 +10,7 @@ import { PluginCatalog } from "../src/plugins/catalog.ts";
 import { createGithubPlugin } from "../src/plugins/github.ts";
 import { ExtensionService } from "../src/plugins/service.ts";
 import type { BuiltinPlugin } from "../src/plugins/types.ts";
+import type { SkillRuntime } from "../src/plugins/skills-contract.ts";
 import { Router, StaticRouterModel } from "../src/coordinator/router.ts";
 import { IngressService } from "../src/coordinator/ingress.ts";
 import { TaskService } from "../src/coordinator/tasks.ts";
@@ -59,6 +60,7 @@ export interface TestServices {
   budget?: BudgetService;
   catalog: PluginCatalog;
   plugins: ExtensionService;
+  skills?: SkillRuntime;
   router: Router;
   ingress: IngressService;
   model: StaticRouterModel;
@@ -77,6 +79,7 @@ export function createServices(options: {
   model?: StaticRouterModel;
   github?: GitHubReadConfig;
   builtinPlugins?: readonly BuiltinPlugin[];
+  skills?: SkillRuntime;
   reminderTimer?: ReminderTimer;
   maxConcurrentTools?: number;
   maxToolCallsPerTask?: number;
@@ -152,6 +155,7 @@ export function createServices(options: {
     state,
     extensions: catalog,
     capabilities: catalog,
+    skills: options.skills,
   });
   const preauthorization = new PreauthorizationService({
     store,
@@ -250,6 +254,7 @@ export function createServices(options: {
     budget,
     catalog,
     plugins,
+    skills: options.skills,
     router,
     ingress,
     model,
