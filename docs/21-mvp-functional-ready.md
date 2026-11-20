@@ -1,5 +1,7 @@
 # 21 · MVP Functional Ready：私有自用主体功能实施纲领
 
+> **2026-11-20 Extension Platform 衔接**：[25 · Extension Platform](25-extension-platform.md) / [#73](https://github.com/yuanbaoerer/personal-agent/issues/73) 为下一工程检查点，#65 仍为下一业务检查点。GH-00/01 真实安全验收与 EXT-01 并行；#68 迁移 GitHub 首插件，#69/#70 MCP/Skills 与 GH-02/04 协作。当前不开发任意第三方包或市场，但 V2/V3 是长期必选，不降级 M01–M14。
+
 > **2026-11-20 下一产品检查点**：在 #41 原 M01–M14 与正式版本要求不变的前提下，[24 · GitHub Project Management MVP](24-github-project-management.md) / [#65](https://github.com/yuanbaoerer/personal-agent/issues/65) 作为第一个垂直场景。GH-00/01 先修已知预算/任务指代/claims 一致性问题并完成真实飞书/GitHub G1；允许并行准备只读扩展，未经对应安全与真实验收不启用写入、无人值守或付费开发。后续 GH-02–04 实现项目评估与审批式 Issue 维护，再 GH-05/06 开发协调与独立审查。
 
 > 2026-11-20 · 总跟踪 [#41](https://github.com/yuanbaoerer/personal-agent/issues/41) · 实施基线 `b93e0ad`（MVP-01 PR #43 已合并）；后续 MVP-02、Intent Handler、事实核验、预算与安全映射 PR 已合并；最新 main 以仓库为准。
