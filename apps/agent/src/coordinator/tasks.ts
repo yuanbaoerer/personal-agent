@@ -304,6 +304,12 @@ export class TaskService {
       .map((assignment) => assignment.sessionId)
       .filter((sessionId) => sessionId.length > 0);
     const current = this.#tasks.get(taskId);
+    if (current !== undefined) {
+      this.#assertPolicy(
+        changes.mandate ?? current.mandate,
+        current.extension?.policy,
+      );
+    }
     const task = this.#tasks.revise(
       taskId,
       {

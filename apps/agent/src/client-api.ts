@@ -789,7 +789,15 @@ export class ClientApiService {
     if (Object.keys(changes).length === 0) {
       throw new ApiError(400, "no_changes");
     }
-    const task = this.#services.taskService.revise(taskId, changes);
+    let task: TaskRecord | undefined;
+    try {
+      task = this.#services.taskService.revise(taskId, changes);
+    } catch (error) {
+      if (error instanceof ExtensionPolicyError) {
+        throw new ApiError(400, "invalid_extension_policy", error.message);
+      }
+      throw error;
+    }
     if (task === undefined) {
       throw new ApiError(404, "task_not_found");
     }
