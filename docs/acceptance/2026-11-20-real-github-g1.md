@@ -1,6 +1,6 @@
 # Real GitHub G1 evidence — 2026-11-20
 
-> Scope: real read-only call through the Extension Platform catalog/action path on the private repository `yuanbaoerer/personal-agent`. This is not a substitute for Feishu delivery, revocation, write, or full #41 acceptance.
+> Scope: real read-only calls through the Extension Platform catalog/action path on the private repository `yuanbaoerer/personal-agent`, plus one Feishu outbound delivery. This is not a substitute for Feishu inbound acceptance, real OAuth negative paths, write, or full #41 acceptance.
 
 ## Environment
 
@@ -25,16 +25,26 @@
 | Commit source | <https://github.com/yuanbaoerer/personal-agent/commit/75df684ce12e9085bc27329dd2adf2bab5b7836b> |
 | Truncation signal | commits list returned `truncated: true` for `limit=1`; not hidden |
 
+## Feishu outbound delivery
+
+After the read-only run, one message was sent through the existing Feishu app to the owner's latest bound p2p conversation:
+
+- Text: `[G1 acceptance] GitHub read-only: yuanbaoerer/personal-agent, commit 75df684, PR #74, plugin github@0.1.0. Feishu outbound delivery check.`
+- Feishu message ID: `om_x100b7f3272d588a0cf5f4418c45eb61`
+- Accepted at: `2026-11-20T15:14:09.550Z`
+- Conversation: `feishu` / `p2p`
+- Result: Feishu API returned a message ID (accepted). No message history was read; no inbound event was replayed.
+
 ## Verdict
 
-**PARTIAL / PASS for real read-only GitHub G1.**
+**PARTIAL / PASS for real read-only GitHub G1 plus Feishu outbound.**
 
-Passed: private-repo repo/PR/commit reads through the plugin catalog, task-bound plugin digest, action-bound plugin/generation, real API source URLs, and explicit truncation.
+Passed: private-repo repo/PR/commit reads through the plugin catalog, task-bound plugin digest, action-bound plugin/generation, real API source URLs, explicit truncation, and one accepted Feishu outbound message.
 
 Not verified in this run:
 
-- Feishu inbound/outbound delivery of the G1 result.
-- OAuth login/revoke/account-switch negative paths against a real account.
+- Feishu inbound event → Agent → outbound G1 reply (only the outbound leg was exercised here).
+- Real OAuth login/revoke/account-switch negative paths against a real account.
 - Write capabilities (not implemented).
 - Long-running/restart recovery for this specific task.
 - Real CI checks (check-runs API is not part of this `github.read` operation).
