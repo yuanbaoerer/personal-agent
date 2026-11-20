@@ -46,6 +46,8 @@ export interface AppConfig {
     maxScheduleRunsPerDay: number;
   };
   ownerOpenId?: string;
+  /** Optional SKILL.md root; absent means use ./skills when it exists. */
+  skillsDir?: string;
   eventMode: FeishuEventMode;
   feishu: FeishuConfig;
   outbox: {
@@ -194,6 +196,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       ),
     },
     ownerOpenId: read("OWNER_FEISHU_OPEN_ID"),
+    skillsDir: read("PA_SKILLS_DIR"),
     eventMode: eventModeRaw,
     feishu: {
       appId,

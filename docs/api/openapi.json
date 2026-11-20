@@ -1104,6 +1104,31 @@
           }
         ]
       }
+    },
+    "/skills": {
+      "get": {
+        "operationId": "listSkills",
+        "summary": "List indexed SKILL.md metadata (bodies are not returned)",
+        "tags": [
+          "skills"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1610,6 +1635,33 @@
           "installedAt": { "type": "string", "format": "date-time" },
           "updatedAt": { "type": "string", "format": "date-time" },
           "lastError": { "type": "string" }
+        }
+      },
+      "Skill": {
+        "type": "object",
+        "required": [
+          "id",
+          "version",
+          "digest",
+          "description",
+          "plugins",
+          "permissions",
+          "priority"
+        ],
+        "properties": {
+          "id": { "type": "string" },
+          "version": { "type": "string" },
+          "digest": { "type": "string" },
+          "description": { "type": "string" },
+          "plugins": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "permissions": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "priority": { "type": "integer" }
         }
       }
     },

@@ -69,6 +69,7 @@ export interface ClientApiDeps {
     | "reminders"
     | "confirmation"
     | "plugins"
+    | "skills"
   >;
   ownerId: string;
   /** Local bootstrap credential; device token hashes are also accepted. */
@@ -138,6 +139,17 @@ function parseMandate(value: unknown): Mandate {
   const object = value as Record<string, unknown>;
   const resources = parseStringArray(object.resources, "mandate.resources");
   const tools = parseStringArray(object.tools, "mandate.tools");
+  const skills =
+    object.skills === undefined
+      ? undefined
+      : parseStringArray(object.skills, "mandate.skills");
+  if (skills !== undefined) {
+    for (const skill of skills) {
+      if (!/^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)+$/.test(skill)) {
+        throw new ApiError(400, "invalid_mandate", "mandate.skills must be dotted skill ids");
+      }
+    }
+  }
   const notes = object.notes === undefined ? undefined : parseString(object.notes, "mandate.notes", 2_000);
   const project =
     object.project === undefined
@@ -153,7 +165,7 @@ function parseMandate(value: unknown): Mandate {
       "mandate.project must be 1-64 letters, digits, dot, underscore or dash",
     );
   }
-  return { resources, tools, notes, project };
+  return { resources, tools, skills, notes, project };
 }
 
 function parseStringArray(value: unknown, name: string): string[] {
@@ -553,6 +565,17 @@ export class ClientApiService {
           throw error;
         }
       }
+    }
+
+    if (resource === "skills" && id === undefined && method === "GET") {
+      this.#require(auth, "read");
+      return {
+        status: 200,
+        body: {
+          available: this.#services.skills !== undefined,
+          skills: this.#services.skills?.list() ?? [],
+        },
+      };
     }
 
     if (resource === "events" && id === undefined && method === "GET") {

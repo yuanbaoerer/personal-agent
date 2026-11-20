@@ -1,7 +1,8 @@
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
 import { createApp } from "./app.ts";
+import { FileSkillRuntime } from "./plugins/skills.ts";
 import { ClientApiService } from "./client-api.ts";
 import { FeishuAdapter } from "./channels/feishu/adapter.ts";
 import { FeishuLongConnection } from "./channels/feishu/long-connection.ts";
@@ -146,6 +147,17 @@ async function main(): Promise<void> {
       githubOAuth === undefined ? undefined : () => githubOAuth.accessToken(),
   };
   const local = createRuntime(config.model, piDatabasePath);
+  const skillsRoot = config.skillsDir ?? resolve("skills");
+  const skills = existsSync(skillsRoot)
+    ? new FileSkillRuntime({ root: skillsRoot })
+    : undefined;
+  if (skills !== undefined) {
+    logger.info("skills_indexed", {
+      root: skillsRoot,
+      count: skills.list().length,
+      errors: skills.errors().length,
+    });
+  }
   const app = createApp({
     store,
     runtime: local.runtime,
@@ -153,6 +165,7 @@ async function main(): Promise<void> {
     github,
     magpie: config.magpie,
     budgetLimits: config.budget,
+    skills,
     // A keyless process must not persist a placeholder session id: the next
     // run with a model key would inherit an id Pi cannot resolve.
     model:
