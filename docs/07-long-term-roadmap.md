@@ -1,5 +1,9 @@
 # 07 · Personal Agent 长期产品与工程路线图
 
+> **2026-11-20 架构升级**：[25 · Extension Platform](25-extension-platform.md) / [#73](https://github.com/yuanbaoerer/personal-agent/issues/73) 为一级必选长期模块。One Core + WorkProfile × ExecutionStrategy × ModelPolicy + ExtensionPolicy（扩展选择与约束，不另造权限）。V1 内置插件、凭据/MCP/Skills；V2 SDK 与第三方隔离；V3 可信 Registry、分发和社区。此前暂缓通用插件市场指近期范围，不再是永久非目标。#65 GitHub 首插件、Coding Runtime 第二类；保留 #41 及原正式发布门槛。
+
+> **2026-11-20 垂直产品交付**：在既有 Reliable Core / #41 门槛之上，采用 [24 · GitHub Project Management MVP 与 Development Orchestrator](24-github-project-management.md)（[#65](https://github.com/yuanbaoerer/personal-agent/issues/65)）定义首个实际业务场景：GH-00/01 真实验收及安全前置 → GH-02 项目与证据读取 → GH-03/04 审批式 Issue 管理与项目评估 → GH-05/06 单 Coding adapter、Draft PR、独立 Review 与主动只读报告。不是平行 Core，不改变正式版本门槛，保留 WorkProfile × ExecutionStrategy × ModelPolicy 长期架构。
+
 > **2026-11-19 近期交付顺序调整**：在 v0.2 Reliable Core 中新增私有试用检查点 [MVP Functional Ready](21-mvp-functional-ready.md)，由 [#41](https://github.com/yuanbaoerer/personal-agent/issues/41) 跟踪。优先 #38 状态语义 → #39 自然语言 → 真实 GitHub/常驻 Node → 安全预算/主动工作 → 14 场景验收。既有 PA Issue 的 MVP-P0 子集先执行；其他原版本门槛、组织模式、ModelPolicy、跨平台及开源设计保留。私有 MVP 不等于 v0.2/v0.3 正式发布，不降低正式门槛。
 
 > 状态：2026-11-14 规划基线，适用代码 main@7199c48。本文定义目标和下一阶段优先级；不声称目标功能已经实现。实施事实以 README、测试和可复现实验记录为准。
@@ -96,7 +100,7 @@ Personal Agent 是一个单用户优先、自主部署、可扩展、能够长�
 | 部署 | 一条标准运行路径 | 自用稳定 | 他人可独立安装 | 支持备份升级 |
 | 多渠道/多模型/向量检索 | 不做 | 原则上不做 | 根据证据选择 | 仍非强制 |
 
-**刻意不做**：通用 Agent SDK、插件市场、多租户 SaaS、任意高权限动作、复杂模型编队、自动爬取所有个人数据。以后以真实使用信号启用，不因技术可实现就自动添加。
+**近期不做**：通用第三方插件安装/市场（V2/V3 长期必选，见 25）、多租户 SaaS、任意高权限动作、复杂模型编队、自动爬取所有个人数据。V1 内置插件由 GitHub 实际业务驱动，不因技术可实现就自动添加。
 
 ## 7. 分阶段发布门槛（以验收而非日历驱动）
 
