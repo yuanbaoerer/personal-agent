@@ -50,6 +50,8 @@ export interface McpServerDefinition {
   authEnv?: string;
   /** Explicit opt-in for http://localhost test servers only. */
   allowInsecureLocalhost?: boolean;
+  /** Exact hostnames allowed through a trusted proxy/on-prem mapping. */
+  trustedHosts?: string[];
   timeoutMs?: number;
   tools: McpToolDefinition[];
 }
@@ -80,7 +82,11 @@ export async function connectMcpPlugin(
   let failure: string | undefined;
   let client: Client | undefined;
   try {
-    await assertSafeUrl(normalized.url, normalized.allowInsecureLocalhost === true);
+    await assertSafeUrl(
+      normalized.url,
+      normalized.allowInsecureLocalhost === true,
+      normalized.trustedHosts ?? [],
+    );
     const token = resolveAuth(normalized, options.env ?? process.env);
     const headers: Record<string, string> = {
       accept: "application/json, text/event-stream",
@@ -195,6 +201,10 @@ function parseServer(value: unknown, index: number): McpServerDefinition {
   if (record.allowInsecureLocalhost !== undefined && typeof record.allowInsecureLocalhost !== "boolean") {
     throw new Error(`servers[${index}].allowInsecureLocalhost must be a boolean`);
   }
+  const trustedHosts =
+    record.trustedHosts === undefined
+      ? undefined
+      : parseHosts(record.trustedHosts, `servers[${index}].trustedHosts`);
   const timeoutMs = optionalInteger(record.timeoutMs, `servers[${index}].timeoutMs`, 500, 120_000);
   if (!Array.isArray(record.tools) || record.tools.length === 0 || record.tools.length > MAX_TOOLS) {
     throw new Error(`servers[${index}].tools must contain 1-${MAX_TOOLS} entries`);
@@ -216,6 +226,7 @@ function parseServer(value: unknown, index: number): McpServerDefinition {
     url,
     authEnv,
     allowInsecureLocalhost: record.allowInsecureLocalhost === true,
+    trustedHosts,
     timeoutMs,
     tools,
   };
@@ -297,6 +308,23 @@ function parseArg(value: unknown, field: string): McpArgSpec {
   return spec;
 }
 
+function parseHosts(value: unknown, field: string): string[] {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 10) {
+    throw new Error(`${field} must contain 1-10 hostnames`);
+  }
+  const hosts = value.map((item) => {
+    if (typeof item !== "string") {
+      throw new Error(`${field} entries must be strings`);
+    }
+    const host = item.trim().toLowerCase();
+    if (!/^[a-z0-9.-]{1,253}$/.test(host)) {
+      throw new Error(`${field} contains an invalid hostname`);
+    }
+    return host;
+  });
+  return [...new Set(hosts)];
+}
+
 function normalizeDefinition(definition: McpServerDefinition): McpServerDefinition {
   const id = definition.id.trim();
   if (!ID_PATTERN.test(id)) {
@@ -321,6 +349,7 @@ function normalizeDefinition(definition: McpServerDefinition): McpServerDefiniti
     ...definition,
     id,
     tools,
+    trustedHosts: definition.trustedHosts?.map((host) => host.trim().toLowerCase()),
     timeoutMs: definition.timeoutMs ?? 15_000,
   };
 }
@@ -353,6 +382,7 @@ function mcpManifest(definition: McpServerDefinition): PluginManifest {
     config: {
       url: definition.url,
       authEnv: definition.authEnv,
+      trustedHosts: definition.trustedHosts,
       tools: definition.tools.map((tool) => tool.remoteName),
     },
     description: `Remote read-only MCP server ${definition.name}`,
@@ -583,7 +613,11 @@ function resolveAuth(
   return value;
 }
 
-async function assertSafeUrl(raw: string, allowLocalhost: boolean): Promise<void> {
+async function assertSafeUrl(
+  raw: string,
+  allowLocalhost: boolean,
+  trustedHosts: readonly string[],
+): Promise<void> {
   let url: URL;
   try {
     url = new URL(raw);
@@ -604,8 +638,9 @@ async function assertSafeUrl(raw: string, allowLocalhost: boolean): Promise<void
   if (url.protocol !== "https:" && !(allowLocalhost && localhost && url.protocol === "http:")) {
     throw new Error("MCP url must use https (http is only allowed for explicit localhost tests)");
   }
+  const trusted = trustedHosts.includes(hostname.toLowerCase());
   if (isIP(hostname) !== 0) {
-    if (!(allowLocalhost && localhost) && isPrivateAddress(hostname)) {
+    if (!(allowLocalhost && localhost) && !trusted && isPrivateAddress(hostname)) {
       throw new Error("MCP url resolves to a private address");
     }
     return;
@@ -613,7 +648,7 @@ async function assertSafeUrl(raw: string, allowLocalhost: boolean): Promise<void
   const addresses = await lookup(hostname, { all: true, verbatim: true });
   if (
     addresses.length === 0 ||
-    addresses.some((address) => isPrivateAddress(address.address))
+    (addresses.some((address) => isPrivateAddress(address.address)) && !trusted)
   ) {
     if (!(allowLocalhost && localhost)) {
       throw new Error("MCP url resolves to a private address");

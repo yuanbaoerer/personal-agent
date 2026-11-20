@@ -154,6 +154,22 @@ describe("MCP config", () => {
       ],
     };
     assert.equal(parseMcpServers(valid).length, 1);
+    const trusted = parseMcpServers({
+      servers: [
+        {
+          ...valid.servers[0],
+          trustedHosts: ["API.GitHubCopilot.com", "api.githubcopilot.com"],
+        },
+      ],
+    });
+    assert.deepEqual(trusted[0]?.trustedHosts, ["api.githubcopilot.com"]);
+    assert.throws(
+      () =>
+        parseMcpServers({
+          servers: [{ ...valid.servers[0], trustedHosts: ["https://evil.example"] }],
+        }),
+      /invalid hostname/,
+    );
     assert.throws(
       () => parseMcpServers({ servers: [{ ...valid.servers[0], authEnv: "GITHUB_TOKEN" }] }),
       /PA_MCP_/,

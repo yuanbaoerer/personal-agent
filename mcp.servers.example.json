@@ -6,6 +6,7 @@
       "version": "0.1.0",
       "url": "https://mcp.example.com/mcp",
       "authEnv": "PA_MCP_EXAMPLE_TOKEN",
+      "trustedHosts": [],
       "timeoutMs": 15000,
       "tools": [
         {
