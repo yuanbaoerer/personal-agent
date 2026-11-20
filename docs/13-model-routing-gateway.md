@@ -1,5 +1,7 @@
 # 13 · Model Routing & Gateway Architecture
 
+> **2026-11-20**：总架构新增 ExtensionPolicy 及 [25 · Extension Platform](25-extension-platform.md)；Provider/Gateway 可成为后续扩展点，ModelPolicy 的模型路由职责及已规划 MODEL-01～03 不变。不要求在 GitHub V1 前插件化全部 Provider。
+
 > **状态：已选定设计方向，待实现（2026-11-17）。** 本文定义长期模型策略与 Magpie 可选适配能力，并不代表当前 Pi Runtime 已支持 per-Worker/per-Assignment 选模型、多个 Provider 或自动故障转移。
 >
 > 产品总架构：**One Agent Core + WorkProfile × ExecutionStrategy × ModelPolicy**。模型路由是 Core 的能力策略，不是另一套 Agent 调度系统。
