@@ -163,9 +163,17 @@ function parseOrdinal(value: string): number | undefined {
   if (token === "十") {
     return 10;
   }
-  const ten = /^十([一二三四五六七八九])$/.exec(token);
-  if (ten !== null) {
-    return 10 + (ORDINAL_DIGITS[ten[1] as string] ?? 0);
+  const compound = /^([一二三四五六七八九])?十([一二三四五六七八九])?$/.exec(token);
+  if (compound !== null) {
+    const tens =
+      compound[1] === undefined
+        ? 1
+        : (ORDINAL_DIGITS[compound[1] as string] as number);
+    const ones =
+      compound[2] === undefined
+        ? 0
+        : (ORDINAL_DIGITS[compound[2] as string] as number);
+    return tens * 10 + ones;
   }
   return ORDINAL_DIGITS[token];
 }
@@ -220,7 +228,8 @@ function active(task: TaskRecord): boolean {
 
 const DEICTIC = /^(?:刚才|刚刚|上一个|上次|之前|前面|那个|这个|它)/;
 const CONTINUE = /(?:继续|接着|往下|恢复)/;
-const ORDINAL = /第\s*([0-9]+|[一二两三四五六七八九十]+)\s*(?:个|项|条)?\s*(?:任务)?/;
+const ORDINAL =
+  /第\s*([0-9]+|[一二两三四五六七八九十]+)\s*(?:个|项|条)?\s*(?=(?:任务|提醒|计划|task\b|$|[，,。;；?!？!]|吗|呢|怎么样|如何|执行得|的))/i;
 const TASK_NUMBER = /(?:task|任务)\s*#?\s*(\d+)/i;
 const KEYWORD_NOISE =
   /(?:刚才|刚刚|上一个|上次|之前|前面|那个|这个|任务|目标|继续|接着|处理|一下|帮我|把|的|先|再|请)/g;
@@ -506,14 +515,14 @@ const SUMMARY_HINT =
 const COMBINED_HINT =
   /(?:任务.{0,4}(?:和|与|及).{0,4}提醒|提醒.{0,4}(?:和|与|及).{0,4}任务)/;
 const TASK_LIST_HINT =
-  /(?:任务(?:列表|清单|有多少|有几个|数量)|(?:有哪些|有什么|列出|查看|所有|全部|最近).{0,12}任务|任务.{0,4}(?:汇总|总结))/;
+  /(?:任务(?:列表|清单|有多少|有几个|数量)|(?:有哪些|有什么|列出|查看|所有|全部|最近).{0,12}任务|任务.{0,10}(?:有哪些|有什么|有多少|几个)|任务.{0,4}(?:汇总|总结))/;
 const TASK_DETAIL_HINT =
   /(?:任务.{0,10}(?:怎么样|如何|进展|情况|状态|执行得|完成)|(?:怎么样|如何|进展|情况|状态).{0,6}任务)/;
 const REMINDER_HINT = /(?:提醒(?:列表|清单|有哪些|有什么|多少|几个|吗|呢|是什么)|(?:有哪些|有什么|查看|列出).{0,6}提醒)/;
 const MEMORY_HINT = /(?:记忆|偏好).{0,8}(?:有哪些|有什么|列表|内容|吗|呢|是什么)|(?:有哪些|有什么|查看|列出|记住).{0,20}(?:记忆|偏好)|我记住了什么/;
 const SCHEDULE_HINT = /(?:周期计划|定时计划|计划).{0,8}(?:有哪些|有什么|列表|内容|吗|呢|是什么)|(?:有哪些|有什么|查看|列出).{0,6}(?:周期计划|定时计划|计划)/;
 const MUTATION_HINT =
-  /(?:创建|新建|添加|设置|修改|更新|改|加上|增加|授予|结束|停|删除|取消|关闭|打开|清除|移除|重命名|调整|更换|保存|记录|安排|暂停|恢复|批准|拒绝|补充|回答|发送|发给|提交|提醒(?:一下|下)?我|设(?:置|个)提醒|加(?:个)?提醒|做一个|帮我做)/;
+  /(?<![已经被])(?:创建|新建|添加|设置|修改|更新|改|加上|增加|授予|结束|停|删除|取消|关闭|打开|清除|移除|重命名|调整|更换|保存|记录|安排|暂停|恢复|批准|拒绝|补充|回答|发送|发给|提交|提醒(?:一下|下)?我|设(?:置|个)提醒|加(?:个)?提醒|做一个|帮我做)(?!的|了)/;
 
 const STATUS_HINTS: readonly [RegExp, TaskStatus][] = [
   [/(?:正在运行|运行中|执行中|running)/i, "running"],
@@ -523,7 +532,7 @@ const STATUS_HINTS: readonly [RegExp, TaskStatus][] = [
   [/(?:待核对|需要核对|needs_review)/i, "needs_review"],
   [/(?:已完成|完成了|成功|succeeded)/i, "succeeded"],
   [/(?:失败|failed)/i, "failed"],
-  [/(?:已取消|cancelled)/i, "cancelled"],
+  [/(?:已取消|取消了|cancelled)/i, "cancelled"],
 ];
 
 function inferStatus(text: string): TaskStatus | undefined {
@@ -604,8 +613,9 @@ export function inferStateQuery(text: string): StateQuery | undefined {
 }
 
 const CONTROL_MUTATION =
-  /(?:取消|停|修改|更新|改|补充|删除|移除|忘记|暂停|恢复|确认|拒绝|设置提醒|加提醒|记住(?!了)|保存|发送|提交)/;
-const CLAUSE_SPLIT = /[，,；;。]|(?:然后|接着|顺便|同时|之后)/;
+  /(?:创建|新建|添加|设置|修改|更新|改|结束|补充|删除|移除|忘记|暂停|恢复|确认|拒绝|提醒|记住(?!了)|保存|记录|安排|发送|提交|取消|停)/;
+const CLAUSE_SPLIT =
+  /[，,；;。]|(?:然后|接着|顺便|同时|之后|并且|并(?=提醒|取消|删除|修改|新建|创建|添加|设置|安排|记住|保存|记录|结束|停|暂停|恢复|确认|拒绝))/;
 
 /**
  * Detect a control mutation combined with a read request in one message.
@@ -745,7 +755,7 @@ export function formatStateQuery(snapshot: StateSnapshot, timezone: string): str
         const dueAt = stringOf(reminder, "dueAt") ?? "";
         const tz = stringOf(reminder, "timezone") ?? timezone;
         const text = stringOf(reminder, "text") ?? "";
-        lines.push(`- ${formatWhen(dueAt, tz)}（${tz}）${text}`);
+        lines.push(`- ${formatWhen(dueAt, tz)}（${tz}；UTC ${dueAt}）${text}`);
       }
       return lines.join("\n");
     }

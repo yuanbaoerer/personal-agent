@@ -60,10 +60,8 @@ export class CallBudget implements BudgetService {
       };
     }
     const dayKey = this.#dayKey(this.#now());
-    const dayCount =
-      this.#maxCallsPerDay === undefined ? undefined : this.#count(dayKey);
+    const dayCount = this.#count(dayKey);
     if (
-      dayCount !== undefined &&
       this.#maxCallsPerDay !== undefined &&
       dayCount >= this.#maxCallsPerDay
     ) {
@@ -78,9 +76,7 @@ export class CallBudget implements BudgetService {
     if (taskId !== undefined && taskCount !== undefined) {
       this.#store.metaSet(`${TASK_PREFIX}${taskId}`, String(taskCount + 1));
     }
-    if (dayCount !== undefined) {
-      this.#store.metaSet(dayKey, String(dayCount + 1));
-    }
+    this.#store.metaSet(dayKey, String(dayCount + 1));
     return { ok: true };
   }
 

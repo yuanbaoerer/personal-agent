@@ -53,6 +53,18 @@ describe("persistent model-call budget", () => {
     assert.match(await budget.summaryText(), /今日 2\/2 次/);
   });
 
+  it("reports usage even when no daily cap is configured", async () => {
+    const store = createStore();
+    const budget = new CallBudget({
+      store,
+      maxCallsPerTask: 10,
+      now: () => NOW,
+    });
+    assert.equal((await budget.check({ role: "router" })).ok, true);
+    assert.equal((await budget.check({ role: "worker", taskId: "task-a" })).ok, true);
+    assert.match(await budget.summaryText(), /今日 2 次（每日上限未配置）/);
+  });
+
   it("does not consume quota when an upstream check fails", async () => {
     const store = createStore();
     let upstreamOk = false;

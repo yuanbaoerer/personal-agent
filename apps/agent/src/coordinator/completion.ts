@@ -318,7 +318,8 @@ function validateGithubClaim(
     (candidate) =>
       typeof candidate.args.repo === "string" &&
       candidate.args.repo.toLowerCase() === claim.repo &&
-      candidate.args.operation === claim.operation,
+      (candidate.args.operation === claim.operation ||
+        (claim.operation === "pulls" && candidate.args.operation === "pull")),
   );
   if (candidates.length === 0) {
     return `github_action_missing:${claim.repo}:${claim.operation}`;
@@ -326,8 +327,16 @@ function validateGithubClaim(
   let found = false;
   let fieldSeen = false;
   for (const action of candidates) {
-    const items = action.evidence?.items;
-    if (!Array.isArray(items)) {
+    const evidence = action.evidence;
+    const items = Array.isArray(evidence?.items)
+      ? evidence.items
+      : claim.operation === "pulls" &&
+          typeof evidence?.item === "object" &&
+          evidence.item !== null &&
+          !Array.isArray(evidence.item)
+        ? [evidence.item]
+        : undefined;
+    if (items === undefined) {
       continue;
     }
     for (const candidate of items) {
@@ -364,7 +373,7 @@ function validateGithubClaim(
 }
 
 const COUNT_CLAIM_PATH =
-  /^(?:tasks\.counts\.(?:queued|running|waiting_user|waiting_external|succeeded|needs_review|failed|cancelling|cancelled)|tasks\.total|reminders\.pending|memories\.(?:global|project)|schedules\.counts\.(?:draft|active|paused|cancelled|expired))$/;
+  /^(?:total|tasks\.counts\.(?:queued|running|waiting_user|waiting_external|succeeded|needs_review|failed|cancelling|cancelled)|reminders\.pending|memories\.(?:global|project)|schedules\.counts\.(?:draft|active|paused|cancelled|expired))$/;
 
 /**
  * Compare one model-declared fact with the executor snapshot. The program
