@@ -39,7 +39,7 @@ function insertTask(
   const { task } = services.tasks.insert({
     ownerId: services.owner.id,
     conversationId: options.conversationId ?? services.conversation.id,
-    sourceKey: `intent:${id}`,
+    sourceKey: `intent:${id}:${Math.random().toString(36).slice(2)}`,
     goal,
     completionCriteria: "done",
     mandate: {
@@ -114,6 +114,14 @@ describe("deterministic state query fallback", () => {
     });
     assert.deepEqual(inferStateQuery("周期计划有哪些"), { target: "schedules" });
     assert.deepEqual(inferStateQuery("我记住了什么"), { target: "memories" });
+    assert.deepEqual(inferStateQuery("查看已取消的任务"), {
+      target: "tasks",
+      status: "cancelled",
+    });
+    assert.deepEqual(inferStateQuery("取消了的任务有哪些"), {
+      target: "tasks",
+      status: "cancelled",
+    });
     assert.deepEqual(inferStateQuery("最近 3 个正在运行的任务"), {
       target: "tasks",
       status: "running",
@@ -186,6 +194,52 @@ describe("task reference resolution", () => {
     assert.equal(resolved.status, "ok");
     if (resolved.status === "ok") {
       assert.equal(resolved.task.id, current.id);
+    }
+  });
+
+  it("does not treat a name starting with 第 as an ordinal", () => {
+    const services = setup();
+    insertTask(services, TASK_A, "无关任务 A", {
+      createdAt: "2026-01-01T00:03:00.000Z",
+    });
+    insertTask(services, TASK_B, "无关任务 B", {
+      createdAt: "2026-01-01T00:02:00.000Z",
+    });
+    const named = insertTask(services, TASK_C, "第一季度财报整理", {
+      createdAt: "2026-01-01T00:01:00.000Z",
+    });
+    const resolved = resolveTaskReference(
+      services.owner.id,
+      services.conversation.id,
+      "第一季度财报整理",
+      services.tasks,
+    );
+    assert.equal(resolved.status, "ok");
+    if (resolved.status === "ok") {
+      assert.equal(resolved.task.id, named.id);
+    }
+  });
+
+  it("parses Chinese ordinals above nineteen", () => {
+    const services = setup();
+    let oldest: TaskRecord | undefined;
+    for (let index = 0; index < 23; index += 1) {
+      const task = insertTask(services, TASK_A, `ordinal-${index}`, {
+        createdAt: `2026-01-01T00:${String(index).padStart(2, "0")}:00.000Z`,
+      });
+      if (index === 0) {
+        oldest = task;
+      }
+    }
+    const resolved = resolveTaskReference(
+      services.owner.id,
+      services.conversation.id,
+      "第二十三个任务",
+      services.tasks,
+    );
+    assert.equal(resolved.status, "ok");
+    if (resolved.status === "ok") {
+      assert.equal(resolved.task.id, oldest?.id);
     }
   });
 
@@ -321,6 +375,7 @@ describe("natural language state intents", () => {
     await sendText(services, "我有哪些提醒", "evt_intent_reminders");
     const text = outbox(services);
     assert.match(text, /带上钥匙/);
+    assert.match(text, /UTC 2026-01-01T01:00:00.000Z/);
     assert.doesNotMatch(text, /task should not be listed/);
     assert.equal(services.runtime.opened.length, 0);
     const audit = services.store.db.all<{ after_json: string }>(
@@ -421,6 +476,42 @@ describe("natural language state intents", () => {
     assert.doesNotMatch(text, /没有找到匹配该目标的任务/);
   });
 
+  it("rejects a single-clause 并-joined control and reminder request", async () => {
+    const services = setup();
+    const task = insertTask(services, TASK_A, "must survive 并");
+    services.model.push({
+      action: "cancel_task",
+      text: "",
+      taskId: task.id.slice(0, 8),
+    });
+    await sendText(
+      services,
+      "取消第一个任务并提醒我明天带伞",
+      "evt_intent_bing_compound",
+    );
+    assert.equal(services.tasks.get(task.id)?.status, "queued");
+    assert.equal(services.confirmations.listPending(services.owner.id).length, 0);
+    assert.match(outbox(services), /复合请求/);
+  });
+
+  it("rejects a control plus reminder-creation compound request", async () => {
+    const services = setup();
+    const task = insertTask(services, TASK_A, "must not cancel");
+    services.model.push({
+      action: "cancel_task",
+      text: "",
+      taskId: task.id.slice(0, 8),
+    });
+    await sendText(
+      services,
+      "取消第一个任务，然后提醒我明天带伞",
+      "evt_intent_control_remind",
+    );
+    assert.equal(services.tasks.get(task.id)?.status, "queued");
+    assert.equal(services.confirmations.listPending(services.owner.id).length, 0);
+    assert.match(outbox(services), /复合请求/);
+  });
+
   it("rejects two control mutations in one message", async () => {
     const services = setup();
     const first = insertTask(services, TASK_A, "first control");
@@ -438,6 +529,22 @@ describe("natural language state intents", () => {
     assert.equal(services.tasks.get(first.id)?.status, "queued");
     assert.equal(services.tasks.get(second.id)?.status, "queued");
     assert.match(outbox(services), /复合请求/);
+  });
+
+  it("answers a cancelled-task read instead of cancelling an active task", async () => {
+    const services = setup();
+    const cancelled = insertTask(services, TASK_A, "cancelled goal", {
+      status: "cancelled",
+      createdAt: "2026-01-01T00:01:00.000Z",
+    });
+    const active = insertTask(services, TASK_B, "active goal", {
+      createdAt: "2026-01-01T00:02:00.000Z",
+    });
+    services.model.push({ action: "cancel_task", text: "" });
+    await sendText(services, "查看已取消的任务", "evt_intent_cancelled_read");
+    assert.equal(services.tasks.get(active.id)?.status, "queued");
+    assert.equal(services.tasks.get(cancelled.id)?.status, "cancelled");
+    assert.match(outbox(services), /cancelled goal/);
   });
 
   it("redirects a read question misrouted as cancel instead of mutating", async () => {
@@ -691,6 +798,31 @@ describe("natural language state intents", () => {
     assert.doesNotMatch(text, /alpha newest/);
   });
 
+  it("honors model project scope for reference-based mutations", async () => {
+    const services = setup();
+    const beta = insertTask(services, TASK_A, "beta task", {
+      createdAt: "2026-01-01T00:02:00.000Z",
+      project: "beta",
+    });
+    const alpha = insertTask(services, TASK_B, "alpha task", {
+      createdAt: "2026-01-01T00:01:00.000Z",
+      project: "alpha",
+    });
+    services.model.push({
+      action: "cancel_task",
+      text: "",
+      taskRef: "第一个",
+      project: "alpha",
+    });
+    await sendText(
+      services,
+      "取消项目 alpha 的第一个任务",
+      "evt_intent_project_mutation",
+    );
+    assert.equal(services.tasks.get(alpha.id)?.status, "cancelled");
+    assert.equal(services.tasks.get(beta.id)?.status, "queued");
+  });
+
   it("does not reject a read-only query that mentions a past control word", async () => {
     const services = setup();
     insertTask(services, TASK_A, "readable task");
@@ -729,6 +861,25 @@ describe("natural language state intents", () => {
     assert.match(outbox(services), /需要明确确认/);
   });
 
+  it("does not cancel a reminder on a non-cancel message", async () => {
+    const services = setup();
+    const reminder = await services.reminders.create({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      text: "do not cancel",
+      dueAt: new Date(NOW.getTime() + 3_600_000).toISOString(),
+      timezone: "UTC",
+    });
+    services.model.push({
+      action: "cancel_reminder",
+      text: "",
+      reminderRef: reminder.id.slice(0, 8),
+    });
+    await sendText(services, "那个提醒怎么样", "evt_intent_reminder_guard");
+    assert.equal(services.schedules.get(reminder.id)?.status, "pending");
+    assert.match(outbox(services), /取消提醒需要明确说明/);
+  });
+
   it("cancels a natural language reminder reference", async () => {
     const services = setup();
     const reminder = await services.reminders.create({
@@ -746,6 +897,29 @@ describe("natural language state intents", () => {
     await sendText(services, "取消带钥匙的提醒", "evt_intent_reminder_cancel");
     assert.equal(services.schedules.get(reminder.id)?.status, "cancelled");
     assert.match(outbox(services), /提醒已取消/);
+  });
+
+  it("does not cancel a schedule on a non-cancel message", async () => {
+    const services = setup({ github: { allowedRepos: ["owner/repo"] } });
+    const draft = services.schedulePolicy.createDraft(
+      services.owner.id,
+      services.conversation.id,
+      {
+        repo: "owner/repo",
+        localTime: "09:00",
+        cadence: "daily",
+        goal: "cancel guard",
+      },
+    );
+    assert.ok(draft.ok);
+    services.model.push({
+      action: "cancel_schedule",
+      text: "",
+      scheduleRef: draft.policy.id.slice(0, 8),
+    });
+    await sendText(services, "那个计划怎么样", "evt_intent_schedule_cancel_guard");
+    assert.equal(services.schedulePolicies.get(draft.policy.id)?.status, "draft");
+    assert.match(outbox(services), /取消周期计划需要明确说明/);
   });
 
   it("drafts, confirms, and cancels a schedule only through explicit steps", async () => {

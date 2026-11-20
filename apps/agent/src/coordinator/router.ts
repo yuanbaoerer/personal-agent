@@ -1571,13 +1571,14 @@ export class Router implements InboundHandler {
       );
       return undefined;
     }
+    const project = flagProject ?? decision.project;
     if (decision.taskId !== undefined) {
       const explicit = resolveTaskId(context.ownerId, decision.taskId, this.#tasks);
       if (explicit.status === "ok") {
         const task = this.#tasks.get(explicit.id);
         if (
           task !== undefined &&
-          (flagProject === undefined || task.mandate.project === flagProject)
+          (project === undefined || task.mandate.project === project)
         ) {
           this.#rememberTaskFocus(context.conversationId, task.id);
           return task;
@@ -1609,7 +1610,7 @@ export class Router implements InboundHandler {
         preferredTaskId: this.#store.metaGet(
           taskFocusKey(context.conversationId),
         ),
-        project: flagProject,
+        project,
       },
     );
     if (resolution.status === "ok") {

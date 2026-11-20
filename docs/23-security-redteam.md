@@ -28,7 +28,7 @@
 | SEC05 | 任意 Shell/文件路径 | 工具注册表 allowlist；无 shell 工具；unknown tool 被拒绝 | `tool-capability.test.ts`、`actions.test.ts` | E1 已覆盖 |
 | SEC06 | 恶意扩展替换内置工具 | 注册表拒绝重复/内置名；扩展只读能力声明 | `tool-capability.test.ts` | E1 已覆盖 |
 | SEC07 | 无限调用/成本 | CallBudget 单任务/每日上限；工具累计上限；周期 20/日 | `call-budget.test.ts`、`config.test.ts`、`schedule-policy.test.ts` | E1 已覆盖；token/费用待采集 |
-| SEC08 | 中英混合注入 | 外部文本按数据注入；记忆/状态字段限长；无指令通道 | `state-tools.test.ts`、`memory-scope.test.ts`、`intents.test.ts` | E1 已覆盖；真实模型 redteam pending |
+| SEC08 | 中英混合注入 | 外部文本按数据注入；记忆/状态字段限长；无指令通道 | `state-tools.test.ts`（含 mixed-language 注入）、`memory-scope.test.ts`、`intents.test.ts` | E1 已覆盖；真实模型 redteam pending |
 
 ## 3. 剩余风险
 

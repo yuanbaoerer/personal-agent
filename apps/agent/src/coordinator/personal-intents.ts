@@ -33,6 +33,9 @@ export type PersonalIntentAction =
   | "confirm_schedule"
   | "cancel_schedule";
 
+const CANCEL_WORD =
+  /(?:取消|删(?:除|掉)?|移除|清除|不要|不用|不需要|停用|停止|撤销|关掉|作废)/;
+
 const PERSONAL_ACTIONS: ReadonlySet<RouterDecision["action"]> = new Set([
   "save_memory",
   "forget_memory",
@@ -275,6 +278,12 @@ export class PersonalIntentHandler {
     decision: RouterDecision,
     context: IntentContext,
   ): Promise<IntentOutcome> {
+    if (!CANCEL_WORD.test(context.text)) {
+      return reply(
+        "取消提醒需要明确说明。请回复“取消提醒 <编号或内容>”。",
+        "failure",
+      );
+    }
     const ref = decision.reminderRef ?? decision.scheduleId;
     const resolution = resolveReminderReference(
       context.ownerId,
@@ -377,6 +386,12 @@ export class PersonalIntentHandler {
     ) {
       return reply(
         "激活周期计划需要明确确认。请回复“确认计划 <编号>”。",
+        "failure",
+      );
+    }
+    if (action === "cancel" && !CANCEL_WORD.test(context.text)) {
+      return reply(
+        "取消周期计划需要明确说明。请回复“取消计划 <编号>”。",
         "failure",
       );
     }

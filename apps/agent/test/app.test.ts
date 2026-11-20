@@ -9,7 +9,15 @@ import type { ReminderTimer } from "../src/personal/reminders.ts";
 import type { ScheduleRecord } from "../src/domain/types.ts";
 import { APP_ID, OWNER_OPEN_ID, createStore, inbound } from "./helpers.ts";
 
-function build(model: StaticRouterModel, timer?: ReminderTimer) {
+function build(
+  model: StaticRouterModel,
+  timer?: ReminderTimer,
+  budgetLimits?: {
+    maxCallsPerTask: number;
+    maxToolCallsPerTask: number;
+    maxScheduleRunsPerDay: number;
+  },
+) {
   const store = createStore();
   const owner = store.findOwner("feishu", APP_ID, OWNER_OPEN_ID);
   if (owner === undefined) {
@@ -21,11 +29,53 @@ function build(model: StaticRouterModel, timer?: ReminderTimer) {
     wake: noopWake,
     model,
     reminderTimer: timer,
+    budgetLimits,
   });
   return { app, store, owner };
 }
 
 describe("composition root", () => {
+  it("passes the configured tool-call cap to ActionService", () => {
+    const { app, store } = build(new StaticRouterModel(), undefined, {
+      maxCallsPerTask: 10,
+      maxToolCallsPerTask: 1,
+      maxScheduleRunsPerDay: 20,
+    });
+    const owner = store.findOwner("feishu", APP_ID, OWNER_OPEN_ID);
+    if (owner === undefined) throw new Error("test owner was not bound");
+    const conversation = store.upsertConversation({
+      ownerId: owner.id,
+      channel: "feishu",
+      accountId: APP_ID,
+      platformConversationId: "cap-chat",
+      kind: "p2p",
+      createdAt: new Date().toISOString(),
+    });
+    const task = app.taskService.create({
+      ownerId: owner.id,
+      conversationId: conversation.id,
+      sourceKey: "app:tool-cap",
+      goal: "tool cap",
+      completionCriteria: "done",
+      mandate: {
+        resources: ["chat", "state"],
+        tools: ["state.summary", "reminder.list"],
+      },
+    });
+    const claimed = app.tasks.claimNext(new Date().toISOString(), 60_000, 2);
+    assert.ok(claimed);
+    const result = app.actionService.proposeForReport(
+      claimed.task,
+      claimed.assignment,
+      [
+        { tool: "state.summary", args: {} },
+        { tool: "reminder.list", args: { limit: 5, offset: 0 } },
+      ],
+    );
+    assert.equal(result.count, 1);
+    assert.equal(result.rejected, 1);
+  });
+
   it("takes a chat message from ingress to a queued reply", async () => {
     const model = new StaticRouterModel();
     model.push({ action: "reply", text: "在" });

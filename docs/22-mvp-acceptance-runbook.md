@@ -5,7 +5,7 @@
 
 ## 0. 前置条件
 
-- 当前 main：`d818f61`（MVP-01 #43、MVP-02 #44/#46、事实核验 #49/#50/#51 已合并）。
+- 当前 main：以仓库最新提交为准（包含 MVP-01/MVP-02、事实核验与预算变更）。
 - `.env` 已配置真实 `FEISHU_APP_ID/SECRET`、`OWNER_FEISHU_OPEN_ID`、`OPENCODE_API_KEY`；`FEISHU_EVENT_MODE=long_connection`。
 - 重启本地服务后确认 `/healthz` 返回 ok，且长连接到飞书 443 为 ESTABLISHED。
 - 不要在验收过程中修改数据库或注入 `pa_inbox` 行。
@@ -47,7 +47,7 @@ sqlite3 data/agent.sqlite "select after_json from pa_audit where event='state.qu
 我有哪些提醒
 ```
 
-期望：列表显示该提醒的 UTC 时间与 `Asia/Shanghai` 本地时间；到期后真实飞书收到提醒文本。
+期望：列表同时显示 `Asia/Shanghai` 本地时间与 UTC ISO 时间；到期后真实飞书收到提醒文本。
 
 核对 `pa_outbox` 中提醒的 `status=accepted` 且 `platform_message_id` 非空。
 
@@ -87,7 +87,7 @@ sqlite3 data/agent.sqlite "select verification_json from pa_tasks order by creat
 
 | 字段 | 内容 |
 | --- | --- |
-| commit | `d818f61` 或实际运行 commit |
+| commit | 实际运行 commit |
 | 环境 | E3（真实飞书私聊入站/出站） |
 | 模型 | provider/model |
 | trace | inbox/outbox/task id |

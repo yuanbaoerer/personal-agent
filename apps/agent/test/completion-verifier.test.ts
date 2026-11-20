@@ -128,6 +128,49 @@ function insertSucceededGithubList(
   return action;
 }
 
+function insertSucceededGithubPull(
+  services: TestServices,
+  taskId: string,
+  assignment: ReturnType<typeof claim>,
+  number: number,
+  merged: boolean,
+) {
+  const repo = "owner/repo";
+  const { action } = services.actions.insert({
+    ownerId: services.owner.id,
+    conversationId: services.conversation.id,
+    taskId,
+    taskRevision: assignment.assignment.taskRevision,
+    fencingToken: assignment.assignment.fencingToken,
+    tool: "github.read",
+    args: { operation: "pull", repo, number },
+    argsHash: "hash-pull",
+    expiresAt: "2026-01-01T00:10:00.000Z",
+    nonce: `nonce-pull-${Math.random()}`,
+    createdAt: START.toISOString(),
+  });
+  services.store.db.run(
+    `UPDATE pa_actions SET status = 'succeeded', evidence_json = ?,
+       external_ref = ?, updated_at = ? WHERE id = ?`,
+    JSON.stringify({
+      operation: "pull",
+      repo,
+      source: `https://github.com/${repo}/pull/${number}`,
+      item: {
+        number,
+        title: "pull",
+        state: merged ? "closed" : "open",
+        merged,
+        draft: false,
+      },
+    }),
+    `https://github.com/${repo}/pull/${number}`,
+    START.toISOString(),
+    action.id,
+  );
+  return action;
+}
+
 function ready(
   summary = "repo checked",
   evidence: { kind: string; value: string }[] = [
@@ -325,6 +368,38 @@ describe("TaskCompletionVerifier", () => {
       current?.verification?.checked.includes("claim:free_text_unverified"),
     );
     assert.equal(current?.verification?.externalFactsVerified, false);
+  });
+
+  it("accepts a merged claim from a single-pull receipt", () => {
+    const services = setup();
+    const task = createTask(services);
+    const assignment = claim(services);
+    insertSucceededGithubPull(services, task.id, assignment, 45, true);
+    services.taskService.report(
+      assignment.assignment.id,
+      assignment.assignment.fencingToken,
+      assignment.assignment.taskRevision,
+      {
+        ...ready("merged", [
+          { kind: "github", value: "https://github.com/owner/repo/pull/45" },
+        ]),
+        githubClaims: [
+          {
+            kind: "github_item",
+            repo: "owner/repo",
+            operation: "pulls",
+            item: "45",
+            field: "merged",
+            value: true,
+          },
+        ],
+      },
+    );
+    const current = services.tasks.get(task.id);
+    assert.equal(current?.status, "succeeded");
+    assert.ok(
+      current?.verification?.checked.includes("claim:github:pulls:merged"),
+    );
   });
 
   it("rejects an issue state that conflicts with the GitHub receipt", () => {
