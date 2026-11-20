@@ -7,10 +7,12 @@ import type {
   GithubClaim,
   MemoryRecord,
   StateClaim,
+  TaskExtensionSnapshot,
   TaskRecord,
   TaskStatus,
   WorkerReport,
 } from "../domain/types.ts";
+import type { CapabilityView } from "../plugins/fence.ts";
 import type { ActionRepository } from "../storage/actions.ts";
 import type { EffectRepository } from "../storage/effects.ts";
 import {
@@ -56,6 +58,10 @@ export interface TaskServiceDeps {
   completionVerifier?: TaskCompletionVerifier;
   memories?: MemoryRepository;
   state?: StateReadService;
+  /** Capability snapshot pinned on each new task revision. */
+  extensions?: { snapshot(): TaskExtensionSnapshot };
+  /** Live capability metadata for Worker prompts. */
+  capabilities?: CapabilityView;
 }
 
 export interface CreateTaskInput {
@@ -105,6 +111,8 @@ export class TaskService {
   readonly #budget?: BudgetService;
   readonly #completion: TaskCompletionVerifier;
   readonly #memories?: MemoryRepository;
+  readonly #extensions?: { snapshot(): TaskExtensionSnapshot };
+  readonly #capabilities?: CapabilityView;
   #proposer: ActionProposer | undefined;
 
   constructor(deps: TaskServiceDeps) {
@@ -129,6 +137,8 @@ export class TaskService {
         now: this.#now,
       });
     this.#memories = deps.memories;
+    this.#extensions = deps.extensions;
+    this.#capabilities = deps.capabilities;
   }
 
   setActionProposer(proposer: ActionProposer): void {
@@ -155,6 +165,7 @@ export class TaskService {
       priority: input.priority,
       deadline: input.deadline,
       schedulePolicyId: input.schedulePolicyId,
+      extension: this.#extensions?.snapshot(),
       createdAt: now,
     });
 
@@ -192,7 +203,14 @@ export class TaskService {
       .listActiveAssignments(taskId)
       .map((assignment) => assignment.sessionId)
       .filter((sessionId) => sessionId.length > 0);
-    const task = this.#tasks.revise(taskId, changes, now);
+    const task = this.#tasks.revise(
+      taskId,
+      {
+        ...changes,
+        extension: this.#extensions?.snapshot(),
+      },
+      now,
+    );
     if (task === undefined) {
       return undefined;
     }
@@ -503,6 +521,39 @@ export class TaskService {
       return this.#failForDeadline(claimed.task, now);
     }
 
+    const unavailable =
+      this.#capabilities === undefined
+        ? []
+        : claimed.task.mandate.tools.filter(
+            (tool) => this.#capabilities?.toolInfo(tool) === undefined,
+          );
+    if (unavailable.length > 0) {
+      const at = this.#now().toISOString();
+      this.#tasks.markAssignmentExpired(claimed.assignment.id, at);
+      const updated = this.#tasks.updateTask(claimed.task.id, claimed.task.revision, {
+        status: "needs_review",
+        lastError: `capability unavailable: ${unavailable.join(", ")}`,
+        updatedAt: at,
+      });
+      if (updated !== undefined) {
+        this.#store.recordAudit({
+          event: "task.capability_unavailable",
+          subjectType: "task",
+          subjectId: claimed.task.id,
+          after: { tools: unavailable, availableTools: this.#capabilities?.toolNames() },
+          traceId: `task:${claimed.task.id}`,
+          occurredAt: at,
+        });
+        this.#reply(
+          claimed.task,
+          "failure",
+          `任务所需能力已停用或更新，未派工：${unavailable.join(", ")}。请重新启用后重试。`,
+          `capability-unavailable:${claimed.task.revision}`,
+        );
+      }
+      return { status: "done" };
+    }
+
     const budget = await this.#budget?.check({
       role: "worker",
       taskId: claimed.task.id,
@@ -588,6 +639,7 @@ export class TaskService {
             claimed.task.ownerId,
             claimed.task.mandate.project,
           ) ?? [],
+          this.#capabilities,
         ),
         operationId,
         "app.task",
@@ -1274,6 +1326,7 @@ function workerPrompt(
   inputs: readonly TaskInputRecord[],
   priorActions: { tool: string; status: string; args: Record<string, unknown>; evidence?: Record<string, unknown> }[],
   memories: readonly MemoryRecord[],
+  capabilities?: CapabilityView,
 ): string {
   const lines = [
     "You are a task Worker with a separate context. Work only inside the Mandate.",
@@ -1302,7 +1355,29 @@ function workerPrompt(
       "Claims are checked against the receipt; omit unverifiable free-text numbers.",
     );
   }
-  if (task.mandate.tools.includes("github.read")) {
+  if (capabilities !== undefined) {
+    const available = task.mandate.tools
+      .map((name) => capabilities.toolInfo(name))
+      .filter((info): info is NonNullable<typeof info> => info !== undefined);
+    if (available.length > 0) {
+      lines.push(
+        `Enabled capability catalog (generation ${task.extension?.catalogGeneration ?? "unpinned"}):`,
+      );
+      for (const info of available) {
+        const origin =
+          info.pluginId === undefined
+            ? "core"
+            : `plugin ${info.pluginId}@${info.pluginVersion ?? "?"}`;
+        lines.push(
+          `- ${info.name} [${origin}] ${info.readOnly ? "read-only" : "write"} resource=${info.resource ?? "none"}` +
+            `${info.description === undefined ? "" : `: ${info.description}`}`,
+        );
+        if (info.guidance !== undefined) {
+          lines.push(`  ${info.guidance}`);
+        }
+      }
+    }
+  } else if (task.mandate.tools.includes("github.read")) {
     lines.push(
       "GitHub receipts contain the API fields under previous action results.",
       "For every issue/PR/commit field you state, add a githubClaim:",

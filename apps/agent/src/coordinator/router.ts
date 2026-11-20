@@ -1,5 +1,6 @@
 import type {
   InboxRecord,
+  Mandate,
   ReplyDraft,
   RouterDecision,
   SchedulePolicyRecord,
@@ -62,9 +63,10 @@ export {
 } from "./intent-format.ts";
 import type { InboundHandler } from "./responder.ts";
 import type { WakeScheduler } from "../runtime/types.ts";
+import type { CapabilityView } from "../plugins/fence.ts";
 
 export interface RouterModel {
-  decide(input: RouterInput): Promise<RouterDecision>;
+  decide(input: RouterInput, capabilities?: CapabilityView): Promise<RouterDecision>;
 }
 
 /** Deterministic model used by tests and by the local Node fallback. */
@@ -102,6 +104,8 @@ export interface RouterDeps {
   wake: WakeScheduler;
   now?: () => Date;
   defaultTimezone?: string;
+  /** Live catalog; models may only request currently enabled capabilities. */
+  capabilities?: CapabilityView;
 }
 
 const GITHUB_REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -322,6 +326,7 @@ export class Router implements InboundHandler {
   readonly #wake: WakeScheduler;
   readonly #now: () => Date;
   readonly #timezone: string;
+  readonly #capabilities?: CapabilityView;
 
   constructor(deps: RouterDeps) {
     this.#store = deps.store;
@@ -341,6 +346,7 @@ export class Router implements InboundHandler {
     this.#wake = deps.wake;
     this.#now = deps.now ?? (() => new Date());
     this.#timezone = deps.defaultTimezone ?? "Asia/Shanghai";
+    this.#capabilities = deps.capabilities;
     this.#stateQuery = new StateQueryHandler({
       tasks: deps.tasks,
       state: deps.state,
@@ -459,7 +465,7 @@ export class Router implements InboundHandler {
           conversationId: task.conversationId,
           project: task.mandate.project,
         })),
-      });
+      }, this.#capabilities);
     } catch (error) {
       if (error instanceof RouterPendingError) {
         // The model run is still durable; poll in the background instead of
@@ -595,10 +601,22 @@ export class Router implements InboundHandler {
           this.#answerStateQuery(context);
           return { status: "done" };
         }
-        const mandate = ensureMandateResources({
-          ...requested,
-          project: ownerProject ?? requested.project,
-        });
+        const requestedMandate = ensureMandateResources(
+          {
+            ...requested,
+            project: ownerProject ?? requested.project,
+          },
+          this.#capabilities,
+        );
+        const mandate = this.#constrainMandate(requestedMandate);
+        if (requested.tools.length > 0 && mandate.tools.length === 0) {
+          this.#reply(
+            context,
+            "所需能力当前未启用；请先由主人启用相应插件。",
+            "failure",
+          );
+          return { status: "done" };
+        }
         const task = this.#taskService.create({
           ownerId: context.ownerId,
           conversationId: context.conversationId,
@@ -752,7 +770,16 @@ export class Router implements InboundHandler {
     const mandate =
       changes.mandate === undefined
         ? undefined
-        : ensureMandateResources(changes.mandate);
+        : this.#constrainMandate(
+            ensureMandateResources(changes.mandate, this.#capabilities),
+          );
+    if (
+      changes.mandate !== undefined &&
+      changes.mandate.tools.length > 0 &&
+      mandate?.tools.length === 0
+    ) {
+      return { ok: false, reason: "所需能力当前未启用；未修改任务。" };
+    }
     if (mandate !== undefined) {
       // The router model proposes mandate changes. A revision may extend the
       // scope, but it must never shrink tools/resources and thereby weaken the
@@ -1546,6 +1573,34 @@ export class Router implements InboundHandler {
 
   #rememberTaskFocus(conversationId: string, taskId: string): void {
     this.#store.metaSet(taskFocusKey(conversationId), taskId);
+  }
+
+  /**
+   * A model may only request capabilities that are enabled right now. This
+   * runs after the static/model allow-list so a stale prompt or a disabled
+   * plugin can never create a task that claims new authority.
+   */
+  #constrainMandate(mandate: Mandate): Mandate {
+    if (this.#capabilities === undefined) {
+      return mandate;
+    }
+    const tools = mandate.tools.filter(
+      (name) => this.#capabilities?.toolInfo(name) !== undefined,
+    );
+    const resources = new Set(
+      mandate.resources.filter((name) => this.#capabilities?.resources().includes(name)),
+    );
+    for (const name of tools) {
+      const resource = this.#capabilities.resourceForTool(name);
+      if (resource !== undefined) {
+        resources.add(resource);
+      }
+    }
+    return {
+      ...mandate,
+      tools,
+      resources: [...resources],
+    };
   }
 
   /**

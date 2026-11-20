@@ -24,6 +24,7 @@ import {
   type ToolRegistry,
 } from "./tools.ts";
 import { STATE_RESOURCE, isStateToolName } from "./state.ts";
+import type { CapabilityFence, PluginToolBinding } from "../plugins/fence.ts";
 
 export interface ActionServiceDeps {
   store: Store;
@@ -43,6 +44,8 @@ export interface ActionServiceDeps {
   preauthorizations?: PreauthorizationService;
   schedulePolicies?: SchedulePolicyService;
   onSettled?: (taskId: string) => void;
+  /** Re-checks live plugin identity/generation at every authority boundary. */
+  capabilities?: CapabilityFence;
 }
 
 export interface ApprovalInput {
@@ -76,6 +79,7 @@ export class ActionService {
   readonly #preauthorizations?: PreauthorizationService;
   readonly #schedulePolicies?: SchedulePolicyService;
   readonly #onSettled: (taskId: string) => void;
+  readonly #capabilities?: CapabilityFence;
   #activeTools = 0;
   readonly #toolWaiters: (() => void)[] = [];
 
@@ -95,6 +99,7 @@ export class ActionService {
     this.#preauthorizations = deps.preauthorizations;
     this.#schedulePolicies = deps.schedulePolicies;
     this.#onSettled = deps.onSettled ?? (() => {});
+    this.#capabilities = deps.capabilities;
   }
 
   install(dispatcher: EffectDispatcher): void {
@@ -134,6 +139,7 @@ export class ActionService {
         canonical.args,
         sourceKey,
         true,
+        canonical.binding,
       );
       if (inserted?.created) {
         count += 1;
@@ -192,13 +198,14 @@ export class ActionService {
       canonical.args,
       sourceKey,
       false,
+      canonical.binding,
     )?.action;
   }
 
   #canonicalProposal(
     task: TaskRecord,
     proposed: ProposedAction,
-  ): { tool: ActionTool; args: Record<string, unknown> } | undefined {
+  ): { tool: ActionTool; args: Record<string, unknown>; binding?: PluginToolBinding } | undefined {
     const now = this.#now().toISOString();
     const tool = this.#tools.get(proposed.tool);
     if (tool === undefined) {
@@ -244,9 +251,23 @@ export class ActionService {
     }
 
     try {
+      const capabilityReason = this.#capabilities?.checkProposal(task, tool.name);
+      if (capabilityReason !== undefined) {
+        this.#store.recordAudit({
+          event: "action.proposal_rejected",
+          subjectType: "task",
+          subjectId: task.id,
+          after: { reason: capabilityReason, tool: tool.name },
+          traceId: `task:${task.id}`,
+          occurredAt: now,
+        });
+        return undefined;
+      }
+      const binding = this.#capabilities?.bindingForTool(tool.name);
       return {
         tool,
         args: tool.canonicalize(proposed.args, executionContext(task)),
+        binding,
       };
     } catch (error) {
       this.#store.recordAudit({
@@ -271,6 +292,7 @@ export class ActionService {
     args: Record<string, unknown>,
     sourceKey: string | undefined,
     deferAutoApprove: boolean,
+    binding?: PluginToolBinding,
   ):
     | { action: ActionRecord; autoApprove: boolean; created: boolean }
     | undefined {
@@ -315,6 +337,10 @@ export class ActionService {
       preauthorizationId: authorization?.preauthorizationId,
       schedulePolicyId: authorization?.schedulePolicyId,
       schedulePolicyVersion: authorization?.schedulePolicyVersion,
+      pluginId: binding?.pluginId,
+      pluginVersion: binding?.pluginVersion,
+      pluginDigest: binding?.pluginDigest,
+      catalogGeneration: binding?.catalogGeneration,
       createdAt: now,
     });
 
@@ -504,6 +530,37 @@ export class ActionService {
     return { ok: true };
   }
 
+  /**
+   * A plugin was disabled or replaced. Pending approvals can never become
+   * authorized again; close them now. In-flight calls cannot be cancelled and
+   * are completed/reconciled under the final execution fence.
+   */
+  revokePendingForTools(
+    tools: readonly string[],
+    reason: string,
+  ): { superseded: number; inFlight: number } {
+    let superseded = 0;
+    const now = this.#now().toISOString();
+    for (const action of this.#actions.listPendingForTools(tools)) {
+      if (!this.#actions.supersede(action.id, reason, now)) {
+        continue;
+      }
+      superseded += 1;
+      this.#auditAction(action, "action.superseded", { reason });
+      this.#reply(
+        action,
+        "failure",
+        "插件已停用或更新，该动作的审批已失效，未执行。",
+        "plugin_revoked",
+      );
+      this.#onSettled(action.taskId);
+    }
+    return {
+      superseded,
+      inFlight: this.#actions.listInFlightForTools(tools).length,
+    };
+  }
+
   async handleExecute(payload: Record<string, unknown>): Promise<EffectOutcome> {
     const actionId = typeof payload.actionId === "string" ? payload.actionId : undefined;
     if (actionId === undefined) {
@@ -559,6 +616,37 @@ export class ActionService {
 
     try {
       const result = await this.#runTool(tool, action.args, this.#executionContext(action));
+      const currentTask = this.#tasks?.get(action.taskId);
+      const capabilityReason =
+        currentTask === undefined
+          ? undefined
+          : this.#capabilities?.checkAction(action, currentTask, action.tool);
+      if (capabilityReason !== undefined) {
+        const at = this.#now().toISOString();
+        if (tool.readOnly === true) {
+          this.#actions.markFailed(action.id, capabilityReason, at);
+          this.#auditAction(action, "action.failed", { reason: capabilityReason });
+          this.#reply(
+            action,
+            "failure",
+            "能力目录已变化，读取结果不再被接受。",
+            "capability_revoked",
+          );
+        } else {
+          this.#actions.markUnknown(action.id, capabilityReason, at);
+          this.#auditAction(action, "action.unknown", { reason: capabilityReason });
+          this.#reply(
+            action,
+            "status",
+            "能力目录已变化，写入结果未知；不会盲目重试。",
+            "capability_unknown",
+          );
+          this.#enqueueReconcile(action, at);
+        }
+        this.#onSettled(action.taskId);
+        void this.#wake.wake();
+        return { status: "done" };
+      }
       const marked = this.#actions.markSucceeded(
         action.id,
         result.evidence,
@@ -911,6 +999,14 @@ export class ActionService {
     ) {
       return "resource_outside_mandate";
     }
+    const capabilityReason = this.#capabilities?.checkAction(
+      action,
+      task,
+      action.tool,
+    );
+    if (capabilityReason !== undefined) {
+      return capabilityReason;
+    }
     if (action.preauthorizationId !== undefined) {
       if (this.#preauthorizations?.isGrantActive(action.preauthorizationId) !== true) {
         return "preauthorization_revoked";
@@ -1018,6 +1114,17 @@ export class ActionService {
   }
 
   #readAuthorizationRevoked(action: ActionRecord): string | undefined {
+    const task = this.#tasks?.get(action.taskId);
+    if (task !== undefined) {
+      const capabilityReason = this.#capabilities?.checkAction(
+        action,
+        task,
+        action.tool,
+      );
+      if (capabilityReason !== undefined) {
+        return capabilityReason;
+      }
+    }
     if (
       action.preauthorizationId !== undefined &&
       this.#preauthorizations?.isGrantActive(action.preauthorizationId) !== true

@@ -429,6 +429,29 @@ const migrations: readonly (readonly string[])[] = [
     `ALTER TABLE pa_client_tokens ADD COLUMN expires_at TEXT`,
     `CREATE INDEX pa_client_tokens_expiry_idx ON pa_client_tokens (expires_at)`,
   ],
+  [
+    // Builtin plugin lifecycle and the catalog identity pinned on tasks/actions.
+    // Disabling a plugin never deletes its row or its audit trail.
+    `CREATE TABLE pa_plugins (
+      id TEXT PRIMARY KEY,
+      version TEXT NOT NULL,
+      digest TEXT NOT NULL,
+      enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+      status TEXT NOT NULL CHECK (status IN ('enabled', 'disabled', 'error')),
+      config_json TEXT NOT NULL,
+      error TEXT,
+      installed_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      enabled_at TEXT,
+      disabled_at TEXT
+    ) STRICT`,
+    `ALTER TABLE pa_tasks ADD COLUMN extension_json TEXT`,
+    `ALTER TABLE pa_actions ADD COLUMN plugin_id TEXT`,
+    `ALTER TABLE pa_actions ADD COLUMN plugin_version TEXT`,
+    `ALTER TABLE pa_actions ADD COLUMN plugin_digest TEXT`,
+    `ALTER TABLE pa_actions ADD COLUMN catalog_generation INTEGER`,
+    `CREATE INDEX pa_actions_plugin_idx ON pa_actions (plugin_id, status)`,
+  ],
 ];
 
 /** Highest schema version this build can read/migrate. */

@@ -81,7 +81,7 @@ export interface ActionTool {
 }
 
 export class ToolRegistry {
-  readonly #tools = new Map<string, ActionTool>();
+  #tools = new Map<string, ActionTool>();
 
   register(tool: ActionTool): void {
     if (this.#tools.has(tool.name)) {
@@ -94,8 +94,28 @@ export class ToolRegistry {
     return this.#tools.get(name);
   }
 
+  list(): ActionTool[] {
+    return [...this.#tools.values()];
+  }
+
   names(): string[] {
     return [...this.#tools.keys()].sort();
+  }
+
+  /**
+   * Atomically publish a new capability set. Callers build the complete list
+   * first; a duplicate throws before the live map changes, so readers never
+   * observe a partial catalog.
+   */
+  swap(tools: readonly ActionTool[]): void {
+    const next = new Map<string, ActionTool>();
+    for (const tool of tools) {
+      if (next.has(tool.name)) {
+        throw new Error(`tool already registered: ${tool.name}`);
+      }
+      next.set(tool.name, tool);
+    }
+    this.#tools = next;
   }
 
   describe(): ToolDescriptor[] {

@@ -8,6 +8,7 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 
 import { createBackup, restoreBackup, verifyBackup } from "../../../scripts/backup.ts";
+import { LATEST_SCHEMA_VERSION } from "../src/storage/schema.ts";
 import { openStore } from "../src/storage/node.ts";
 import { APP_ID, OWNER_OPEN_ID } from "./helpers.ts";
 
@@ -55,7 +56,7 @@ describe("sqlite backup", () => {
       assert.equal(manifest.metadata?.commitSha, "deadbeef");
       assert.equal(manifest.metadata?.rowCounts.pa_identities, 1);
       assert.equal(manifest.metadata?.piTables, 1);
-      assert.equal(manifest.files[0]?.schemaVersion, "16");
+      assert.equal(manifest.files[0]?.schemaVersion, String(LATEST_SCHEMA_VERSION));
       assert.equal(manifest.files[1]?.name, "pi.sqlite");
       if (process.platform !== "win32") {
         assert.equal((await stat(join(outDir, "agent.sqlite"))).mode & 0o777, 0o600);

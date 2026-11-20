@@ -202,6 +202,10 @@ async function main(): Promise<void> {
     logger,
     adminToken: config.adminToken,
     clientApi,
+    onCredentialChange: () =>
+      app.plugins
+        .credentialChanged("github", "oauth")
+        .then(() => undefined),
     oauth:
       githubOAuth === undefined
         ? undefined

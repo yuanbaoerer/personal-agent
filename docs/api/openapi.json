@@ -959,6 +959,151 @@
           }
         ]
       }
+    },
+    "/plugins": {
+      "get": {
+        "operationId": "listPlugins",
+        "summary": "List builtin plugins, lifecycle and connection state",
+        "tags": [
+          "plugins"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/plugins/{id}": {
+      "get": {
+        "operationId": "getPlugin",
+        "summary": "Read one builtin plugin",
+        "tags": [
+          "plugins"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/plugins/{id}/enable": {
+      "post": {
+        "operationId": "enablePlugin",
+        "summary": "Enable a builtin plugin and publish a new catalog generation",
+        "tags": [
+          "plugins"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/plugins/{id}/disable": {
+      "post": {
+        "operationId": "disablePlugin",
+        "summary": "Disable a builtin plugin and revoke its pending actions",
+        "tags": [
+          "plugins"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
     }
   },
   "components": {
@@ -1387,6 +1532,85 @@
             "maximum": 365
           }
         }
+      },
+      "Plugin": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "version",
+          "apiVersion",
+          "trust",
+          "digest",
+          "enabled",
+          "lifecycle",
+          "connection",
+          "auth",
+          "permissions",
+          "tools",
+          "activeTools",
+          "defaultPolicy",
+          "installedAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "version": { "type": "string" },
+          "apiVersion": { "type": "string" },
+          "trust": { "type": "string", "const": "builtin" },
+          "digest": { "type": "string" },
+          "enabled": { "type": "boolean" },
+          "lifecycle": {
+            "type": "string",
+            "enum": ["enabled", "disabled", "error"]
+          },
+          "connection": {
+            "type": "object",
+            "required": ["status"],
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": [
+                  "unconfigured",
+                  "connected",
+                  "expired",
+                  "revoked",
+                  "error"
+                ]
+              },
+              "account": { "type": "string" },
+              "scopes": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "detail": { "type": "string" }
+            }
+          },
+          "auth": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "permissions": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "tools": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "activeTools": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "defaultPolicy": {
+            "type": "string",
+            "enum": ["enabled", "disabled"]
+          },
+          "installedAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" },
+          "lastError": { "type": "string" }
+        }
       }
     },
     "responses": {
@@ -1402,6 +1626,26 @@
       },
       "RateLimited": {
         "description": "Credential or IP rate limit exceeded",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "Credential lacks the required scope",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "Resource does not exist",
         "content": {
           "application/json": {
             "schema": {

@@ -27,6 +27,10 @@ const expected: Record<string, string[]> = {
   "/events/stream": ["get"],
   "/tokens": ["get", "post"],
   "/tokens/{id}": ["delete"],
+  "/plugins": ["get"],
+  "/plugins/{id}": ["get"],
+  "/plugins/{id}/enable": ["post"],
+  "/plugins/{id}/disable": ["post"],
 };
 
 describe("OpenAPI contract", () => {

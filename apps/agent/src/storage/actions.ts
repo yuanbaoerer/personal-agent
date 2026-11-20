@@ -30,6 +30,10 @@ interface ActionRow {
   preauthorization_id: string | null;
   schedule_policy_id: string | null;
   schedule_policy_version: number | null;
+  plugin_id: string | null;
+  plugin_version: string | null;
+  plugin_digest: string | null;
+  catalog_generation: number | null;
   source_key: string | null;
   created_at: string;
   updated_at: string;
@@ -76,6 +80,11 @@ function mapAction(row: ActionRow): ActionRecord {
     schedulePolicyId: row.schedule_policy_id ?? undefined,
     schedulePolicyVersion:
       row.schedule_policy_version === null ? undefined : Number(row.schedule_policy_version),
+    pluginId: row.plugin_id ?? undefined,
+    pluginVersion: row.plugin_version ?? undefined,
+    pluginDigest: row.plugin_digest ?? undefined,
+    catalogGeneration:
+      row.catalog_generation === null ? undefined : Number(row.catalog_generation),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -111,6 +120,10 @@ export interface NewActionInput {
   preauthorizationId?: string;
   schedulePolicyId?: string;
   schedulePolicyVersion?: number;
+  pluginId?: string;
+  pluginVersion?: string;
+  pluginDigest?: string;
+  catalogGeneration?: number;
   createdAt: string;
 }
 
@@ -142,9 +155,10 @@ export class ActionRepository {
          tool, args_json, args_hash, status, expires_at, nonce, approved_at,
          approved_by, execution_attempts, lease_until, external_ref, evidence_json,
          last_error, preauthorization_id, schedule_policy_id,
-         schedule_policy_version, source_key, created_at, updated_at)
+         schedule_policy_version, plugin_id, plugin_version, plugin_digest,
+         catalog_generation, source_key, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'proposed', ?, ?, NULL, NULL, 0,
-               NULL, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?)
+               NULL, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (source_key) DO NOTHING
        RETURNING *`,
       randomUUID(),
@@ -161,6 +175,10 @@ export class ActionRepository {
       input.preauthorizationId ?? null,
       input.schedulePolicyId ?? null,
       input.schedulePolicyVersion ?? null,
+      input.pluginId ?? null,
+      input.pluginVersion ?? null,
+      input.pluginDigest ?? null,
+      input.catalogGeneration ?? null,
       input.sourceKey ?? null,
       input.createdAt,
       input.createdAt,
@@ -198,6 +216,40 @@ export class ActionRepository {
       .all<ActionRow>(
         "SELECT * FROM pa_actions WHERE task_id = ? ORDER BY created_at ASC",
         taskId,
+      )
+      .map(mapAction);
+  }
+
+  /** Pending approvals for a plugin being disabled or replaced. */
+  listPendingForTools(tools: readonly string[]): ActionRecord[] {
+    if (tools.length === 0) {
+      return [];
+    }
+    const placeholders = tools.map(() => "?").join(", ");
+    return this.#db
+      .all<ActionRow>(
+        `SELECT * FROM pa_actions
+         WHERE tool IN (${placeholders})
+           AND status IN ('proposed', 'approved')
+         ORDER BY created_at ASC`,
+        ...tools,
+      )
+      .map(mapAction);
+  }
+
+  /** Already-executing calls that a lifecycle change cannot cancel. */
+  listInFlightForTools(tools: readonly string[]): ActionRecord[] {
+    if (tools.length === 0) {
+      return [];
+    }
+    const placeholders = tools.map(() => "?").join(", ");
+    return this.#db
+      .all<ActionRow>(
+        `SELECT * FROM pa_actions
+         WHERE tool IN (${placeholders})
+           AND status IN ('executing', 'unknown', 'reconciling')
+         ORDER BY created_at ASC`,
+        ...tools,
       )
       .map(mapAction);
   }

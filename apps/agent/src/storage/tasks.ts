@@ -8,6 +8,7 @@ import type {
   TaskInputRecord,
   TaskRecord,
   TaskStatus,
+  TaskExtensionSnapshot,
   TaskVerification,
   WorkerReport,
 } from "../domain/types.ts";
@@ -34,6 +35,7 @@ interface TaskRow {
   acknowledged_by: string | null;
   needs_review: number;
   schedule_policy_id: string | null;
+  extension_json: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -107,6 +109,10 @@ function mapTask(row: TaskRow): TaskRecord {
     acknowledgedAt: row.acknowledged_at ?? undefined,
     acknowledgedBy: row.acknowledged_by ?? undefined,
     schedulePolicyId: row.schedule_policy_id ?? undefined,
+    extension:
+      row.extension_json === null
+        ? undefined
+        : (JSON.parse(row.extension_json) as TaskExtensionSnapshot),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -154,6 +160,7 @@ export interface NewTaskInput {
   deadline?: string;
   budget?: Record<string, unknown>;
   schedulePolicyId?: string;
+  extension?: TaskExtensionSnapshot;
   createdAt: string;
 }
 
@@ -191,8 +198,8 @@ export class TaskRepository {
       `INSERT INTO pa_tasks
         (id, owner_id, conversation_id, source_key, goal, completion_criteria,
          mandate_json, revision, status, priority, attempts, deadline, budget_json,
-         schedule_policy_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'queued', ?, 0, ?, ?, ?, ?, ?)
+         schedule_policy_id, extension_json, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'queued', ?, 0, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (source_key) DO NOTHING
        RETURNING *`,
       id,
@@ -206,6 +213,7 @@ export class TaskRepository {
       input.deadline ?? null,
       input.budget === undefined ? null : JSON.stringify(input.budget),
       input.schedulePolicyId ?? null,
+      input.extension === undefined ? null : JSON.stringify(input.extension),
       input.createdAt,
       input.createdAt,
     )[0];
@@ -872,6 +880,7 @@ export class TaskRepository {
       completionCriteria?: string;
       mandate?: Mandate;
       priority?: number;
+      extension?: TaskExtensionSnapshot;
     },
     now: string,
   ): TaskRecord | undefined {
@@ -894,6 +903,7 @@ export class TaskRepository {
              completion_criteria = COALESCE(?, completion_criteria),
              mandate_json = COALESCE(?, mandate_json),
              priority = COALESCE(?, priority),
+             extension_json = COALESCE(?, extension_json),
              revision = revision + 1,
              status = 'queued',
              attempts = 0,
@@ -904,6 +914,7 @@ export class TaskRepository {
         changes.completionCriteria ?? null,
         changes.mandate === undefined ? null : JSON.stringify(changes.mandate),
         changes.priority ?? null,
+        changes.extension === undefined ? null : JSON.stringify(changes.extension),
         now,
         taskId,
       );

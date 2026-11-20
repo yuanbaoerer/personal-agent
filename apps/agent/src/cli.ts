@@ -3,6 +3,7 @@ import { pathToFileURL } from "node:url";
 
 import { ClientApiClient, ClientApiError } from "./client/sdk.ts";
 import type { ActionRecord, ScheduleRecord, TaskRecord } from "./domain/types.ts";
+import type { PluginView } from "./plugins/types.ts";
 import { runTui } from "./tui.ts";
 
 interface CliIo {
@@ -43,6 +44,10 @@ Usage:
   pa tokens create --name NAME [--scopes read,write,approve] [--ttl-days N]
   pa tokens list
   pa tokens revoke <id>
+  pa plugins list [--json]
+  pa plugins status <id> [--json]
+  pa plugins enable <id> --yes [--json]
+  pa plugins disable <id> --yes [--json]
 
 Environment:
   PA_API_URL    default http://127.0.0.1:8787
@@ -121,6 +126,16 @@ function formatAction(action: ActionRecord): string {
 
 function formatReminder(reminder: ScheduleRecord): string {
   return `${shortId(reminder.id)}  ${reminder.status.padEnd(8)}  ${reminder.dueAt}  ${safeText(reminder.text)}`;
+}
+
+function formatPlugin(plugin: PluginView): string {
+  const tools =
+    plugin.activeTools.length === 0 ? "-" : plugin.activeTools.join(",");
+  return [
+    `${plugin.id}  ${plugin.lifecycle.padEnd(8)}  v${plugin.version}  connection=${plugin.connection.status}`,
+    `  tools ${tools}  permissions ${plugin.permissions.join(",") || "-"}`,
+    ...(plugin.lastError === undefined ? [] : [`  error ${safeText(plugin.lastError)}`]),
+  ].join("\n");
 }
 
 function makeClient(env: NodeJS.ProcessEnv, fetchImpl: typeof fetch): ClientApiClient {
@@ -461,6 +476,42 @@ export async function runCli(
           return revoked ? 0 : 1;
         }
         throw new Error("tokens subcommand must be list, create or revoke");
+      }
+      case "plugins": {
+        const sub = requirePositional(args, 0, "plugins subcommand");
+        if (sub === "list") {
+          const plugins = await client.listPlugins();
+          if (json) printJson(io, { plugins });
+          else for (const plugin of plugins) io.out(formatPlugin(plugin));
+          return 0;
+        }
+        if (sub === "status") {
+          const id = requirePositional(args, 1, "plugin id");
+          const plugin = await client.getPlugin(id);
+          if (json) printJson(io, { plugin });
+          else io.out(formatPlugin(plugin));
+          return 0;
+        }
+        if (sub === "enable" || sub === "disable") {
+          const id = requirePositional(args, 1, "plugin id");
+          if (args.flags.yes !== true) {
+            io.out(`Refusing to ${sub} ${id} without --yes.`);
+            return 1;
+          }
+          const result =
+            sub === "enable"
+              ? await client.enablePlugin(id)
+              : await client.disablePlugin(id);
+          if (json) printJson(io, result);
+          else {
+            io.out(formatPlugin(result.plugin));
+            io.out(
+              `changed=${result.changed} generation=${result.generation} revoked=${result.revokedActions} inFlight=${result.inFlightActions}`,
+            );
+          }
+          return 0;
+        }
+        throw new Error("plugins subcommand must be list, status, enable or disable");
       }
       default:
         throw new Error(`unknown command: ${args.command}`);

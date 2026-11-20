@@ -106,6 +106,74 @@ describe("client CLI and SDK", () => {
     assert.match(out.join("\n"), /--yes/);
   });
 
+  it("lists and disables plugins through the SDK with --yes", async () => {
+    const plugin = {
+      id: "github",
+      name: "GitHub",
+      version: "0.1.0",
+      apiVersion: "1",
+      trust: "builtin",
+      digest: "digest",
+      enabled: true,
+      lifecycle: "enabled",
+      connection: { status: "connected", scopes: ["repository.read"] },
+      auth: ["pat"],
+      permissions: ["repository.read"],
+      tools: ["github.read"],
+      activeTools: ["github.read"],
+      defaultPolicy: "enabled",
+      installedAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+    const seen: string[] = [];
+    const fakeFetch: typeof fetch = async (input, init) => {
+      const request = new Request(input, init);
+      seen.push(`${request.method} ${request.url}`);
+      if (request.method === "POST") {
+        return jsonResponse({
+          changed: true,
+          generation: 2,
+          plugin: { ...plugin, enabled: false, lifecycle: "disabled", activeTools: [] },
+          addedTools: [],
+          removedTools: ["github.read"],
+          revokedActions: 1,
+          inFlightActions: 0,
+        });
+      }
+      return jsonResponse({ plugins: [plugin] });
+    };
+    const env = { PA_API_URL: "http://api.local", PA_API_TOKEN: "pa_secret" };
+    const listIo = captureIo();
+    assert.equal(
+      await runCli(["plugins", "list", "--json"], env, listIo.io, fakeFetch),
+      0,
+    );
+    assert.match(listIo.out.join("\n"), /"github"/);
+
+    const refusedIo = captureIo();
+    assert.equal(
+      await runCli(["plugins", "disable", "github"], env, refusedIo.io, fakeFetch),
+      1,
+    );
+    assert.match(refusedIo.out.join("\n"), /--yes/);
+
+    const disableIo = captureIo();
+    assert.equal(
+      await runCli(
+        ["plugins", "disable", "github", "--yes"],
+        env,
+        disableIo.io,
+        fakeFetch,
+      ),
+      0,
+    );
+    assert.match(disableIo.out.join("\n"), /generation=2/);
+    assert.deepEqual(seen, [
+      "GET http://api.local/api/v1/plugins",
+      "POST http://api.local/api/v1/plugins/github/disable",
+    ]);
+  });
+
   it("SDK consumes SSE data frames without treating comments as events", async () => {
     const fakeFetch: typeof fetch = async () =>
       new Response(

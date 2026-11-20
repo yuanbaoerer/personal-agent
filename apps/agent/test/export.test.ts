@@ -6,6 +6,7 @@ import { describe, it } from "node:test";
 
 import { exportAgentData } from "../../../scripts/export.ts";
 import { MemoryRepository } from "../src/storage/personal.ts";
+import { LATEST_SCHEMA_VERSION } from "../src/storage/schema.ts";
 import { openStore } from "../src/storage/node.ts";
 
 const START = new Date("2026-01-01T00:00:00.000Z");
@@ -40,7 +41,7 @@ describe("agent JSON export", () => {
 
       const result = await exportAgentData({ dataDir, out, now: START });
       assert.equal(result.exportVersion, 1);
-      assert.equal(result.schemaVersion, "16");
+      assert.equal(result.schemaVersion, String(LATEST_SCHEMA_VERSION));
       assert.equal(result.tables.pa_memories?.length, 1);
       assert.equal(result.tables.pa_memories?.[0]?.project, "alpha");
       assert.equal(result.pi.included, false);
