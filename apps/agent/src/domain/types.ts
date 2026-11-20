@@ -165,11 +165,24 @@ export interface SkillRejection {
   reason: string;
 }
 
+export type ExtensionPermissionDecision = "allow" | "require_approval" | "deny";
+
+/**
+ * Host-supplied narrowing policy. It only removes capabilities the Core
+ * already granted; it never adds tools, resources or approvals.
+ */
+export interface ExtensionPolicy {
+  plugins?: string[];
+  skills?: string[];
+  permissions?: Record<string, ExtensionPermissionDecision>;
+}
+
 export interface TaskExtensionSnapshot {
   catalogGeneration: number;
   plugins: TaskExtensionBinding[];
   skills?: SkillBinding[];
   rejectedSkills?: SkillRejection[];
+  policy?: ExtensionPolicy;
 }
 
 export interface TaskRecord {

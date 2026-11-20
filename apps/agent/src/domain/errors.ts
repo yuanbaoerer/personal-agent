@@ -37,3 +37,11 @@ export class DeliveryRejectedError extends Error {
     this.retryable = retryable;
   }
 }
+
+/** A host policy tried to narrow a mandate into an inconsistent request. */
+export class ExtensionPolicyError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ExtensionPolicyError";
+  }
+}

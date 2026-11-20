@@ -13,10 +13,12 @@ import { PluginNotFoundError } from "./plugins/catalog.ts";
 import type { AuditFeedItem, Store } from "./storage/store.ts";
 import type {
   ActionRecord,
+  ExtensionPolicy,
   Mandate,
   TaskRecord,
   TaskStatus,
 } from "./domain/types.ts";
+import { ExtensionPolicyError } from "./domain/errors.ts";
 
 export const CLIENT_API_VERSION = 1;
 const API_PREFIX = "/api/v1";
@@ -236,6 +238,7 @@ function sameTaskRequest(
   mandate: Mandate,
   priority: number,
   deadline: string | undefined,
+  extensionPolicy: ExtensionPolicy | undefined,
 ): boolean {
   return (
     task.goal === goal &&
@@ -244,9 +247,76 @@ function sameTaskRequest(
     task.deadline === deadline &&
     task.mandate.resources.join("\u0000") === mandate.resources.join("\u0000") &&
     task.mandate.tools.join("\u0000") === mandate.tools.join("\u0000") &&
+    (task.mandate.skills ?? []).join("\u0000") === (mandate.skills ?? []).join("\u0000") &&
     task.mandate.notes === mandate.notes &&
-    task.mandate.project === mandate.project
+    task.mandate.project === mandate.project &&
+    JSON.stringify(task.extension?.policy ?? null) ===
+      JSON.stringify(extensionPolicy ?? null)
   );
+}
+
+function parseExtensionPolicy(value: unknown): ExtensionPolicy | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new ApiError(400, "invalid_extension_policy", "extensionPolicy must be an object");
+  }
+  const record = value as Record<string, unknown>;
+  for (const key of Object.keys(record)) {
+    if (!["plugins", "skills", "permissions"].includes(key)) {
+      throw new ApiError(400, "invalid_extension_policy", `unknown extensionPolicy key: ${key}`);
+    }
+  }
+  const plugins =
+    record.plugins === undefined
+      ? undefined
+      : parseStringArray(record.plugins, "extensionPolicy.plugins");
+  const skills =
+    record.skills === undefined
+      ? undefined
+      : parseStringArray(record.skills, "extensionPolicy.skills");
+  if (plugins !== undefined && plugins.length > 20) {
+    throw new ApiError(400, "invalid_extension_policy", "extensionPolicy.plugins has too many entries");
+  }
+  if (skills !== undefined && skills.length > 20) {
+    throw new ApiError(400, "invalid_extension_policy", "extensionPolicy.skills has too many entries");
+  }
+  for (const plugin of plugins ?? []) {
+    if (!/^[a-z][a-z0-9-]{0,63}$/.test(plugin)) {
+      throw new ApiError(400, "invalid_extension_policy", `invalid plugin id: ${plugin}`);
+    }
+  }
+  for (const skill of skills ?? []) {
+    if (!/^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)+$/.test(skill)) {
+      throw new ApiError(400, "invalid_extension_policy", `invalid skill id: ${skill}`);
+    }
+  }
+  let permissions: Record<string, "allow" | "require_approval" | "deny"> | undefined;
+  if (record.permissions !== undefined) {
+    if (
+      typeof record.permissions !== "object" ||
+      record.permissions === null ||
+      Array.isArray(record.permissions)
+    ) {
+      throw new ApiError(400, "invalid_extension_policy", "extensionPolicy.permissions must be an object");
+    }
+    const entries = Object.entries(record.permissions);
+    if (entries.length > 50) {
+      throw new ApiError(400, "invalid_extension_policy", "extensionPolicy.permissions has too many entries");
+    }
+    permissions = {};
+    for (const [permission, decision] of entries) {
+      if (!/^[a-z][a-z0-9_.-]{0,127}$/.test(permission)) {
+        throw new ApiError(400, "invalid_extension_policy", `invalid permission: ${permission}`);
+      }
+      if (decision !== "allow" && decision !== "require_approval" && decision !== "deny") {
+        throw new ApiError(400, "invalid_extension_policy", `invalid decision for ${permission}`);
+      }
+      permissions[permission] = decision;
+    }
+  }
+  return { plugins, skills, permissions };
 }
 
 function parseJsonBody(request: ClientApiRequest): Record<string, unknown> {
@@ -647,6 +717,7 @@ export class ClientApiService {
       body.mandate === undefined
         ? { resources: ["chat"], tools: [] }
         : parseMandate(body.mandate);
+    const extensionPolicy = parseExtensionPolicy(body.extensionPolicy);
     const priority = body.priority === undefined ? 0 : this.#parseInteger(body.priority, "priority", 0, 100);
     const deadline =
       body.deadline === undefined
@@ -659,21 +730,30 @@ export class ClientApiService {
     const sourceKey = `api:${this.#ownerId}:${key}`;
     const existing = this.#services.tasks.getBySourceKey(sourceKey);
     if (existing !== undefined) {
-      if (!sameTaskRequest(existing, goal, completionCriteria, mandate, priority, deadline)) {
+      if (!sameTaskRequest(existing, goal, completionCriteria, mandate, priority, deadline, extensionPolicy)) {
         throw new ApiError(409, "idempotency_conflict");
       }
       return { status: 200, body: { task: existing } };
     }
-    const task = this.#services.taskService.create({
-      ownerId: this.#ownerId,
-      conversationId: conversation.id,
-      sourceKey,
-      goal,
-      completionCriteria,
-      mandate,
-      priority,
-      deadline,
-    });
+    let task: TaskRecord;
+    try {
+      task = this.#services.taskService.create({
+        ownerId: this.#ownerId,
+        conversationId: conversation.id,
+        sourceKey,
+        goal,
+        completionCriteria,
+        mandate,
+        priority,
+        deadline,
+        extensionPolicy,
+      });
+    } catch (error) {
+      if (error instanceof ExtensionPolicyError) {
+        throw new ApiError(400, "invalid_extension_policy", error.message);
+      }
+      throw error;
+    }
     return { status: 201, body: { task } };
   }
 

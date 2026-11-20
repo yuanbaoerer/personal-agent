@@ -5,10 +5,10 @@
 > **实施状态（2026-11-20）**
 >
 > - **EXT-01 已实现（Node）**：`plugins/manifest.ts`/`catalog.ts` 提供内置 manifest 校验、命名空间/冲突拒绝、持久 lifecycle、原子 ToolRegistry swap 与 catalog generation；`pa_plugins` 保存 installed/enabled/disabled/error，connection 独立派生；Task 固定 plugin/version/digest/generation，Action 固定 plugin binding/generation；Router、Mandate sanitize、Worker prompt、Action proposal/execute/reconcile 共用 catalog；禁用会 supersede 待执行审批、暂停未派工任务，运行中写入进入 unknown/reconcile。`pa plugins list/status/enable/disable` 与 `/api/v1/plugins` 已接入，enabled 状态跨重启保留，generation 单调递增。
-> - **EXT-02 首批已实现**：GitHub 由 `plugins/github.ts` 包装既有 `GitHubReadTool`，保留 `github.read`、PAT/OAuth、白名单、预授权和加密凭据路径；OAuth 连接/断开/换账号通过 `ExtensionService.credentialChanged` 推进 generation 并撤销旧审批。真实 G1 仍需 owner 凭据与真实仓库，当前 **BLOCKED**，不得用 fake 测试替代。
-> - **EXT-04 loader 已实现（Node）**：`plugins/skills.ts` 索引 `SKILL.md` 元数据（id/version/digest/plugins/permissions/priority），正文按需读取并在每次注入前重新校验 digest、路径、插件 enabled 与权限子集；单文件 64KB、单技能正文 8KB、任务总预算 16KB、最多 8 个技能；不执行任何脚本。Task revision 固定 skill binding，Worker prompt 只把已校验正文作为 guidance 注入，拒绝项进入审计/提示。内置 `github.project-review`、`github.issue-management`、`github.project-digest` 三个只读技能；`GET /api/v1/skills` 与 `pa skills list` 可用。**未完成**：WorkProfile/ExecutionStrategy/ModelPolicy 的完整 ExtensionPolicy 配置层尚未落地，技能选择目前由显式 Mandate + 当前 catalog 交集决定。
-> - **EXT-03 只读远程 MCP 已实现（Node）**：官方 SDK Streamable HTTP client；显式 server/tool allowlist、https/私网/重定向/凭据来源校验、静态参数 schema、timeout、结果截断、catalog 生命周期与禁用 fencing。`PA_MCP_CONFIG` 接入，详见 [26 · MCP Host](26-mcp-host.md)。**未完成**：真实远端/GitHub 官方 MCP 对照、MCP OAuth、stdio transport、分页/resume/重连和任何 MCP 写穿透。
-> - **EXT-04 策略层未实现**：MCP OAuth/真实对照仍未验收；WorkProfile × ExecutionStrategy × ModelPolicy 的完整 ExtensionPolicy 配置层仍 pending；V1 完整验收（真实 MCP 对照、真实 GitHub 只读）未通过。V1 热启停、Skills 与 MCP 只承诺 Node，Durable Object 不宣称支持动态加载。V2 SDK/隔离、V3 Registry/分发不变。
+> - **EXT-02 首批已实现**：GitHub 由 `plugins/github.ts` 包装既有 `GitHubReadTool`，保留 `github.read`、PAT/OAuth、白名单、预授权和加密凭据路径；OAuth 连接/断开/换账号通过 `ExtensionService.credentialChanged` 推进 generation 并撤销旧审批。真实只读 G1（私有 repo/PR/commit）与 Feishu 出站证据见 `docs/acceptance/2026-11-20-real-github-g1.md`；真实 browser OAuth revoke/account-switch 仍未验收。
+> - **EXT-04 loader 与任务级 ExtensionPolicy 已实现（Node）**：`plugins/skills.ts` 索引 `SKILL.md` 元数据（id/version/digest/plugins/permissions/priority），正文按需读取并在每次注入前重新校验 digest、路径、插件 enabled 与权限子集；单文件 64KB、单技能正文 8KB、任务总预算 16KB、最多 8 个技能；不执行任何脚本。Task revision 固定 skill binding，Worker prompt 只把已校验正文作为 guidance 注入，拒绝项进入审计/提示。内置 `github.project-review`、`github.issue-management`、`github.project-digest` 三个只读技能；`GET /api/v1/skills` 与 `pa skills list` 可用。任务级 `ExtensionPolicy` 支持 plugins/skills allowlist 与 permissions `allow|require_approval|deny`，只收紧 Mandate/catalog，持久化在 task extension，并在提案/执行/自动批准前复核。**未完成**：WorkProfile × ExecutionStrategy × ModelPolicy 的完整 ModeCatalog/Strategy 解析层仍 pending；当前 policy 由调用方按任务提供。
+> - **EXT-03 只读远程 MCP 已实现（Node）**：官方 SDK Streamable HTTP client；显式 server/tool allowlist、https/私网/重定向/凭据来源校验、静态参数 schema、timeout、结果截断、catalog 生命周期与禁用 fencing。`PA_MCP_CONFIG` 接入，详见 [26 · MCP Host](26-mcp-host.md)；真实 GitHub MCP 只读对照见 `docs/acceptance/2026-11-20-real-github-mcp.md`。**未完成**：MCP OAuth、stdio transport、分页/resume/重连和任何 MCP 写穿透。
+> - **剩余扩展缺口**：WorkProfile × ExecutionStrategy × ModelPolicy 的完整 ModeCatalog/Strategy 解析层仍 pending；MCP OAuth/stdio/写路径、第三方 SDK/隔离、V3 Registry/分发未实现。V1 真实只读 GitHub/MCP/Skill 已有证据，但 Feishu inbound、真实 OAuth negatives、真实模型 skill adherence 与 GitHub 业务工作流未验收。V1 热启停、Skills、MCP 与 policy 只承诺 Node，Durable Object 不宣称支持动态加载。
 
 ## 1. 产品决策
 
@@ -99,7 +99,9 @@ extensionPolicy:
 
 示意而非现有 schema；ExtensionPolicy 只收紧或选择 Core 已授予的能力，禁止越过 owner/credential/project/Mandate/ActionService 检查。首批 project-review、issue-management、project-digest 按 #62/#64 工作流逐步交付；loader 可独立先做，真实业务 skills 验收与 GH-02/04 并行，避免循环依赖。
 
-2026-11-20 已实现 Node 端 `FileSkillRuntime`：递归索引 `SKILL.md`（拒绝 symlink/路径逃逸/重复 id/超限文件），元数据含 id/version/digest/plugins/permissions/priority；任务通过 `mandate.skills` 显式请求，选择时校验插件已 enable、权限是当前 catalog 插件权限子集，最多 8 个；Task revision 固定 skill binding。每次派工重新读取正文并核对 digest/版本/路径/插件状态；单技能 8KB、总 16KB，超限拒绝。正文只作为 Worker guidance 注入，不执行脚本、不授予工具。`GET /api/v1/skills` 与 `pa skills list` 只返回元数据。完整 WorkProfile/ExecutionStrategy/ModelPolicy YAML 策略层仍未实现；上述示意 schema 不能当作现有配置格式。
+2026-11-20 已实现 Node 端 `FileSkillRuntime`：递归索引 `SKILL.md`（拒绝 symlink/路径逃逸/重复 id/超限文件），元数据含 id/version/digest/plugins/permissions/priority；任务通过 `mandate.skills` 显式请求，选择时校验插件已 enable、权限是当前 catalog 插件权限子集，最多 8 个；Task revision 固定 skill binding。每次派工重新读取正文并核对 digest/版本/路径/插件状态；单技能 8KB、总 16KB，超限拒绝。正文只作为 Worker guidance 注入，不执行脚本、不授予工具。`GET /api/v1/skills` 与 `pa skills list` 只返回元数据。
+
+任务级 `ExtensionPolicy`（`{plugins?, skills?, permissions?}`）由 Client API/CLI 提交，只做收紧：创建时校验 Mandate 工具属于允许插件、所需权限未被 `deny`、请求技能在 allowlist；Task extension 固定 policy，catalog 在每次 proposal/action 时重核，`requiresApproval` 阻止预授权/内部读取自动批准。CLI：`--plugins`、`--skills`、`--deny-permissions`、`--require-approval`。完整 WorkProfile/ExecutionStrategy/ModelPolicy 的 ModeCatalog/Strategy 解析仍未实现；上述示意 YAML 不能当作现有配置格式。
 
 ## 9. 完整生态与交付阶段
 

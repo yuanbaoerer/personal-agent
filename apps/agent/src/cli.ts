@@ -25,7 +25,9 @@ Usage:
   pa tasks [--status STATUS] [--limit N] [--json]
   pa task <id> [--json]
   pa create <goal> [--criteria TEXT] [--resources a,b] [--tools a,b]
-            [--priority N] [--deadline ISO] [--request-id ID] [--json]
+            [--skills a,b] [--plugins a,b] [--deny-permissions a,b]
+            [--require-approval a,b] [--priority N] [--deadline ISO]
+            [--request-id ID] [--json]
   pa cancel <id> [--json]
   pa revise <id> --revision N [--goal TEXT] [--criteria TEXT]
             [--priority N] [--json]
@@ -252,15 +254,35 @@ export async function runCli(
         const requestId = flagString(args.flags, "request-id") ?? randomUUID();
         const resources = listValue(flagString(args.flags, "resources"));
         const tools = listValue(flagString(args.flags, "tools"));
+        const skills = listValue(flagString(args.flags, "skills"));
         const mandate =
-          resources === undefined && tools === undefined
+          resources === undefined && tools === undefined && skills === undefined
             ? undefined
-            : { resources: resources ?? ["chat"], tools: tools ?? [] };
+            : { resources: resources ?? ["chat"], tools: tools ?? [], skills };
+        const plugins = listValue(flagString(args.flags, "plugins"));
+        const denied = listValue(flagString(args.flags, "deny-permissions"));
+        const requireApproval = listValue(flagString(args.flags, "require-approval"));
+        const permissions: Record<string, "deny" | "require_approval"> = {};
+        for (const permission of denied ?? []) {
+          permissions[permission] = "deny";
+        }
+        for (const permission of requireApproval ?? []) {
+          permissions[permission] ??= "require_approval";
+        }
+        const extensionPolicy =
+          plugins === undefined && Object.keys(permissions).length === 0
+            ? undefined
+            : {
+                plugins,
+                permissions:
+                  Object.keys(permissions).length === 0 ? undefined : permissions,
+              };
         const task = await client.createTask(
           {
             goal,
             completionCriteria: flagString(args.flags, "criteria") ?? goal,
             mandate,
+            extensionPolicy,
             priority: flagNumber(args.flags, "priority"),
             deadline: flagString(args.flags, "deadline"),
           },

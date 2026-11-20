@@ -1167,6 +1167,9 @@ export class ActionService {
     if (task === undefined) {
       return false;
     }
+    if (this.#capabilities?.requiresApproval(task, tool.name) === true) {
+      return false;
+    }
 
     let description: string;
     let authorization: "preauthorization" | "schedule_policy" | "internal_state";
