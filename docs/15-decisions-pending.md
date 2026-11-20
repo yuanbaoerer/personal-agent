@@ -1,5 +1,7 @@
 # 15 · 实施进度与待决策事项
 
+> **2026-11-20 Extension Platform 决策**：[25 · Extension Platform](25-extension-platform.md) / [#73](https://github.com/yuanbaoerer/personal-agent/issues/73) 已确定长期必选；V1 只受信内置插件启停、凭据、MCP、Skills；V2 SDK 与隔离、V3 可信分发。D21 OAuth 保留；实际 repo、GitHub App、OAuth scope、MCP endpoint、首个 Coding CLI/执行机、费用与第三方信任策略仍待 owner 逐项确认，不从规划许可推导运行授权。
+
 > **2026-11-20 垂直场景新增待确认事项**：见 [24 · GitHub Project Management MVP](24-github-project-management.md) §6 与 [#65](https://github.com/yuanbaoerer/personal-agent/issues/65)。D21 个人 OAuth 读路径保留；建议单隔离仓库的独立 fine-grained PAT 验证 Issues write，长期 GitHub App，具体 repo/operation/凭据由 owner 另行授权。首个 Coding Agent CLI、执行机与隔离策略、网络/命令/费用硬额度仍待 owner 确认；默认不自动合并、不自动写、不无人值守付费。规划编辑许可不等于实际运行许可。
 
 > **2026-11-19 MVP 决策执行顺序**：采用 [21 · MVP Functional Ready](21-mvp-functional-ready.md) 作为当前实施优先级，跟踪 [#41](https://github.com/yuanbaoerer/personal-agent/issues/41)。D19/D20 的状态语义修复由 #38 承接，#39 补自然语言能力；D21 已选 OAuth App 保留，真实 GitHub 可先用 repo-scoped read-only PAT 验证。D01/D03 的 Provider/预算、真实凭据、常驻机器、副作用范围仍需 owner 配置或确认；D07 推荐长连接、D09 保持 provisional，D22 等扩展/发行后置。不能把仓库修改授权视为授权使用真实凭据或产生支出；未决项复选框不自动勾选。
