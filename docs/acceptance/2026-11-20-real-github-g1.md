@@ -35,15 +35,30 @@ After the read-only run, one message was sent through the existing Feishu app to
 - Conversation: `feishu` / `p2p`
 - Result: Feishu API returned a message ID (accepted). No message history was read; no inbound event was replayed.
 
+## On-demand skill with real GitHub read
+
+A second real task requested `mandate.skills = ["github.project-review"]` and used the same private repository:
+
+| Check | Observed |
+| --- | --- |
+| Skill binding | `github.project-review@1.0.0`, digest `3c1d6f518bea251ce47982efe60463fa7ae2d689c0307a894280002087fd2d64` |
+| Rejections | none |
+| Worker prompt | contained “Selected skills”, `skill github.project-review`, `observed vs inferred` guidance and the “not authority” warning |
+| GitHub action | `github.read` repo succeeded; source `https://github.com/yuanbaoerer/personal-agent`; `pluginId=github`, generation `1` |
+| Model execution | deterministic `FakeRuntime` captured the prompt; no real model call was made, so model adherence is not claimed |
+
+This verifies host-level on-demand skill selection/injection plus a real GitHub read in the same task revision. It does not claim that a real model followed the skill or that a project review was completed.
+
 ## Verdict
 
-**PARTIAL / PASS for real read-only GitHub G1 plus Feishu outbound.**
+**PARTIAL / PASS for real read-only GitHub G1, Feishu outbound, and host-level skill injection.**
 
-Passed: private-repo repo/PR/commit reads through the plugin catalog, task-bound plugin digest, action-bound plugin/generation, real API source URLs, explicit truncation, and one accepted Feishu outbound message.
+Passed: private-repo repo/PR/commit reads through the plugin catalog, task-bound plugin digest, action-bound plugin/generation, real API source URLs, explicit truncation, one accepted Feishu outbound message, and host-level skill selection/injection with a real GitHub read.
 
 Not verified in this run:
 
 - Feishu inbound event → Agent → outbound G1 reply (only the outbound leg was exercised here).
+- Real model adherence to the injected skill (the prompt was captured with `FakeRuntime`).
 - Real OAuth login/revoke/account-switch negative paths against a real account.
 - Write capabilities (not implemented).
 - Long-running/restart recovery for this specific task.
