@@ -1,5 +1,7 @@
 # 07 · Personal Agent 长期产品与工程路线图
 
+> **2026-11-20 垂直产品交付**：在既有 Reliable Core / #41 门槛之上，采用 [24 · GitHub Project Management MVP 与 Development Orchestrator](24-github-project-management.md)（[#65](https://github.com/yuanbaoerer/personal-agent/issues/65)）定义首个实际业务场景：GH-00/01 真实验收及安全前置 → GH-02 项目与证据读取 → GH-03/04 审批式 Issue 管理与项目评估 → GH-05/06 单 Coding adapter、Draft PR、独立 Review 与主动只读报告。不是平行 Core，不改变正式版本门槛，保留 WorkProfile × ExecutionStrategy × ModelPolicy 长期架构。
+
 > **2026-11-19 近期交付顺序调整**：在 v0.2 Reliable Core 中新增私有试用检查点 [MVP Functional Ready](21-mvp-functional-ready.md)，由 [#41](https://github.com/yuanbaoerer/personal-agent/issues/41) 跟踪。优先 #38 状态语义 → #39 自然语言 → 真实 GitHub/常驻 Node → 安全预算/主动工作 → 14 场景验收。既有 PA Issue 的 MVP-P0 子集先执行；其他原版本门槛、组织模式、ModelPolicy、跨平台及开源设计保留。私有 MVP 不等于 v0.2/v0.3 正式发布，不降低正式门槛。
 
 > 状态：2026-11-14 规划基线，适用代码 main@7199c48。本文定义目标和下一阶段优先级；不声称目标功能已经实现。实施事实以 README、测试和可复现实验记录为准。
