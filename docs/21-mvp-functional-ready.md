@@ -1,5 +1,7 @@
 # 21 · MVP Functional Ready：私有自用主体功能实施纲领
 
+> **2026-11-21 MVP 产品定义补充（P0，当前规划未实现）**：[28 · Conversational & Autonomous Planning MVP](28-conversational-planning-mvp.md) 将多轮聊天（#89）、通用持久 Plan（#90）、有界自主推进和重规划（#91）、真实用户体验验收（#92）纳入 Functional Ready。**这是通用 Agent 产品能力，#65 GitHub 项目管理只是首个真实验证场景**。现有 #39 Intent/Task/Action/Verifier、#60/#62 GitHub Read-only Project Review（PR #86–#88）已存在，不能重复开发；当前尚无持久 WorkflowPlan 与真实多步自主执行闭环。原 M01–M14、#41、#7/#28 安全及正式发布门槛不降低；C01–C12 为新增用户体验验收，不替代旧场景。
+
 > **2026-11-20 Extension Platform 衔接**：[25 · Extension Platform](25-extension-platform.md) / [#73](https://github.com/yuanbaoerer/personal-agent/issues/73) 为下一工程检查点，#65 仍为下一业务检查点。GH-00/01 真实安全验收与 EXT-01 并行；#68 迁移 GitHub 首插件，#69/#70 MCP/Skills 与 GH-02/04 协作。当前不开发任意第三方包或市场，但 V2/V3 是长期必选，不降级 M01–M14。
 
 > **2026-11-20 下一产品检查点**：在 #41 原 M01–M14 与正式版本要求不变的前提下，[24 · GitHub Project Management MVP](24-github-project-management.md) / [#65](https://github.com/yuanbaoerer/personal-agent/issues/65) 作为第一个垂直场景。GH-00/01 先修已知预算/任务指代/claims 一致性问题并完成真实飞书/GitHub G1；允许并行准备只读扩展，未经对应安全与真实验收不启用写入、无人值守或付费开发。后续 GH-02–04 实现项目评估与审批式 Issue 维护，再 GH-05/06 开发协调与独立审查。
@@ -25,6 +27,10 @@
 | MVP-06 | P0 | 有界预算与关键安全负例 | #7 #28 | 激活无人值守前必须通过 |
 | MVP-07 | P1 | 公开 Web Search/Fetch | #40 | P0 验收之后，不阻断 MVP |
 | MVP-08 | P0 | 14 项真实场景逐项验收 | #12 #41 | MVP-01～06 |
+| MVP-09 | **P0** | 多轮自然对话与 chat/task/plan 无缝切换 | #89 | #39 的现有 Intent/Task |
+| MVP-10 | **P0** | 通用持久 Plan、Step 依赖、版本/权限 | #90 | 现有 Task/Store/#7/#28 |
+| MVP-11 | **P0** | 自主有限执行、Verifier/进度、重规划与恢复 | #91 | MVP-10、#7/#28 |
+| MVP-12 | **P0** | C01–C12 多轮 + 多步真实用户体验验收 | #92 | MVP-09–11；可复用 #60/#62 G1 |
 
 ### MVP-01：修复 D19/D20（实现已合并，真实验收 pending）
 
@@ -67,6 +73,14 @@
 ### MVP-07：可选工具
 
 Web Search/Fetch 在 P0 后再做，复用工具执行路径。公开内容、来源、返回上限、超时、预算、SSRF/DNS/重定向防护与注入隔离。时间工具优先复用现有 time.now；授权文件读取需独立设计，不作为首轮必需项。
+
+### MVP-09–12：新增自然对话与自主规划交付要求
+
+- **#89 Conversation**：Owner 可持续讨论、追问、纠正与计划，只有明确启动才创建/执行 Task；有限对话窗口与真实会话隔离、隐私与恢复。简单聊天不得被强行派 Worker。
+- **#90 WorkflowPlan**：3–5 个有依赖的 Step 持久化在 Parent Task 下，模型提出计划而程序核验 DAG/权限/预算/版本；计划可编辑，但 Plan 不授予外部动作权限。
+- **#91 Autonomous Loop**：利用现有 Assignment/ActionService/Verifier/Effect 执行获准的只读步骤，观察结果、阻塞、有限重规划、暂停/恢复/取消，Owner 可实时问进度；不得引入第二个 Coordinator 或无界后台循环。
+- **#92 真实体验**：增加 C01–C12 黄金场景；与原 M01–M14 同时验收，验证真实模型 + 真飞书 + 真工具，并独立记录 E1/E3/E4；不能只引用 CI 绿灯。先交只读自主计划 Pilot，#61 外部 Issue 写入另经安全审批。
+- **顺序**：CX-01/PL-01 可并行开发，先交可自然讨论且能显示 Plan 的用户体验；再 PL-02/PL-03 有界执行；#65 GitHub Project Review 作为首个真实工作负载。原有 #41 Functional Ready 不因某个新的 Plan PR 合并就自动验收通过。
 
 ## 3. 验收清单（MVP-08）
 
