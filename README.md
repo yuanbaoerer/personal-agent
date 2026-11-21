@@ -1,5 +1,7 @@
 # Personal Agent
 
+> **2026-11-21 MVP 产品主线升级（规划，尚未实施）**：[28 · Conversational & Autonomous Planning MVP](docs/28-conversational-planning-mvp.md)。目标是在一个 Agent Core 内实现**多轮自然对话 → 持久 Plan/Steps → 受控自主执行 → 有界重规划/恢复**，工作包 [#89 CONV-01](https://github.com/yuanbaoerer/personal-agent/issues/89)、[#90 PLAN-01](https://github.com/yuanbaoerer/personal-agent/issues/90)、[#91 PLAN-02](https://github.com/yuanbaoerer/personal-agent/issues/91)、[#92 EXP-01](https://github.com/yuanbaoerer/personal-agent/issues/92)。已实现的 Router/Task/Worker/Skills/GitHub read 不等于 Plan Loop 已交付；GitHub Project Manager [#65](https://github.com/yuanbaoerer/personal-agent/issues/65) 仍是首个真实业务验证场景，原 #41 M01–M14 与安全/成本门槛保留。最新核对 main `345faac`；不要将本文历史记录的测试数误当当前验收状态。
+
 > **Extension Platform（2026-11-21，V1 首批已合并 main）**：[25 · Plugin / Skills / MCP / Credential Architecture](docs/25-extension-platform.md)（[#73](https://github.com/yuanbaoerer/personal-agent/issues/73)）为一级长期架构模块。PR #74/#75/#76/#78/#79/#82 已合并，真实证据 #77；ProjectBinding 与 GitHub typed read 见 #83/#84/#85。已实现受信内置 Plugin Runtime（manifest、持久 lifecycle、原子 catalog generation、任务/动作版本栅栏、`pa plugins`/`/api/v1/plugins`）并将 GitHub 迁移为第一个 Integration Plugin；凭据变化会撤销旧审批。Node 端 SKILL.md loader（digest/预算/权限交集）、任务级 ExtensionPolicy 与只读远程 MCP Host（官方 SDK、静态 allowlist、编译期只读契约、`PA_MCP_CONFIG`）已接入；MCP OAuth/stdio/写路径、第三方 SDK/隔离、完整 ModeCatalog 与可信分发仍 pending。真实只读 GitHub G1（repo/PR/commit）、Feishu 出站、GitHub MCP 只读对照与按需 Skill 注入已有证据；Feishu inbound、真实 OAuth negatives 与真实模型 skill adherence 仍未验收。
 
 > **GitHub 项目管理 MVP（实施中）**：[实施进度与验收](docs/24-github-project-management.md) · [#65](https://github.com/yuanbaoerer/personal-agent/issues/65)。#83–#88 已合并 ProjectBinding、固定 SHA 读取、凭据绑定、证据核验和只读项目评估。用 `--project=<项目键>` 指定已绑定的项目，评估报告可附待审阅的 Issue 草稿。真实私有仓库与飞书 E3、Issue 写入闭环、Coding Agent / Draft PR 仍待交付或验收。[GH-02 #60](https://github.com/yuanbaoerer/personal-agent/issues/60) · [GH-04 #62](https://github.com/yuanbaoerer/personal-agent/issues/62)。现有 #41 Reliable Core 真实验收及安全预算前置不降低。
@@ -301,7 +303,7 @@ flowchart TB
 
 ## 文档导航
 
-新增垂直场景规划：[24 · GitHub Project Management MVP 与 Development Orchestrator](docs/24-github-project-management.md)。
+**通用 MVP 规划**：[28 · 自然对话与自主规划执行](docs/28-conversational-planning-mvp.md)。垂直场景规划：[24 · GitHub Project Management MVP 与 Development Orchestrator](docs/24-github-project-management.md)。
 
 | 文档 | 用途 |
 | --- | --- |
@@ -314,6 +316,7 @@ flowchart TB
 | [01 · 可行性资料](docs/01-feasibility.md) | 原始技术调研；产品决策以 00/02/04 为准 |
 | [03 · 岗位适配](docs/03-job-fit.md) | 项目证据与岗位要求；规划不能写成已实现 |
 | [05 · JD 附录](docs/05-jd-appendix.md) | 原始岗位样本，不作为功能清单 |
+| [28 · Conversational & Planning MVP](docs/28-conversational-planning-mvp.md) | 多轮交互、持久 Plan、受控执行/重规划与 C01–C12 验收（规划） |
 | [12 · Mode Architecture](docs/12-mode-architecture.md) | WorkProfile × ExecutionStrategy：Coding / General / Research 与智能组织工作流（设计提案，未实现） |
 | [13 · Model Routing & Gateway](docs/13-model-routing-gateway.md) | ModelPolicy、Router/Worker 会话级模型绑定、Magpie 可选中转、Fallback 与成本评测（长期设计，未实现） |
 | [20 · 本地 Client API / CLI / TUI](docs/20-local-client-api.md) | `/api/v1`、device token/scope、`pa` 命令、TUI 按键与安全边界（E1） |
