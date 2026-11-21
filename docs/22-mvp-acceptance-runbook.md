@@ -172,3 +172,16 @@ sqlite3 data/agent.sqlite "select event,after_json from pa_audit where event lik
 ```
 
 无 owner 写授权时记录 BLOCKED；不得把 Fake API/E1 结果标记为真实写入成功。
+
+## 9. 新增 Conversational & Autonomous Planning 真实验收（C01–C12）
+
+本 Runbook 原 M01–M14 不变。新增产品体验基线参见 [28 · MVP 自然对话与自主规划](28-conversational-planning-mvp.md) / [#92](https://github.com/yuanbaoerer/personal-agent/issues/92)。实现 #89–#91 **后**，在真实 Owner 飞书私聊、真实模型、受授权的 GitHub 只读项目上按下列最小顺序实测：
+
+1. 发送普通聊天需求并追问至少 6 轮，核对上下文连续、没有意外 Task/Action（C01）。
+2. 明确“先讨论并制定三步方案，不执行”，核对 Plan draft、步骤/依赖/预算与持久版本；修改第二步并查询 PlanDiff，未创建外部动作（C02/C03）。
+3. 明确“按已批准方案在授权的 projectKey 只读执行”，记录 Plan→Step→Assignment→GitHub read→Receipt→Verifier 的每次实际调用，检查三个步骤均具备来源并且没有 POST（C04/C11）。
+4. 在第 2 步执行中询问“进展到哪步”；补充新限制并暂停/恢复，核对 inputSeq、planVersion、旧 Worker 输出不能推进新计划；模拟可恢复失败/429 并观察有限重规划或 needs_review（C05–C07）。
+5. 关闭客户端、对处于安全状态的进程执行可控重启并核对 Plan/Step/Outbox，没有重复副作用；测试不授权、额度未知、跨 owner/project 的负例（C08–C10）。
+6. 记录总模型/工具次数、成本、用户纠正、错误自动建任务、被核验证据数、最终消息收件与耗时（C12）。
+
+记录形式：commit SHA、Plan/Step/Task/Action/Receipt/Trace IDs、model/provider、输入与预期、actual/权限/budget、E1/E3/E4、用户真实飞书入站/出站消息 ID（脱敏）、PASS/FAIL/PARTIAL/BLOCKED。只有 Mock 或 Fake Runtime 的步骤**不能**标记真实 E3 通过。Owner 未明确授予写权限/付费无人值守时仅允许已授权只读测试。
