@@ -129,3 +129,14 @@ L2 需 GH01–06 与相关 GH09；L3 pilot 需 GH07–10 与相应 #41 原验收
 - 解析后的 Task criteria 固定 `repo`、`repositoryId`、`projectKey`、`defaultBranch`、`allowedPlanPaths`、binding version；`project-review` Verifier 拒绝跨 repository/project 的 finding。
 - E1：466 tests passed（`npm test`）；覆盖 credential scope/owner/repo/restart、rounter 项目解析、绑定 criteria、verifier 越界拒绝。
 - 仍缺：真实 OAuth 登录/切账号/撤销、真实 Feishu 入站与真实模型 project review（E3）。
+
+## 8. 2026-11-22 L2R-02：只读 Project Review E2E 与安全负例
+
+**状态：CODE_COMPLETE + E1_PASS；真实模型/真实飞书 E3 见验收记录。**
+
+- 新增强制只读项目评估回归：Router → ProjectBinding → Task/Mandate → `github.read` typed reads（repo/ref/two files/pull_files/checks/issues/issue detail）→ findings/issue drafts → `project-review` Verifier → Outbox。
+- 修复复合请求守卫：显式 `只读`/`不要修改 GitHub` 的项目评估不再被误判为“状态查询 + 变更操作”。
+- receipt 截断检测下沉到嵌套字段（file content、issue body、patch、check output）；引用截断来源却声明 `coverage=complete` 会被 Verifier 拒绝。
+- 安全负例：错误 projectKey、task mandate 不符、跨 owner、绑定撤销、缺失/撤销凭据、repositoryId 不匹配、PR head 漂移、跨 revision finding、settled action 重放；均在任何 fetch 前或 Verifier 处失败。
+- E1：`project-review-e2e.test.ts` 5 场景；全量 471 tests passed。
+- 真实 E3 尚未通过真实飞书入站；owner 步骤见 [22 · Runbook](22-mvp-acceptance-runbook.md) §6。无 owner 凭据时保持 BLOCKED。

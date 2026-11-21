@@ -97,3 +97,41 @@ sqlite3 data/agent.sqlite "select verification_json from pa_tasks order by creat
 | 成本/延迟 | 可观测部分；未知不编造 |
 
 敏感信息脱敏；不提交密钥或个人聊天原文。全部 P0 真实通过后，才更新 M02/M03 与 #38/#39 的验收项。
+
+## 6. 只读 GitHub 项目评估（L2-R E3）
+
+前置：`.env` 配置 `GITHUB_ALLOWED_REPOS`、只读 PAT/OAuth（`repository.read`），并已绑定项目：
+
+```sh
+pa projects bind personal-agent yuanbaoerer/personal-agent --repo-id <real-id> \
+  --branch main --credential-ref github:default \
+  --plan-paths README.md,docs/24-github-project-management.md
+```
+
+1. 在飞书私聊发送（owner 只填 projectKey，不填 owner/repo）：
+
+```text
+检查 personal-agent 最新实施情况，对照项目规划、源码、PR 和 CI，指出三个主要工程缺口，关联已有 Issue，生成待办修改草稿。只读，不要实际修改 GitHub。
+```
+
+2. 期望：
+
+- 回复先确认项目（`项目：personal-agent`），不猜仓库；
+- `pa_tasks` 最新任务 `mandate.project=personal-agent`，`skills=["github.project-review"]`；
+- `completion_criteria` 含真实 `repositoryId`/`repo`/`projectKey`；
+- `pa_actions` 出现成功的 `github.read` typed reads（repo/ref/file/pull_files/checks/issues），每条有固定 SHA/Source URL；
+- 任务最终 `succeeded` 且 `verification.verifier=project-review`；或 `needs_review` 并列出缺失证据；
+- 飞书实际收到包含 finding 和待审核 Issue 草稿的结果消息；
+- 全程零 GitHub 写请求。
+
+3. 负例（同会话或 CLI）：错误 projectKey、未绑定仓库、撤销绑定、撤销凭据、PR head 漂移、截断文件。期望拒绝/`needs_review`，不生成虚假完成结论。
+
+4. 核对：
+
+```sh
+sqlite3 data/agent.sqlite "select id,status,mandate_json,verification_json from pa_tasks order by created_at desc limit 1;"
+sqlite3 data/agent.sqlite "select tool,status,args_json,evidence_json from pa_actions where task_id=(select id from pa_tasks order by created_at desc limit 1);"
+sqlite3 data/agent.sqlite "select status,text from pa_outbox order by created_at desc limit 3;"
+```
+
+若 owner 未提供真实 GitHub 凭据或无法从真实飞书发送，记录 BLOCKED；不得用 mock/fake API 结果标记 E3。

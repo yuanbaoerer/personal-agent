@@ -676,16 +676,54 @@ function buildReceipts(
           ? evidence.headSha.toLowerCase()
           : undefined,
       stale: evidence.stale === true,
-      truncated:
-        evidence.truncated === true ||
-        (typeof evidence.combinedStatus === "object" &&
-          evidence.combinedStatus !== null &&
-          (evidence.combinedStatus as Record<string, unknown>).truncated === true),
+      truncated: evidenceIsTruncated(evidence),
       refs,
       issues,
     });
   }
   return receipts;
+}
+
+/**
+ * Any truncated field in a receipt invalidates complete/absence claims, not
+ * just the top-level `truncated` flag. File content, issue bodies, patches and
+ * check output all carry their own truncation markers.
+ */
+function evidenceIsTruncated(
+  evidence: Record<string, unknown>,
+  depth = 0,
+): boolean {
+  if (depth > 3 || evidence === null || typeof evidence !== "object") {
+    return false;
+  }
+  for (const [key, value] of Object.entries(evidence)) {
+    if (
+      (key === "truncated" || key.endsWith("Truncated")) &&
+      value === true
+    ) {
+      return true;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value.slice(0, 50)) {
+        if (
+          item !== null &&
+          typeof item === "object" &&
+          evidenceIsTruncated(item as Record<string, unknown>, depth + 1)
+        ) {
+          return true;
+        }
+      }
+      continue;
+    }
+    if (
+      value !== null &&
+      typeof value === "object" &&
+      evidenceIsTruncated(value as Record<string, unknown>, depth + 1)
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function addObjectRefs(
