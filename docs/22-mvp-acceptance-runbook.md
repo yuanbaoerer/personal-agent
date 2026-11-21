@@ -147,3 +147,28 @@ pa drafts reject <draft-id> --yes
 ```
 
 期望：列表/详情包含目标 repository/Issue、source task/revision、commit SHA、finding ids、beforeSummary、拟写入正文、payloadHash 与 expiresAt；`reject` 后状态为 `rejected`，再次 reject 返回冲突。此阶段不得出现任何 GitHub 写请求或写入成功声明。
+
+## 8. 受控 Issue 写入（L2W-02，仅隔离测试仓库）
+
+前置（owner 明确指定）：
+
+- 隔离测试仓库（不是 `personal-agent` 业务仓库）。
+- 独立 fine-grained PAT：仅该 repo、Metadata read + Issues write；配置 `GITHUB_ISSUE_WRITE_TOKEN`、`GITHUB_ISSUE_WRITE_REPOS=<owner/test-repo>`。
+- ProjectBinding 的 `credentialRef` 必须等于 `GITHUB_ISSUE_WRITE_CREDENTIAL_REF`（默认 `github:issues`）。
+- 先完成只读评估并产生 `pending_approval` 草稿。
+
+流程：
+
+1. `/draft list` → `/draft show <id>`，核对仓库、目标 Issue、before/after、payloadHash。
+2. `/draft approve <id> <payloadHash>`。
+3. 期望：创建专用 write task；Action 参数与 payloadHash 绑定；GitHub 只收到一次 create/update/comment；写后 GET 核对 issue/comment id、URL、正文；返回结果含 URL；draft 状态 `approved`，write task `succeeded`。
+4. 负例（隔离仓库）：重复 `/draft approve` 不重复 POST；`/draft reject` 零写；撤销 binding/credential 后批准零写；外部先改 Issue 后 update 暂停；模拟 429/timeout 先 reconcile。
+5. 核对：
+
+```sh
+sqlite3 data/agent.sqlite "select id,status,payload_hash,write_task_id,write_action_id from pa_issue_drafts order by created_at desc limit 5;"
+sqlite3 data/agent.sqlite "select id,tool,status,args_hash,external_ref,evidence_json from pa_actions where tool like 'github.issue.%' order by created_at desc limit 5;"
+sqlite3 data/agent.sqlite "select event,after_json from pa_audit where event like 'issue_draft.%' or event like 'task.external_action%' order by seq desc limit 10;"
+```
+
+无 owner 写授权时记录 BLOCKED；不得把 Fake API/E1 结果标记为真实写入成功。

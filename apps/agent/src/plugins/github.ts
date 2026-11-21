@@ -1,5 +1,9 @@
 import type { ActionTool } from "../actions/tooling.ts";
 import { GitHubReadTool, type GitHubReadConfig } from "../actions/github.ts";
+import {
+  createGitHubIssueWriteTools,
+  type GitHubIssueWriteConfig,
+} from "../actions/github-issue.ts";
 import { parsePluginManifest, type PluginManifest } from "./manifest.ts";
 import type { BuiltinPlugin, PluginConnection } from "./types.ts";
 
@@ -61,18 +65,82 @@ const GITHUB_MANIFEST = parsePluginManifest({
     "Builtin read-only integration. Connects through the existing PAT/OAuth credential path.",
 });
 
+const WRITE_CAPABILITIES = [
+  {
+    name: "github.issue.create",
+    resource: "github",
+    readOnly: false,
+    replayPolicy: "verify" as const,
+    timeoutMs: 15_000,
+    permissions: ["repository.read", "issues.write"],
+    operations: ["create"],
+    guidance:
+      "Typed issue creation. Requires an explicit owner-approved draft, immutable repositoryId, write credential ref/version, payloadHash and idempotencyKey.",
+    description: "Create a GitHub issue after approval.",
+  },
+  {
+    name: "github.issue.update",
+    resource: "github",
+    readOnly: false,
+    replayPolicy: "verify" as const,
+    timeoutMs: 15_000,
+    permissions: ["repository.read", "issues.write"],
+    operations: ["update"],
+    guidance:
+      "Typed issue update. Re-reads the issue before writing; a changed beforeHash pauses for re-approval.",
+    description: "Update a GitHub issue after approval.",
+  },
+  {
+    name: "github.issue.comment",
+    resource: "github",
+    readOnly: false,
+    replayPolicy: "verify" as const,
+    timeoutMs: 15_000,
+    permissions: ["repository.read", "issues.write"],
+    operations: ["comment"],
+    guidance:
+      "Typed issue comment. Uses a hidden operation marker and read-after-write verification.",
+    description: "Comment on a GitHub issue after approval.",
+  },
+];
+
 /**
  * Wrap the already-verified GitHubReadTool. The plugin is enabled only when
  * the host can actually supply a token and an explicit repository allow list;
  * credentials stay behind tokenProvider and never enter the manifest.
+ *
+ * Write tools are exported only when the host supplies a separate write
+ * credential ref and allow list. They never inherit read-token permissions.
  */
-export function createGithubPlugin(config?: GitHubReadConfig): BuiltinPlugin {
+export function createGithubPlugin(
+  config?: GitHubReadConfig,
+  writeConfig?: GitHubIssueWriteConfig,
+): BuiltinPlugin {
   const allowedRepos = config?.allowedRepos ?? [];
   const hasCredential =
     config?.tokenProvider !== undefined ||
     (config?.token !== undefined && config.token.trim().length > 0);
   const configured = config !== undefined && hasCredential && allowedRepos.length > 0;
-  const manifest: PluginManifest = GITHUB_MANIFEST;
+  const manifest: PluginManifest = parsePluginManifest({
+    ...GITHUB_MANIFEST,
+    exports: {
+      tools: [
+        "github.read",
+        ...(writeConfig === undefined
+          ? []
+          : ["github.issue.create", "github.issue.update", "github.issue.comment"]),
+      ],
+      skills: [],
+    },
+    capabilities: [
+      ...GITHUB_MANIFEST.capabilities,
+      ...(writeConfig === undefined ? [] : WRITE_CAPABILITIES),
+    ],
+    permissions: [
+      "repository.read",
+      ...(writeConfig === undefined ? [] : ["issues.write"]),
+    ],
+  });
 
   return {
     manifest,
@@ -81,7 +149,12 @@ export function createGithubPlugin(config?: GitHubReadConfig): BuiltinPlugin {
       if (!configured || config === undefined) {
         throw new Error("GitHub plugin is not configured");
       }
-      return [new GitHubReadTool(config)];
+      return [
+        new GitHubReadTool(config),
+        ...(writeConfig === undefined
+          ? []
+          : createGitHubIssueWriteTools(writeConfig)),
+      ];
     },
     async connection(): Promise<PluginConnection> {
       if (allowedRepos.length === 0) {

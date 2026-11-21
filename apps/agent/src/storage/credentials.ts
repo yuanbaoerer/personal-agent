@@ -17,6 +17,8 @@ export interface CredentialMetadata {
   status: CredentialStatus;
   version: number;
   expiresAt?: string;
+  /** Hash of a static token; never the token itself. */
+  secretFingerprint?: string;
   updatedAt: string;
 }
 
@@ -30,6 +32,7 @@ export interface CredentialMetadataInput {
   status: CredentialStatus;
   version: number;
   expiresAt?: string;
+  secretFingerprint?: string;
   updatedAt: string;
 }
 
@@ -43,6 +46,7 @@ interface CredentialRow {
   status: CredentialStatus;
   version: number;
   expires_at: string | null;
+  secret_fingerprint: string | null;
   updated_at: string;
 }
 
@@ -73,8 +77,8 @@ export class CredentialRepository {
     this.#db.run(
       `INSERT INTO pa_credential_refs
         (ref, owner_id, plugin_id, account, scopes_json, repository_ids_json,
-         status, version, expires_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         status, version, expires_at, secret_fingerprint, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (ref) DO UPDATE SET
          owner_id = excluded.owner_id,
          plugin_id = excluded.plugin_id,
@@ -84,6 +88,7 @@ export class CredentialRepository {
          status = excluded.status,
          version = excluded.version,
          expires_at = excluded.expires_at,
+         secret_fingerprint = excluded.secret_fingerprint,
          updated_at = excluded.updated_at`,
       input.ref,
       input.ownerId ?? null,
@@ -94,6 +99,7 @@ export class CredentialRepository {
       input.status,
       input.version,
       input.expiresAt ?? null,
+      input.secretFingerprint ?? null,
       input.updatedAt,
     );
   }
@@ -110,6 +116,9 @@ function mapCredential(row: CredentialRow): CredentialMetadata {
     status: row.status,
     version: Number(row.version),
     ...(row.expires_at === null ? {} : { expiresAt: row.expires_at }),
+    ...(row.secret_fingerprint === null
+      ? {}
+      : { secretFingerprint: row.secret_fingerprint }),
     updatedAt: row.updated_at,
   };
 }

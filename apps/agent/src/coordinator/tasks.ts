@@ -16,6 +16,7 @@ import type {
   TaskExtensionSnapshot,
   TaskRecord,
   TaskStatus,
+  TaskVerification,
   WorkerReport,
 } from "../domain/types.ts";
 import type { CapabilityView } from "../plugins/fence.ts";
@@ -113,6 +114,8 @@ export interface CreateTaskInput {
   deadline?: string;
   schedulePolicyId?: string;
   extensionPolicy?: ExtensionPolicy;
+  /** False for tasks whose authority is an already-approved external action. */
+  dispatch?: boolean;
 }
 
 const DEFAULT_MANDATE = {
@@ -224,7 +227,9 @@ export class TaskService {
         traceId: `task:${task.id}`,
         occurredAt: now,
       });
-      this.#enqueueDispatch(task, now);
+      if (input.dispatch !== false) {
+        this.#enqueueDispatch(task, now);
+      }
     } else if (task.status === "queued") {
       // A crash can land between the task INSERT and the dispatch enqueue.
       // Replaying the same decision must repair the missing effect; the
@@ -233,6 +238,68 @@ export class TaskService {
     }
 
     return task;
+  }
+
+  /**
+   * Creates a task that exists only as the authority anchor for one already
+   * owner-approved external action. It never dispatches a Worker; the draft
+   * approval bridge settles it from the action result.
+   */
+  createExternalActionTask(input: Omit<CreateTaskInput, "dispatch">): TaskRecord {
+    const task = this.create({ ...input, dispatch: false });
+    const waiting = this.#tasks.updateTask(task.id, task.revision, {
+      status: "waiting_user",
+      updatedAt: this.#now().toISOString(),
+    });
+    return waiting ?? task;
+  }
+
+  /** Settles a bridge-owned task after its approved action has finished. */
+  finishExternalAction(
+    taskId: string,
+    outcome: {
+      status: "succeeded" | "failed" | "needs_review";
+      summary: string;
+      verification: TaskVerification;
+      resultRef?: string;
+    },
+  ): TaskRecord | undefined {
+    const task = this.#tasks.get(taskId);
+    if (task === undefined || isTerminal(task.status)) {
+      return task;
+    }
+    const at = this.#now().toISOString();
+    const updated = this.#tasks.updateTask(taskId, task.revision, {
+      status: outcome.status,
+      resultRef: outcome.resultRef ?? outcome.summary,
+      verification: outcome.verification,
+      lastError: outcome.status === "failed" ? outcome.summary : undefined,
+      updatedAt: at,
+    });
+    if (updated === undefined) {
+      return undefined;
+    }
+    this.#store.recordAudit({
+      event: "task.external_action_settled",
+      subjectType: "task",
+      subjectId: taskId,
+      after: {
+        status: outcome.status,
+        verifier: outcome.verification.verifier,
+        verdict: outcome.verification.verdict,
+      },
+      traceId: `task:${taskId}`,
+      occurredAt: at,
+    });
+    this.#reply(
+      updated,
+      outcome.status === "succeeded" ? "result" : "failure",
+      outcome.status === "succeeded"
+        ? `外部动作已完成并核对：${outcome.summary}`
+        : `外部动作需要处理：${outcome.summary}`,
+      `external:${outcome.verification.verifier}:${outcome.verification.verdict}`,
+    );
+    return updated;
   }
 
   #activePluginIds(): string[] {
@@ -1655,6 +1722,7 @@ function workerPrompt(
       "Project review output must be structured; prose alone is not verified:",
       '{"findings":[{"id":"f1","requirementRef":"plan section","classification":"observed|inferred|unknown","severity":"critical|high|medium|low","repositoryId":123,"commitSha":"<40-hex or unknown for a gap>","evidenceRefs":["<source URL or path from an action receipt>"],"expected":"...","actual":"...","impact":"...","existingIssueMatches":[60],"suggestedAction":"...","evidenceGap":"required for unknown","coverage":"complete|partial|unknown","truncated":false}]}',
       '{"issueDrafts":[{"action":"create|update|comment","targetIssue":60,"title":"...","body":"...","findingIds":["f1"],"beforeHash":"<sha256 of the existing issue body for update>","requiresOwnerApproval":true}]}',
+      "Stop gathering after at most two rounds of typed reads. One plan file, one or two source files, PR files, checks and the issue list are enough; then set status=ready and emit findings/issueDrafts. Do not read every issue or file.",
       "Start with a repo read to obtain the immutable repositoryId, then a ref read to resolve the branch to a fixed commit SHA before typed file/tree/checks reads.",
       "Typed read args (use exactly these field names; limit is 1..20):",
       '{"operation":"ref","projectKey":"<key>","repo":"owner/name","ref":"heads/main"}',
@@ -1665,9 +1733,13 @@ function workerPrompt(
       '{"operation":"issue","projectKey":"<key>","repo":"owner/name","number":62}',
       '{"operation":"issues","repo":"owner/name","limit":20}',
       "Do not invent placeholder SHAs: copy the 40-hex sha from the ref or file receipt. A read with revision/target/pullNumber aliases is accepted, but sha/path/number is canonical.",
+      "Every observed finding must cite at least one revision-pinned receipt (file/tree/checks/pull_files) whose commitSha or headSha exactly equals the finding.commitSha. Issue and PR metadata are mutable and cannot support an observed finding at a commit.",
+      "For a pull_files receipt, set the finding.commitSha to that receipt's headSha. Do not mix a main-branch file URL into a PR-head finding.",
       "Every observed finding must cite a receipt at the same repositoryId and commitSha; never invent issue numbers or test results.",
       "update/comment drafts must target an issue already listed in the finding's existingIssueMatches; update drafts must also carry beforeHash from that issue's body receipt. Create drafts must not duplicate an existing issue.",
-      "Issue drafts are proposals only. This task cannot write to GitHub, and the program derives their idempotency key.",
+      "Issue drafts are proposals only. This task cannot write to GitHub. Omit idempotencyKey entirely; the host computes it and rejects model-supplied values.",
+      "One draft may link only findings with the same repositoryId and commitSha. Split drafts by revision.",
+      "If any cited receipt is truncated, set the finding's truncated=true and coverage=partial or unknown; otherwise do not cite that receipt.",
       "For typed reads, add githubClaim entries with kind=github_typed:",
       '{"githubClaims":[{"kind":"github_typed","repo":"owner/name","projectKey":"key","operation":"file","revision":"<40-hex>","target":"docs/plan.md","field":"exists","value":true},',
       '{"kind":"github_typed","repo":"owner/name","projectKey":"key","operation":"checks","revision":"<40-hex>","target":"ci","field":"conclusion","value":"success"}]}',

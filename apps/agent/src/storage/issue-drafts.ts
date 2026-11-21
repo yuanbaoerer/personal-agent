@@ -146,6 +146,14 @@ export class IssueDraftRepository {
     return row === undefined ? undefined : mapDraft(row);
   }
 
+  findByActionId(actionId: string): IssueDraftSnapshot | undefined {
+    const row = this.#db.all<IssueDraftRow>(
+      "SELECT * FROM pa_issue_drafts WHERE write_action_id = ? ORDER BY created_at DESC LIMIT 1",
+      actionId,
+    )[0];
+    return row === undefined ? undefined : mapDraft(row);
+  }
+
   updateStatus(
     id: string,
     status: IssueDraftStatus,

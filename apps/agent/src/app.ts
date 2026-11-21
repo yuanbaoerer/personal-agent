@@ -34,6 +34,7 @@ import { MemoryRepository, ScheduleRepository } from "./storage/personal.ts";
 import { ProjectRepository } from "./storage/projects.ts";
 import { IssueDraftRepository } from "./storage/issue-drafts.ts";
 import { IssueDraftService } from "./personal/issue-drafts.ts";
+import { IssueDraftApprovalBridge } from "./personal/draft-approval.ts";
 import type { Store } from "./storage/store.ts";
 import { TaskRepository } from "./storage/tasks.ts";
 import { ProjectService } from "./personal/projects.ts";
@@ -53,6 +54,8 @@ export interface AppDeps {
   reminderTimer?: ReminderTimer;
   /** Read-only GitHub connector; omitted means the tool is unavailable. */
   github?: GitHubReadConfig;
+  /** Explicit least-privilege issue write credential ref; omitted disables writes. */
+  githubIssueWrite?: { credentialRef: string };
   /** Optional Magpie usage/quotas adapter; omitted means local-only reporting. */
   magpie?: MagpieConfig;
   /** Local persistent request-count limits. */
@@ -83,6 +86,7 @@ export interface AppServices {
   schedulePolicies: SchedulePolicyRepository;
   projects: ProjectRepository;
   issueDrafts: IssueDraftService;
+  issueDraftApproval?: IssueDraftApprovalBridge;
   taskService: TaskService;
   actionService: ActionService;
   reminders: ReminderService;
@@ -129,9 +133,10 @@ export function createApp(deps: AppDeps): AppServices {
   const preauthorizations = new PreauthorizationRepository(db);
   const schedulePolicies = new SchedulePolicyRepository(db);
   const projects = new ProjectRepository(db);
+  const draftRepository = new IssueDraftRepository(db);
   const issueDrafts = new IssueDraftService({
     store,
-    drafts: new IssueDraftRepository(db),
+    drafts: draftRepository,
     projects,
     tasks,
     credentials: deps.github?.credentials,
@@ -206,6 +211,22 @@ export function createApp(deps: AppDeps): AppServices {
     capabilities: catalog,
   });
   taskService.setActionProposer(actionService);
+  const issueDraftApproval =
+    deps.githubIssueWrite === undefined ||
+    deps.github?.credentials === undefined
+      ? undefined
+      : new IssueDraftApprovalBridge({
+          store,
+          drafts: draftRepository,
+          draftService: issueDrafts,
+          taskService,
+          actionService,
+          credentials: deps.github.credentials,
+          capabilities: catalog,
+          writeCredentialRef: deps.githubIssueWrite.credentialRef,
+          now: deps.now,
+        });
+  issueDraftApproval?.install();
   const plugins = new ExtensionService({
     catalog,
     actions: actionService,
@@ -244,6 +265,8 @@ export function createApp(deps: AppDeps): AppServices {
     now: deps.now,
     capabilities: catalog,
     projects,
+    issueDrafts,
+    issueDraftApproval,
   });
 
   const effectDispatcher = new EffectDispatcher({ effects });
@@ -264,6 +287,7 @@ export function createApp(deps: AppDeps): AppServices {
     schedulePolicies,
     projects,
     issueDrafts,
+    issueDraftApproval,
     taskService,
     actionService,
     reminders,

@@ -32,6 +32,10 @@ export interface AppConfig {
     token?: string;
     allowedRepos: string[];
     oauth?: GitHubOAuthConfig;
+    /** Separate least-privilege Issues-write credential; never inherited. */
+    issueWriteToken?: string;
+    issueWriteRepos: string[];
+    issueWriteCredentialRef: string;
   };
   adminToken?: string;
   magpie: {
@@ -132,6 +136,31 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
           encryptionKey: githubOAuthEncryptionKey,
         }
       : undefined;
+  const issueWriteToken = read("GITHUB_ISSUE_WRITE_TOKEN");
+  const issueWriteRepos = (read("GITHUB_ISSUE_WRITE_REPOS") ?? "")
+    .split(",")
+    .map((repo) => repo.trim())
+    .filter((repo) => repo.length > 0);
+  const issueWriteCredentialRef =
+    read("GITHUB_ISSUE_WRITE_CREDENTIAL_REF") ?? "github:issues";
+  if (issueWriteToken !== undefined && issueWriteRepos.length === 0) {
+    throw new ConfigError(
+      "GITHUB_ISSUE_WRITE_REPOS is required when GITHUB_ISSUE_WRITE_TOKEN is set",
+    );
+  }
+  if (issueWriteToken === undefined && issueWriteRepos.length > 0) {
+    throw new ConfigError(
+      "GITHUB_ISSUE_WRITE_TOKEN is required when GITHUB_ISSUE_WRITE_REPOS is set",
+    );
+  }
+  if (
+    !/^[a-z][a-z0-9._:-]{0,127}$/.test(issueWriteCredentialRef) ||
+    /^(?:gh[pousr]_|github_pat_|sk-|xox[abp]-)/i.test(issueWriteCredentialRef)
+  ) {
+    throw new ConfigError(
+      "GITHUB_ISSUE_WRITE_CREDENTIAL_REF must be a credential reference, not a token",
+    );
+  }
   const providerRaw = read("MODEL_PROVIDER") ?? "opencode-go";
   if (!SUPPORTED_MODEL_PROVIDERS.includes(providerRaw as ModelProvider)) {
     throw new ConfigError(
@@ -156,6 +185,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
         .map((repo) => repo.trim())
         .filter((repo) => repo.length > 0),
       oauth: githubOAuth,
+      ...(issueWriteToken === undefined
+        ? {}
+        : { issueWriteToken }),
+      issueWriteRepos,
+      issueWriteCredentialRef,
     },
     adminToken,
     magpie: {

@@ -5,6 +5,7 @@ import { createApp } from "./app.ts";
 import { CredentialBroker } from "./actions/credentials.ts";
 import { CredentialRepository } from "./storage/credentials.ts";
 import { createGithubPlugin } from "./plugins/github.ts";
+import type { GitHubIssueWriteConfig } from "./actions/github-issue.ts";
 import { connectMcpPlugins, parseMcpServers } from "./plugins/mcp.ts";
 import { FileSkillRuntime } from "./plugins/skills.ts";
 import type { BuiltinPlugin } from "./plugins/types.ts";
@@ -228,6 +229,29 @@ async function main(): Promise<void> {
       });
     }
   }
+  if (
+    config.github.issueWriteToken !== undefined &&
+    owner !== undefined
+  ) {
+    // Separate least-privilege write credential. It is never derived from
+    // the read PAT/OAuth token and must be explicitly configured.
+    credentials.register(config.github.issueWriteCredentialRef, {
+      token: config.github.issueWriteToken,
+      scopes: ["repository.read", "issues.write"],
+      ownerId: owner.id,
+      pluginId: "github",
+      account: "issues-write",
+    });
+  }
+  const issueWriteConfig: GitHubIssueWriteConfig | undefined =
+    config.github.issueWriteToken === undefined || owner === undefined
+      ? undefined
+      : {
+          allowedRepos: config.github.issueWriteRepos,
+          issueCredentialRef: config.github.issueWriteCredentialRef,
+          resolveProject,
+          credentials,
+        };
   const github = {
     token: config.github.token,
     allowedRepos: config.github.allowedRepos,
@@ -254,10 +278,20 @@ async function main(): Promise<void> {
     runtime: local.runtime,
     wake: noopWake,
     github,
+    ...(issueWriteConfig === undefined
+      ? {}
+      : {
+          githubIssueWrite: {
+            credentialRef: issueWriteConfig.issueCredentialRef,
+          },
+        }),
     magpie: config.magpie,
     budgetLimits: config.budget,
     skills,
-    builtinPlugins: [createGithubPlugin(github), ...mcpPlugins],
+    builtinPlugins: [
+      createGithubPlugin(github, issueWriteConfig),
+      ...mcpPlugins,
+    ],
     // A keyless process must not persist a placeholder session id: the next
     // run with a model key would inherit an id Pi cannot resolve.
     model:

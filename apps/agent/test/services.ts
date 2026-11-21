@@ -33,6 +33,7 @@ import { MemoryRepository, ScheduleRepository } from "../src/storage/personal.ts
 import { ProjectRepository } from "../src/storage/projects.ts";
 import { IssueDraftRepository } from "../src/storage/issue-drafts.ts";
 import { IssueDraftService } from "../src/personal/issue-drafts.ts";
+import { IssueDraftApprovalBridge } from "../src/personal/draft-approval.ts";
 import { TaskRepository } from "../src/storage/tasks.ts";
 import type { Store } from "../src/storage/store.ts";
 import { ProjectService } from "../src/personal/projects.ts";
@@ -52,6 +53,7 @@ export interface TestServices {
   schedulePolicies: SchedulePolicyRepository;
   projects: ProjectRepository;
   issueDrafts: IssueDraftService;
+  issueDraftApproval?: IssueDraftApprovalBridge;
   runtime: FakeRuntime;
   lamp: MockLampTool;
   tools: ToolRegistry;
@@ -85,6 +87,7 @@ export function createServices(options: {
   actionTtlMs?: number;
   model?: StaticRouterModel;
   github?: GitHubReadConfig;
+  githubIssueWrite?: { credentialRef: string };
   builtinPlugins?: readonly BuiltinPlugin[];
   skills?: SkillRuntime;
   reminderTimer?: ReminderTimer;
@@ -212,6 +215,22 @@ export function createServices(options: {
     capabilities: catalog,
   });
   taskService.setActionProposer(actionService);
+  const issueDraftApproval =
+    options.githubIssueWrite === undefined ||
+    options.github?.credentials === undefined
+      ? undefined
+      : new IssueDraftApprovalBridge({
+          store,
+          drafts: new IssueDraftRepository(db),
+          draftService: issueDrafts,
+          taskService,
+          actionService,
+          credentials: options.github.credentials,
+          capabilities: catalog,
+          writeCredentialRef: options.githubIssueWrite.credentialRef,
+          now,
+        });
+  issueDraftApproval?.install();
   const plugins = new ExtensionService({ catalog, actions: actionService });
 
   const reminders = new ReminderService({
@@ -243,6 +262,8 @@ export function createServices(options: {
     now,
     capabilities: catalog,
     projects,
+    issueDrafts,
+    issueDraftApproval,
   });
 
   const effectDispatcher = new EffectDispatcher({ effects, now, maxAttempts: 20 });
@@ -266,6 +287,7 @@ export function createServices(options: {
     schedulePolicies,
     projects,
     issueDrafts,
+    issueDraftApproval,
     runtime,
     lamp,
     tools: registry,

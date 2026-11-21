@@ -82,6 +82,8 @@ export class ActionService {
   readonly #capabilities?: CapabilityFence;
   #activeTools = 0;
   readonly #toolWaiters: (() => void)[] = [];
+  #settledListener?: (action: ActionRecord) => void;
+  readonly #notified = new Set<string>();
 
   constructor(deps: ActionServiceDeps) {
     this.#store = deps.store;
@@ -100,6 +102,67 @@ export class ActionService {
     this.#schedulePolicies = deps.schedulePolicies;
     this.#onSettled = deps.onSettled ?? (() => {});
     this.#capabilities = deps.capabilities;
+  }
+
+  /** Bridge hook: receives every action that reached a terminal status. */
+  setSettledListener(listener: (action: ActionRecord) => void): void {
+    this.#settledListener = listener;
+  }
+
+  /**
+   * Proposes one typed external write that is already backed by an owner
+   * approval of a persisted draft. It does not auto-approve or execute.
+   */
+  proposeApprovedWrite(input: {
+    task: TaskRecord;
+    tool: string;
+    args: Record<string, unknown>;
+    sourceKey: string;
+  }): { action: ActionRecord; created: boolean } | undefined {
+    const tool = this.#tools.get(input.tool);
+    if (tool === undefined || tool.readOnly === true) {
+      return undefined;
+    }
+    const canonical = tool.canonicalize(
+      input.args,
+      executionContext(input.task),
+    );
+    const binding = this.#capabilities?.bindingForTool(input.tool);
+    const now = this.#now().toISOString();
+    const { action, created } = this.#actions.insert({
+      ownerId: input.task.ownerId,
+      conversationId: input.task.conversationId,
+      taskId: input.task.id,
+      taskRevision: input.task.revision,
+      fencingToken: 0,
+      tool: input.tool,
+      args: canonical,
+      argsHash: hashArgs(input.tool, canonical),
+      expiresAt: new Date(this.#now().getTime() + this.#ttlMs).toISOString(),
+      nonce: randomUUID(),
+      sourceKey: input.sourceKey,
+      pluginId: binding?.pluginId,
+      pluginVersion: binding?.pluginVersion,
+      pluginDigest: binding?.pluginDigest,
+      catalogGeneration: binding?.catalogGeneration,
+      createdAt: now,
+    });
+    if (created) {
+      this.#store.recordAudit({
+        event: "action.proposed",
+        subjectType: "action",
+        subjectId: action.id,
+        after: {
+          tool: action.tool,
+          args: action.args,
+          taskId: input.task.id,
+          source: "approved_draft",
+        },
+        traceId: `action:${action.id}`,
+        occurredAt: now,
+      });
+    }
+    return { action, created };
   }
 
   install(dispatcher: EffectDispatcher): void {
@@ -1285,6 +1348,41 @@ export class ActionService {
       createdAt: now,
       traceId: `task:${action.taskId}`,
     });
+    this.#notifySettled(action.id);
+  }
+
+  #notifySettled(actionId: string): void {
+    if (this.#settledListener === undefined) {
+      return;
+    }
+    const current = this.#actions.get(actionId);
+    if (
+      current === undefined ||
+      !["succeeded", "failed", "unknown", "needs_manual", "expired", "superseded", "denied"].includes(
+        current.status,
+      )
+    ) {
+      return;
+    }
+    const key = `${current.id}:${current.status}:${current.executionAttempts}`;
+    if (this.#notified.has(key)) {
+      return;
+    }
+    this.#notified.add(key);
+    try {
+      this.#settledListener(current);
+    } catch (error) {
+      this.#store.recordAudit({
+        event: "action.settlement_listener_failed",
+        subjectType: "action",
+        subjectId: current.id,
+        after: {
+          reason: error instanceof Error ? error.message : String(error),
+        },
+        traceId: `action:${current.id}`,
+        occurredAt: this.#now().toISOString(),
+      });
+    }
   }
 }
 
