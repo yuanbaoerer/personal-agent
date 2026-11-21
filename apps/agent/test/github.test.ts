@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { GitHubReadTool, type GitHubProjectBinding } from "../src/actions/github.ts";
+import { CredentialBroker } from "../src/actions/credentials.ts";
 import { ToolRejectedError } from "../src/actions/tools.ts";
 import { createStore } from "./helpers.ts";
 import { createServices } from "./services.ts";
@@ -18,6 +19,7 @@ const BINDING: GitHubProjectBinding = {
   projectKey: "personal-agent",
   repositoryId: 101,
   repositoryFullName: "owner/repo",
+  credentialRef: "github:default",
   status: "active",
 };
 
@@ -318,6 +320,13 @@ describe("read-only GitHub connector", () => {
             html_url: "https://github.com/owner/repo/issues/12",
           });
         }
+        if (url.pathname.endsWith("/pulls/12")) {
+          return jsonResponse({
+            number: 12,
+            head: { sha },
+            base: { sha },
+          });
+        }
         if (url.pathname.endsWith("/pulls/12/files")) {
           return jsonResponse([
             {
@@ -330,6 +339,9 @@ describe("read-only GitHub connector", () => {
               patch: "@@ -1 +1 @@",
             },
           ]);
+        }
+        if (url.pathname.endsWith(`/commits/${sha}/status`)) {
+          return jsonResponse({ state: "success", total_count: 0, statuses: [] });
         }
         if (url.pathname.endsWith(`/commits/${sha}/check-runs`)) {
           return jsonResponse({
@@ -426,6 +438,8 @@ describe("read-only GitHub connector", () => {
       "src/a.ts",
     );
     assert.match(files.evidence.source as string, /\/pull\/12\/files$/);
+    assert.equal(files.evidence.headSha, sha);
+    assert.equal(files.evidence.stale, false);
 
     const checks = await tool.execute({
       operation: "checks",
@@ -437,7 +451,12 @@ describe("read-only GitHub connector", () => {
       (checks.evidence.items as Array<Record<string, unknown>>)[0]?.conclusion,
       "success",
     );
-    assert.equal(calls.length, 6);
+    assert.equal(checks.evidence.commitSha, sha);
+    assert.deepEqual(checks.evidence.coverage, {
+      checkRuns: "complete",
+      commitStatuses: "included",
+    });
+    assert.equal(calls.length, 9);
   });
 
   it("rejects unsafe typed-read arguments before fetching", async () => {
@@ -635,6 +654,259 @@ describe("read-only GitHub connector", () => {
     });
     assert.equal((result.evidence.items as unknown[]).length, 1);
     assert.equal(result.evidence.truncated, true);
+  });
+
+  it("uses the project credential ref and verifies the immutable repository identity", async () => {
+    const credentials = new CredentialBroker(() => new Date());
+    credentials.register("github:project", {
+      token: "project-token",
+      scopes: ["repository.read"],
+    });
+    const calls: { url: string; authorization: string | null }[] = [];
+    const sha = "a".repeat(40);
+    const tool = new GitHubReadTool({
+      token: "global-token",
+      allowedRepos: ["owner/repo"],
+      credentials,
+      resolveProject: (key) =>
+        key === BINDING.projectKey
+          ? { ...BINDING, credentialRef: "github:project" }
+          : undefined,
+      fetch: (async (input: string | URL | Request, init?: RequestInit) => {
+        const url = new URL(String(input));
+        calls.push({
+          url: url.toString(),
+          authorization: new Headers(init?.headers).get("authorization"),
+        });
+        if (url.pathname === "/repos/owner/repo") {
+          return jsonResponse({ id: 101, full_name: "owner/repo" });
+        }
+        return jsonResponse({
+          type: "file",
+          path: "README.md",
+          sha,
+          size: 2,
+          encoding: "base64",
+          content: Buffer.from("ok").toString("base64"),
+          html_url: `https://github.com/owner/repo/blob/${sha}/README.md`,
+        });
+      }) as typeof fetch,
+    });
+
+    const result = await tool.execute({
+      operation: "file",
+      projectKey: BINDING.projectKey,
+      sha,
+      path: "README.md",
+    });
+    assert.equal(result.evidence.commitSha, sha);
+    assert.equal(result.evidence.repositoryId, BINDING.repositoryId);
+    assert.equal(
+      (result.evidence.permanentUrl as string),
+      `https://github.com/owner/repo/blob/${sha}/README.md`,
+    );
+    assert.equal(calls.length, 2);
+    assert.match(calls[0]?.url ?? "", /\/repos\/owner\/repo$/);
+    assert.equal(calls[0]?.authorization, "Bearer project-token");
+    assert.equal(calls[1]?.authorization, "Bearer project-token");
+
+    await tool.execute({
+      operation: "file",
+      projectKey: BINDING.projectKey,
+      sha,
+      path: "README.md",
+    });
+    assert.equal(calls.length, 3);
+    assert.doesNotMatch(calls[2]?.url ?? "", /\/repos\/owner\/repo$/);
+  });
+
+  it("rejects a repository identity mismatch or an unavailable project credential", async () => {
+    const credentials = new CredentialBroker(() => new Date());
+    credentials.register("github:project", {
+      token: "project-token",
+      scopes: ["repository.read"],
+    });
+    let fetched = 0;
+    const mismatch = new GitHubReadTool({
+      token: "global-token",
+      allowedRepos: ["owner/repo"],
+      credentials,
+      resolveProject: () => ({ ...BINDING, credentialRef: "github:project" }),
+      fetch: (async () => {
+        fetched += 1;
+        return jsonResponse({ id: 999, full_name: "owner/repo" });
+      }) as typeof fetch,
+    });
+    await assert.rejects(
+      () =>
+        mismatch.execute({
+          operation: "file",
+          projectKey: BINDING.projectKey,
+          sha: "a".repeat(40),
+          path: "README.md",
+        }),
+      /repository identity does not match/,
+    );
+    assert.equal(fetched, 1);
+
+    credentials.revoke("github:project");
+    const revoked = new GitHubReadTool({
+      token: "global-token",
+      allowedRepos: ["owner/repo"],
+      credentials,
+      resolveProject: () => ({ ...BINDING, credentialRef: "github:project" }),
+      fetch: (async () => {
+        fetched += 1;
+        return jsonResponse({});
+      }) as typeof fetch,
+    });
+    await assert.rejects(
+      () =>
+        revoked.execute({
+          operation: "file",
+          projectKey: BINDING.projectKey,
+          sha: "a".repeat(40),
+          path: "README.md",
+        }),
+      /project credential github:project is unavailable/,
+    );
+    assert.equal(fetched, 1);
+  });
+
+  it("binds legacy reads in a project-scoped task to the binding repo and credential", async () => {
+    const credentials = new CredentialBroker(() => new Date());
+    credentials.register("github:project", {
+      token: "project-token",
+      scopes: ["repository.read"],
+    });
+    const calls: string[] = [];
+    const tool = new GitHubReadTool({
+      token: "global-token",
+      allowedRepos: ["owner/repo", "owner/other"],
+      credentials,
+      resolveProject: (key) =>
+        key === BINDING.projectKey
+          ? { ...BINDING, credentialRef: "github:project" }
+          : undefined,
+      fetch: (async (input: string | URL | Request) => {
+        const url = new URL(String(input));
+        calls.push(url.toString());
+        if (url.pathname === "/repos/owner/repo") {
+          return jsonResponse({ id: 101, full_name: "owner/repo" });
+        }
+        return jsonResponse([
+          {
+            sha: "a".repeat(40),
+            html_url: "https://github.com/owner/repo/commit/a",
+            commit: { message: "one", author: { name: "A" } },
+          },
+        ]);
+      }) as typeof fetch,
+    });
+
+    await assert.rejects(
+      () =>
+        tool.execute(
+          { operation: "commits", repo: "owner/other" },
+          { ownerId: "owner-1", project: BINDING.projectKey },
+        ),
+      /task project binding/,
+    );
+    assert.equal(calls.length, 0);
+
+    const result = await tool.execute(
+      { operation: "commits", repo: "owner/repo" },
+      { ownerId: "owner-1", project: BINDING.projectKey },
+    );
+    assert.equal(result.evidence.projectKey, BINDING.projectKey);
+    assert.equal(result.evidence.repositoryId, BINDING.repositoryId);
+    assert.equal(calls.length, 2);
+    assert.match(calls[0] ?? "", /\/repos\/owner\/repo$/);
+    assert.match(calls[1] ?? "", /\/repos\/owner\/repo\/commits/);
+  });
+
+  it("marks pull file evidence stale when the head moves twice", async () => {
+    const first = "a".repeat(40);
+    const second = "b".repeat(40);
+    const third = "c".repeat(40);
+    let pullReads = 0;
+    let fileReads = 0;
+    const tool = new GitHubReadTool({
+      token: "secret-token",
+      allowedRepos: ["owner/repo"],
+      resolveProject,
+      fetch: (async (input: string | URL | Request) => {
+        const url = new URL(String(input));
+        if (url.pathname.endsWith("/files")) {
+          fileReads += 1;
+          return jsonResponse([
+            {
+              filename: fileReads === 1 ? "old.ts" : "new.ts",
+              status: "modified",
+              changes: 1,
+            },
+          ]);
+        }
+        pullReads += 1;
+        return jsonResponse({
+          number: 7,
+          head: { sha: pullReads === 2 ? second : pullReads === 1 ? first : third },
+          base: { sha: first },
+        });
+      }) as typeof fetch,
+    });
+    const result = await tool.execute({
+      operation: "pull_files",
+      projectKey: BINDING.projectKey,
+      number: 7,
+    });
+    assert.equal(result.evidence.stale, true);
+    assert.equal(result.evidence.coverage, "unknown");
+    assert.equal(result.evidence.observedHeadSha, second);
+    assert.equal(result.evidence.headSha, third);
+    assert.equal(
+      (result.evidence.items as Array<Record<string, unknown>>)[0]?.filename,
+      "new.ts",
+    );
+    assert.equal(pullReads, 3);
+    assert.equal(fileReads, 2);
+  });
+
+  it("reports commit-status coverage gaps instead of hiding them", async () => {
+    const sha = "a".repeat(40);
+    const tool = new GitHubReadTool({
+      token: "secret-token",
+      allowedRepos: ["owner/repo"],
+      resolveProject,
+      fetch: (async (input: string | URL | Request) => {
+        const url = new URL(String(input));
+        if (url.pathname.endsWith("/status")) {
+          return new Response("forbidden", { status: 403 });
+        }
+        return jsonResponse({
+          total_count: 1,
+          check_runs: [
+            {
+              id: 1,
+              name: "ci",
+              status: "completed",
+              conclusion: "success",
+              head_sha: sha,
+            },
+          ],
+        });
+      }) as typeof fetch,
+    });
+    const result = await tool.execute({
+      operation: "checks",
+      projectKey: BINDING.projectKey,
+      sha,
+    });
+    assert.deepEqual(result.evidence.coverage, {
+      checkRuns: "complete",
+      commitStatuses: "unavailable",
+    });
+    assert.equal(result.evidence.combinedStatus, undefined);
   });
 
   it("is absent from the registry without a token or allow list", () => {

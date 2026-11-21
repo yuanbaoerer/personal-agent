@@ -5,11 +5,19 @@ import {
   type ToolExecution,
   type ToolVerification,
 } from "./tools.ts";
+import {
+  CredentialBroker,
+  CredentialScopeError,
+  CredentialUnavailableError,
+  type ResolvedCredential,
+} from "./credentials.ts";
 
 export interface GitHubProjectBinding {
   projectKey: string;
   repositoryId: number;
   repositoryFullName: string;
+  /** Reference into the CredentialBroker; never a token. */
+  credentialRef: string;
   status: "active" | "revoked";
 }
 
@@ -21,6 +29,13 @@ export interface GitHubReadConfig {
   allowedRepos: string[];
   /** Resolve an active owner-scoped project binding for typed reads. */
   resolveProject?: (projectKey: string) => GitHubProjectBinding | undefined;
+  /**
+   * When present, typed reads resolve the binding credentialRef here and
+   * never fall back to the global token. Project writes will use the same refs.
+   */
+  credentials?: CredentialBroker;
+  /** How long a verified repository identity is trusted. */
+  repositoryVerificationTtlMs?: number;
   timeoutMs?: number;
   maxBytes?: number;
   fetch?: typeof fetch;
@@ -47,6 +62,7 @@ const SHA_PATTERN = /^[0-9a-f]{40}$/i;
 const REF_PATTERN = /^[\p{L}\p{N}._/@+-]{1,255}$/u;
 const PATH_PATTERN = /^[\p{L}\p{N}._/ @+-]{1,500}$/u;
 const PROJECT_KEY_PATTERN = /^[a-z][a-z0-9._-]{0,63}$/;
+const CREDENTIAL_REF_PATTERN = /^[a-z][a-z0-9._:-]{0,127}$/;
 const TYPED_OPERATIONS = new Set<GitHubOperation>([
   "ref",
   "tree",
@@ -70,6 +86,7 @@ export class GitHubReadTool implements ActionTool {
   readonly #config: Required<Pick<GitHubReadConfig, "timeoutMs" | "maxBytes">> &
     GitHubReadConfig;
   readonly #allowed: Set<string>;
+  readonly #verifiedRepositories = new Map<string, number>();
 
   constructor(config: GitHubReadConfig) {
     this.#config = {
@@ -142,6 +159,8 @@ export class GitHubReadTool implements ActionTool {
         !Number.isSafeInteger(binding.repositoryId) ||
         binding.repositoryId < 1 ||
         !REPO_PATTERN.test(binding.repositoryFullName) ||
+        typeof binding.credentialRef !== "string" ||
+        !CREDENTIAL_REF_PATTERN.test(binding.credentialRef) ||
         binding.repositoryFullName
           .split("/")
           .some((part) => part === "." || part === "..")
@@ -173,6 +192,30 @@ export class GitHubReadTool implements ActionTool {
         throw new ToolRejectedError("repo must be owner/name");
       }
       repo = requestedRepo;
+      if (
+        context?.project !== undefined &&
+        this.#config.resolveProject !== undefined
+      ) {
+        let binding: GitHubProjectBinding | undefined;
+        try {
+          binding = this.#config.resolveProject(context.project);
+        } catch {
+          throw new ToolRejectedError("GitHub project binding lookup failed");
+        }
+        if (
+          binding === undefined ||
+          binding.status !== "active" ||
+          typeof binding.credentialRef !== "string" ||
+          !CREDENTIAL_REF_PATTERN.test(binding.credentialRef) ||
+          binding.repositoryFullName.toLowerCase() !== repo.toLowerCase()
+        ) {
+          throw new ToolRejectedError(
+            "repo does not match the task project binding",
+          );
+        }
+        projectKey = binding.projectKey;
+        repositoryId = binding.repositoryId;
+      }
     }
     if (!this.#allowed.has(repo.toLowerCase())) {
       throw new ToolRejectedError("repository is not in the allow list");
@@ -267,12 +310,46 @@ export class GitHubReadTool implements ActionTool {
     const operation = canonical.operation as GitHubOperation;
     const repo = canonical.repo as string;
     const limit = canonical.limit as number;
-    const token =
-      this.#config.tokenProvider === undefined
-        ? this.#config.token
-        : await this.#config.tokenProvider();
-    if (token === undefined || token.trim().length === 0) {
-      throw new ToolRejectedError("github token is not configured or OAuth is not connected");
+    const deadline = Date.now() + this.#config.timeoutMs;
+    const token = await this.#resolveToken(canonical, operation, deadline);
+    const projectEvidence =
+      typeof canonical.projectKey === "string"
+        ? {
+            projectKey: canonical.projectKey,
+            repositoryId: canonical.repositoryId,
+          }
+        : {};
+    const externalRef = `https://github.com/${repo}`;
+
+    if (operation === "pull_files") {
+      return {
+        evidence: {
+          ...(await this.#readPullFiles(
+            repo,
+            canonical.number as number,
+            limit,
+            token,
+            deadline,
+          )),
+          ...projectEvidence,
+        },
+        externalRef,
+      };
+    }
+    if (operation === "checks") {
+      return {
+        evidence: {
+          ...(await this.#readChecks(
+            repo,
+            canonical.sha as string,
+            limit,
+            token,
+            deadline,
+          )),
+          ...projectEvidence,
+        },
+        externalRef,
+      };
     }
 
     const path =
@@ -282,26 +359,18 @@ export class GitHubReadTool implements ActionTool {
           ? `/repos/${repo}`
           : operation === "issue"
             ? `/repos/${repo}/issues/${canonical.number as number}`
-            : operation === "pull_files"
-              ? `/repos/${repo}/pulls/${canonical.number as number}/files`
-              : operation === "ref"
-                ? `/repos/${repo}/git/ref/${encodeRef(canonical.ref as string)}`
-                : operation === "tree"
-                  ? `/repos/${repo}/git/trees/${canonical.sha as string}`
-                  : operation === "file"
-                    ? `/repos/${repo}/contents/${encodePath(canonical.path as string)}`
-                    : operation === "checks"
-                      ? `/repos/${repo}/commits/${canonical.sha as string}/check-runs`
-                      : `/repos/${repo}/${operation}`;
+            : operation === "ref"
+              ? `/repos/${repo}/git/ref/${encodeRef(canonical.ref as string)}`
+              : operation === "tree"
+                ? `/repos/${repo}/git/trees/${canonical.sha as string}`
+                : operation === "file"
+                  ? `/repos/${repo}/contents/${encodePath(canonical.path as string)}`
+                  : `/repos/${repo}/${operation}`;
     const params = new URLSearchParams();
     if (operation === "issues" || operation === "pulls") {
       params.set("state", "open");
       params.set("per_page", String(limit));
-    } else if (
-      operation === "commits" ||
-      operation === "pull_files" ||
-      operation === "checks"
-    ) {
+    } else if (operation === "commits") {
       params.set("per_page", String(limit));
     } else if (operation === "tree") {
       if (canonical.recursive === true) params.set("recursive", "1");
@@ -309,10 +378,153 @@ export class GitHubReadTool implements ActionTool {
       params.set("ref", canonical.sha as string);
     }
     const url = this.#url(path, params);
+    const { body, hasNext } = await this.#requestJson(
+      url,
+      operation,
+      token,
+      deadline,
+    );
+    const evidence = mapEvidence(operation, repo, body, limit, url, hasNext, {
+      sha: canonical.sha as string | undefined,
+      path: canonical.path as string | undefined,
+      ref: canonical.ref as string | undefined,
+    });
+    return {
+      evidence: { ...evidence, ...projectEvidence },
+      externalRef,
+    };
+  }
 
+  async verify(): Promise<ToolVerification> {
+    // A lost GET result cannot be proven complete from local state; let
+    // reconcile re-read instead of reporting a fabricated success.
+    return { satisfied: false, evidence: { readOnly: true } };
+  }
+
+  /**
+   * Typed project reads use the binding's credential ref, not the global
+   * PAT/OAuth token. The real repository id is checked before the first read
+   * under each credential version and then cached briefly.
+   */
+  async #resolveToken(
+    canonical: Record<string, unknown>,
+    operation: GitHubOperation,
+    deadline: number,
+  ): Promise<string> {
+    if (
+      canonical.projectKey !== undefined &&
+      this.#config.credentials !== undefined
+    ) {
+      const projectKey = canonical.projectKey as string;
+      const repo = canonical.repo as string;
+      const binding = this.#config.resolveProject?.(projectKey);
+      if (
+        binding === undefined ||
+        binding.status !== "active" ||
+        binding.projectKey !== projectKey ||
+        binding.repositoryId !== canonical.repositoryId ||
+        binding.repositoryFullName.toLowerCase() !== repo.toLowerCase() ||
+        typeof binding.credentialRef !== "string" ||
+        !CREDENTIAL_REF_PATTERN.test(binding.credentialRef)
+      ) {
+        throw new ToolRejectedError(
+          `project ${projectKey} is not an active repository binding`,
+        );
+      }
+      let credential: ResolvedCredential | undefined;
+      try {
+        credential = await this.#config.credentials.resolve(
+          binding.credentialRef,
+          ["repository.read"],
+        );
+      } catch (error) {
+        if (
+          error instanceof CredentialUnavailableError ||
+          error instanceof CredentialScopeError
+        ) {
+          throw new ToolRejectedError(error.message);
+        }
+        throw new ToolRejectedError("project credential lookup failed");
+      }
+      if (credential === undefined) {
+        throw new ToolRejectedError(
+          `project credential ${binding.credentialRef} is unavailable`,
+        );
+      }
+      await this.#ensureRepositoryIdentity(
+        repo,
+        binding.repositoryId,
+        credential,
+        deadline,
+      );
+      return credential.token;
+    }
+
+    const token =
+      this.#config.tokenProvider === undefined
+        ? this.#config.token
+        : await this.#config.tokenProvider();
+    if (token === undefined || token.trim().length === 0) {
+      throw new ToolRejectedError(
+        "github token is not configured or OAuth is not connected",
+      );
+    }
+    return token;
+  }
+
+  async #ensureRepositoryIdentity(
+    repo: string,
+    expectedId: number,
+    credential: ResolvedCredential,
+    deadline: number,
+  ): Promise<void> {
+    const key = `${credential.ref}\u0000${credential.version}\u0000${expectedId}\u0000${repo.toLowerCase()}`;
+    const cachedUntil = this.#verifiedRepositories.get(key);
+    if (cachedUntil !== undefined && cachedUntil > Date.now()) {
+      return;
+    }
+    const url = this.#url(`/repos/${repo}`, new URLSearchParams());
+    const { body } = await this.#requestJson(
+      url,
+      "repo",
+      credential.token,
+      deadline,
+    );
+    const record = asObject(body);
+    const repositoryId = numberValue(record.id);
+    const fullName = stringValue(record.full_name);
+    if (
+      repositoryId !== expectedId ||
+      fullName === undefined ||
+      fullName.toLowerCase() !== repo.toLowerCase()
+    ) {
+      throw new ToolRejectedError(
+        "github repository identity does not match the project binding",
+      );
+    }
+    const ttl = this.#config.repositoryVerificationTtlMs ?? 300_000;
+    if (this.#verifiedRepositories.size >= 100) {
+      this.#verifiedRepositories.clear();
+    }
+    this.#verifiedRepositories.set(key, Date.now() + ttl);
+  }
+
+  async #requestJson(
+    url: URL,
+    operation: GitHubOperation,
+    token: string,
+    deadline?: number,
+  ): Promise<{ body: unknown; hasNext: boolean }> {
+    const timeoutMs =
+      deadline === undefined
+        ? this.#config.timeoutMs
+        : Math.min(this.#config.timeoutMs, deadline - Date.now());
+    if (timeoutMs <= 0) {
+      throw new ToolRejectedError("github request timed out");
+    }
     let response: Response;
     try {
-      response = await this.#fetch(url, token);
+      response = await this.#fetch(url, token, timeoutMs);
     } catch (error) {
       if (
         error instanceof Error &&
@@ -379,32 +591,181 @@ export class GitHubReadTool implements ActionTool {
     } catch {
       throw new ToolRejectedError("github response was not valid JSON");
     }
-
-    const evidence = mapEvidence(
-      operation,
-      repo,
-      body,
-      limit,
-      url,
-      (response.headers.get("link") ?? "").includes('rel="next"'),
-    );
-    const projectEvidence =
-      typeof canonical.projectKey === "string"
-        ? {
-            projectKey: canonical.projectKey,
-            repositoryId: canonical.repositoryId,
-          }
-        : {};
     return {
-      evidence: { ...evidence, ...projectEvidence },
-      externalRef: `https://github.com/${repo}`,
+      body,
+      hasNext: (response.headers.get("link") ?? "").includes('rel="next"'),
     };
   }
 
-  async verify(): Promise<ToolVerification> {
-    // A lost GET result cannot be proven complete from local state; let
-    // reconcile re-read instead of reporting a fabricated success.
-    return { satisfied: false, evidence: { readOnly: true } };
+  /**
+   * `/pulls/{n}/files` is not pinned by SHA. Read the PR head before and after
+   * the file list; retry once, then mark the receipt stale so the verifier
+   * refuses deterministic conclusions from it.
+   */
+  async #readPullFiles(
+    repo: string,
+    number: number,
+    limit: number,
+    token: string,
+    deadline: number,
+  ): Promise<Record<string, unknown>> {
+    const pullUrl = this.#url(
+      `/repos/${repo}/pulls/${number}`,
+      new URLSearchParams(),
+    );
+    const filesUrl = this.#url(
+      `/repos/${repo}/pulls/${number}/files`,
+      new URLSearchParams({ per_page: String(limit) }),
+    );
+    const first = await this.#requestJson(
+      pullUrl,
+      "pull_files",
+      token,
+      deadline,
+    );
+    const firstShas = pullShas(first.body);
+    if (firstShas === undefined) {
+      throw new ToolRejectedError(
+        "github pull request has no base/head SHA",
+      );
+    }
+    let headSha = firstShas.headSha;
+    let baseSha = firstShas.baseSha;
+    let files = await this.#requestJson(
+      filesUrl,
+      "pull_files",
+      token,
+      deadline,
+    );
+    let retryCount = 0;
+    let stale = false;
+    let observedHeadSha: string | undefined;
+
+    const second = await this.#requestJson(
+      pullUrl,
+      "pull_files",
+      token,
+      deadline,
+    );
+    const secondShas = pullShas(second.body);
+    if (secondShas === undefined) {
+      throw new ToolRejectedError(
+        "github pull request has no base/head SHA",
+      );
+    }
+    if (secondShas.headSha !== headSha) {
+      observedHeadSha = headSha;
+      headSha = secondShas.headSha;
+      baseSha = secondShas.baseSha;
+      retryCount = 1;
+      files = await this.#requestJson(
+        filesUrl,
+        "pull_files",
+        token,
+        deadline,
+      );
+      const third = await this.#requestJson(
+        pullUrl,
+        "pull_files",
+        token,
+        deadline,
+      );
+      const thirdShas = pullShas(third.body);
+      if (thirdShas === undefined) {
+        throw new ToolRejectedError(
+          "github pull request has no base/head SHA",
+        );
+      }
+      if (thirdShas.headSha !== headSha) {
+        stale = true;
+        observedHeadSha = headSha;
+        headSha = thirdShas.headSha;
+        baseSha = thirdShas.baseSha;
+      } else {
+        baseSha = thirdShas.baseSha;
+      }
+    }
+
+    const items = Array.isArray(files.body) ? files.body : [];
+    return {
+      operation: "pull_files",
+      repo,
+      number,
+      baseSha,
+      headSha,
+      ...(observedHeadSha === undefined ? {} : { observedHeadSha }),
+      retryCount,
+      stale,
+      coverage: stale ? "unknown" : "complete",
+      source: `https://github.com/${repo}/pull/${number}/files`,
+      items: items.slice(0, limit).map((item) => mapPullFile(asObject(item))),
+      truncated: files.hasNext || items.length > limit,
+    };
+  }
+
+  async #readChecks(
+    repo: string,
+    sha: string,
+    limit: number,
+    token: string,
+    deadline: number,
+  ): Promise<Record<string, unknown>> {
+    const runsUrl = this.#url(
+      `/repos/${repo}/commits/${sha}/check-runs`,
+      new URLSearchParams({ per_page: String(limit) }),
+    );
+    const runs = await this.#requestJson(runsUrl, "checks", token, deadline);
+    const evidence = mapEvidence(
+      "checks",
+      repo,
+      runs.body,
+      limit,
+      runsUrl,
+      runs.hasNext,
+      { sha },
+    );
+
+    let combinedStatus: Record<string, unknown> | undefined;
+    let commitStatuses: "included" | "unavailable" = "included";
+    try {
+      const statusUrl = this.#url(
+        `/repos/${repo}/commits/${sha}/status`,
+        new URLSearchParams(),
+      );
+      const status = await this.#requestJson(
+        statusUrl,
+        "checks",
+        token,
+        deadline,
+      );
+      const record = asObject(status.body);
+      const statuses = Array.isArray(record.statuses) ? record.statuses : [];
+      combinedStatus = {
+        state: stringValue(record.state),
+        totalCount: numberValue(record.total_count),
+        items: statuses.slice(0, limit).map((item) => {
+          const entry = asObject(item);
+          return {
+            context: stringValue(entry.context),
+            state: stringValue(entry.state),
+            targetUrl: stringValue(entry.target_url),
+          };
+        }),
+        truncated: status.hasNext || statuses.length > limit,
+      };
+    } catch {
+      commitStatuses = "unavailable";
+    }
+
+    return {
+      ...evidence,
+      commitSha: sha,
+      coverage: {
+        checkRuns: runs.hasNext ? "truncated" : "complete",
+        commitStatuses,
+      },
+      ...(combinedStatus === undefined ? {} : { combinedStatus }),
+    };
   }
 
   #url(path: string, params: URLSearchParams): URL {
@@ -415,7 +776,11 @@ export class GitHubReadTool implements ActionTool {
     return url;
   }
 
-  async #fetch(url: URL, token: string): Promise<Response> {
+  async #fetch(
+    url: URL,
+    token: string,
+    timeoutMs: number = this.#config.timeoutMs,
+  ): Promise<Response> {
     const fetcher = this.#config.fetch ?? fetch;
     return fetcher(url, {
       method: "GET",
@@ -426,7 +791,7 @@ export class GitHubReadTool implements ActionTool {
         "user-agent": "personal-agent/0.1",
         "x-github-api-version": "2022-11-28",
       },
-      signal: AbortSignal.timeout(this.#config.timeoutMs),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   }
 }
@@ -457,6 +822,7 @@ function mapEvidence(
   limit: number,
   requestUrl: URL,
   hasNextPage: boolean,
+  request?: { sha?: string; path?: string; ref?: string },
 ): Record<string, unknown> {
   if (operation === "repo") {
     const item = asObject(body);
@@ -465,6 +831,7 @@ function mapEvidence(
       repo,
       source: `https://github.com/${repo}`,
       item: {
+        ...(numberValue(item.id) === undefined ? {} : { id: numberValue(item.id) }),
         fullName: stringValue(item.full_name),
         defaultBranch: stringValue(item.default_branch),
         pushedAt: stringValue(item.pushed_at),
@@ -489,6 +856,7 @@ function mapEvidence(
       operation,
       repo,
       ref: stringValue(record.ref),
+      requestedRef: request?.ref,
       sha,
       type: stringValue(object.type),
       source:
@@ -503,11 +871,17 @@ function mapEvidence(
   if (operation === "tree") {
     const record = asObject(body);
     const rawItems = Array.isArray(record.tree) ? record.tree : [];
+    const commitSha = request?.sha;
     return {
       operation,
       repo,
       sha: stringValue(record.sha)?.slice(0, 40),
-      source: `https://github.com/${repo}/tree/${stringValue(record.sha) ?? ""}`,
+      commitSha,
+      requestedSha: commitSha,
+      source:
+        commitSha === undefined
+          ? `https://github.com/${repo}`
+          : `https://github.com/${repo}/tree/${commitSha}`,
       request: requestUrl.pathname,
       items: rawItems.slice(0, limit).map((item) => {
         const entry = asObject(item);
@@ -523,23 +897,39 @@ function mapEvidence(
     };
   }
   if (operation === "file") {
+    const commitSha = request?.sha;
+    const path = request?.path;
     if (Array.isArray(body)) {
       return {
         operation,
         repo,
-        source: `https://github.com/${repo}`,
+        commitSha,
+        requestedSha: commitSha,
+        path,
+        source:
+          commitSha === undefined || path === undefined
+            ? `https://github.com/${repo}`
+            : `https://github.com/${repo}/tree/${commitSha}/${encodePath(path)}`,
         items: body.slice(0, limit).map((item) => mapContentItem(asObject(item))),
         truncated: body.length > limit || hasNextPage,
       };
     }
     const record = asObject(body);
+    const item = mapContentItem(record);
     return {
       operation,
       repo,
+      commitSha,
+      requestedSha: commitSha,
+      path,
       source:
         stringValue(record.html_url) ??
         `https://github.com/${repo}`,
-      item: mapContentItem(record),
+      permanentUrl:
+        commitSha === undefined || path === undefined
+          ? undefined
+          : `https://github.com/${repo}/blob/${commitSha}/${encodePath(path)}`,
+      item,
     };
   }
   if (operation === "issue") {
@@ -567,7 +957,9 @@ function mapEvidence(
     return {
       operation,
       repo,
-      source: `https://github.com/${repo}/commit/${pathPart(requestUrl, 5)}/checks`,
+      commitSha: request?.sha,
+      requestedSha: request?.sha,
+      source: `https://github.com/${repo}/commit/${request?.sha ?? pathPart(requestUrl, 5)}/checks`,
       items: runs.slice(0, limit).map((item) => mapCheckRun(asObject(item))),
       truncated: hasNextPage || runs.length > limit,
       totalCount: numberValue(record.total_count),
@@ -620,10 +1012,29 @@ function mapPull(record: Record<string, unknown>): Record<string, unknown> {
     mergeableState: stringValue(record.mergeable_state),
     base: stringValue(asObject(record.base).ref),
     head: stringValue(asObject(record.head).ref),
+    baseSha: stringValue(asObject(record.base).sha),
+    headSha: stringValue(asObject(record.head).sha),
     author: stringValue(asObject(record.user).login),
     updatedAt: stringValue(record.updated_at),
     url: stringValue(record.html_url),
   };
+}
+
+function pullShas(
+  body: unknown,
+): { headSha: string; baseSha: string } | undefined {
+  const record = asObject(body);
+  const headSha = stringValue(asObject(record.head).sha);
+  const baseSha = stringValue(asObject(record.base).sha);
+  if (
+    headSha === undefined ||
+    baseSha === undefined ||
+    !SHA_PATTERN.test(headSha) ||
+    !SHA_PATTERN.test(baseSha)
+  ) {
+    return undefined;
+  }
+  return { headSha: headSha.toLowerCase(), baseSha: baseSha.toLowerCase() };
 }
 
 function mapContentItem(record: Record<string, unknown>): Record<string, unknown> {
