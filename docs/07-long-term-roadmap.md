@@ -1,5 +1,7 @@
 # 07 · Personal Agent 长期产品与工程路线图
 
+> **2026-11-21 当前执行基线**：[27 · 下一阶段 L2 交付计划](27-next-stage-delivery.md)（#65/#73），main `d2e6896`。Extension V1 首批代码合并（#74–#79），427/427 CI test 与 macOS/Windows/install-smoke 已通过；GitHub REST/MCP 真实只读与飞书单独出站已留证，但 owner 飞书端到端、真实 OAuth 负例和 L2 管理闭环仍未完成。近期先 #80/#68/#60/#62/#61，不提前扩建市场或多 Coding Runtime。本篇 2026-11-14/19/20 的“当前唯一主线”属于历史决策，当前具体拆分以 27 为准；v0.2–v1.0 正式验收标准不降低。
+
 > **2026-11-20 架构升级**：[25 · Extension Platform](25-extension-platform.md) / [#73](https://github.com/yuanbaoerer/personal-agent/issues/73) 为一级必选长期模块。One Core + WorkProfile × ExecutionStrategy × ModelPolicy + ExtensionPolicy（扩展选择与约束，不另造权限）。V1 内置插件、凭据/MCP/Skills；V2 SDK 与第三方隔离；V3 可信 Registry、分发和社区。此前暂缓通用插件市场指近期范围，不再是永久非目标。#65 GitHub 首插件、Coding Runtime 第二类；保留 #41 及原正式发布门槛。
 
 > **2026-11-20 垂直产品交付**：在既有 Reliable Core / #41 门槛之上，采用 [24 · GitHub Project Management MVP 与 Development Orchestrator](24-github-project-management.md)（[#65](https://github.com/yuanbaoerer/personal-agent/issues/65)）定义首个实际业务场景：GH-00/01 真实验收及安全前置 → GH-02 项目与证据读取 → GH-03/04 审批式 Issue 管理与项目评估 → GH-05/06 单 Coding adapter、Draft PR、独立 Review 与主动只读报告。不是平行 Core，不改变正式版本门槛，保留 WorkProfile × ExecutionStrategy × ModelPolicy 长期架构。
