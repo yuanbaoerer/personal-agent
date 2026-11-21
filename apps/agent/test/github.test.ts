@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { GitHubReadTool } from "../src/actions/github.ts";
+import { GitHubReadTool, type GitHubProjectBinding } from "../src/actions/github.ts";
 import { ToolRejectedError } from "../src/actions/tools.ts";
 import { createStore } from "./helpers.ts";
 import { createServices } from "./services.ts";
@@ -12,6 +12,17 @@ function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
     headers: { "content-type": "application/json", ...(init.headers ?? {}) },
     ...init,
   });
+}
+
+const BINDING: GitHubProjectBinding = {
+  projectKey: "personal-agent",
+  repositoryId: 101,
+  repositoryFullName: "owner/repo",
+  status: "active",
+};
+
+function resolveProject(key: string): GitHubProjectBinding | undefined {
+  return key === BINDING.projectKey ? BINDING : undefined;
 }
 
 function fetchReturning(
@@ -265,6 +276,7 @@ describe("read-only GitHub connector", () => {
     const tool = new GitHubReadTool({
       token: "secret-token",
       allowedRepos: ["owner/repo"],
+      resolveProject,
       fetch: (async (input: string | URL | Request) => {
         const url = new URL(String(input));
         calls.push(url.toString());
@@ -338,12 +350,38 @@ describe("read-only GitHub connector", () => {
       }) as typeof fetch,
     });
 
+    const projectArgs = {
+      projectKey: BINDING.projectKey,
+      repo: BINDING.repositoryFullName,
+    };
+    const canonical = tool.canonicalize({
+      operation: "file",
+      projectKey: BINDING.projectKey,
+      sha,
+      path: "README.md",
+    });
+    assert.equal(canonical.repo, BINDING.repositoryFullName);
+    assert.equal(canonical.projectKey, BINDING.projectKey);
+    assert.equal(canonical.repositoryId, BINDING.repositoryId);
+    const caseMatched = tool.canonicalize(
+      {
+        operation: "file",
+        projectKey: BINDING.projectKey,
+        sha,
+        path: "README.md",
+      },
+      { ownerId: "owner-1", project: "Personal-Agent" },
+    );
+    assert.equal(caseMatched.repo, BINDING.repositoryFullName);
+
     const file = await tool.execute({
       operation: "file",
-      repo: "owner/repo",
+      ...projectArgs,
       sha,
       path: "docs/24.md",
     });
+    assert.equal(file.evidence.projectKey, BINDING.projectKey);
+    assert.equal(file.evidence.repositoryId, BINDING.repositoryId);
     assert.match(calls[0] ?? "", /\/contents\/docs\/24\.md\?ref=a{40}$/);
     assert.equal((file.evidence.item as Record<string, unknown>).content, "# Plan\n");
     assert.equal(
@@ -353,7 +391,7 @@ describe("read-only GitHub connector", () => {
 
     const tree = await tool.execute({
       operation: "tree",
-      repo: "owner/repo",
+      ...projectArgs,
       sha,
       recursive: true,
       limit: 1,
@@ -364,7 +402,7 @@ describe("read-only GitHub connector", () => {
 
     const ref = await tool.execute({
       operation: "ref",
-      repo: "owner/repo",
+      ...projectArgs,
       ref: "heads/main",
     });
     assert.equal(ref.evidence.sha, sha);
@@ -372,14 +410,14 @@ describe("read-only GitHub connector", () => {
 
     const issue = await tool.execute({
       operation: "issue",
-      repo: "owner/repo",
+      ...projectArgs,
       number: 12,
     });
     assert.equal((issue.evidence.item as Record<string, unknown>).title, "Typed reads");
 
     const files = await tool.execute({
       operation: "pull_files",
-      repo: "owner/repo",
+      ...projectArgs,
       number: 12,
       limit: 1,
     });
@@ -391,7 +429,7 @@ describe("read-only GitHub connector", () => {
 
     const checks = await tool.execute({
       operation: "checks",
-      repo: "owner/repo",
+      ...projectArgs,
       sha,
       limit: 1,
     });
@@ -407,6 +445,53 @@ describe("read-only GitHub connector", () => {
     const tool = new GitHubReadTool({
       token: "secret-token",
       allowedRepos: ["owner/repo"],
+      resolveProject,
+      fetch: (async () => {
+        called += 1;
+        return jsonResponse({});
+      }) as typeof fetch,
+    });
+    const sha = "a".repeat(40);
+    const projectKey = BINDING.projectKey;
+    await assert.rejects(
+      () => tool.execute({ operation: "file", projectKey, repo: "owner/repo", sha: "abc", path: "README.md" }),
+      /fixed 40-character/,
+    );
+    await assert.rejects(
+      () => tool.execute({ operation: "file", projectKey, repo: "owner/repo", sha, path: "../secret" }),
+      /safe repository-relative/,
+    );
+    await assert.rejects(
+      () => tool.execute({ operation: "file", projectKey, repo: "owner/repo", sha, path: "/etc/passwd" }),
+      /safe repository-relative/,
+    );
+    await assert.rejects(
+      () => tool.execute({ operation: "tree", projectKey, repo: "owner/repo", sha: "not-a-sha" }),
+      /fixed 40-character/,
+    );
+    await assert.rejects(
+      () => tool.execute({ operation: "ref", projectKey, repo: "owner/repo", ref: "-main" }),
+      /safe branch/,
+    );
+    await assert.rejects(
+      () => tool.execute({ operation: "ref", projectKey, repo: "owner/repo", ref: "heads/../main" }),
+      /safe branch/,
+    );
+    await assert.rejects(
+      () => tool.execute({ operation: "checks", projectKey, repo: "owner/repo", sha: "b".repeat(39) }),
+      /fixed 40-character/,
+    );
+    assert.equal(called, 0);
+  });
+
+  it("requires an active project binding for typed reads", async () => {
+    let called = 0;
+    const revoked: GitHubProjectBinding = { ...BINDING, status: "revoked" };
+    const tool = new GitHubReadTool({
+      token: "secret-token",
+      allowedRepos: ["owner/repo"],
+      resolveProject: (key) =>
+        key === "revoked-project" ? revoked : resolveProject(key),
       fetch: (async () => {
         called += 1;
         return jsonResponse({});
@@ -414,32 +499,116 @@ describe("read-only GitHub connector", () => {
     });
     const sha = "a".repeat(40);
     await assert.rejects(
-      () => tool.execute({ operation: "file", repo: "owner/repo", sha: "abc", path: "README.md" }),
-      /fixed 40-character/,
+      () =>
+        tool.execute({
+          operation: "file",
+          projectKey: "missing-project",
+          sha,
+          path: "README.md",
+        }),
+      /active repository binding/,
     );
     await assert.rejects(
-      () => tool.execute({ operation: "file", repo: "owner/repo", sha, path: "../secret" }),
-      /safe repository-relative/,
+      () =>
+        tool.execute({
+          operation: "file",
+          projectKey: "revoked-project",
+          sha,
+          path: "README.md",
+        }),
+      /active repository binding/,
     );
     await assert.rejects(
-      () => tool.execute({ operation: "file", repo: "owner/repo", sha, path: "/etc/passwd" }),
-      /safe repository-relative/,
+      () =>
+        tool.execute({
+          operation: "file",
+          projectKey: BINDING.projectKey,
+          repo: "other/repo",
+          sha,
+          path: "README.md",
+        }),
+      /does not match the active project binding/,
     );
     await assert.rejects(
-      () => tool.execute({ operation: "tree", repo: "owner/repo", sha: "not-a-sha" }),
-      /fixed 40-character/,
+      () =>
+        tool.execute(
+          {
+            operation: "file",
+            projectKey: BINDING.projectKey,
+            sha,
+            path: "README.md",
+          },
+          { ownerId: "owner-1", project: "other-project" },
+        ),
+      /task mandate project/,
     );
     await assert.rejects(
-      () => tool.execute({ operation: "ref", repo: "owner/repo", ref: "-main" }),
-      /safe branch/,
+      () =>
+        tool.execute({
+          operation: "file",
+          repo: "owner/repo",
+          sha,
+          path: "README.md",
+        }),
+      /requires an active projectKey/,
     );
+    const noResolver = new GitHubReadTool({
+      token: "secret-token",
+      allowedRepos: ["owner/repo"],
+      fetch: (async () => {
+        called += 1;
+        return jsonResponse({});
+      }) as typeof fetch,
+    });
     await assert.rejects(
-      () => tool.execute({ operation: "ref", repo: "owner/repo", ref: "heads/../main" }),
-      /safe branch/,
+      () =>
+        noResolver.execute({
+          operation: "file",
+          projectKey: BINDING.projectKey,
+          sha,
+          path: "README.md",
+        }),
+      /bindings are not configured/,
     );
+    const throwingResolver = new GitHubReadTool({
+      token: "secret-token",
+      allowedRepos: ["owner/repo"],
+      resolveProject: () => {
+        throw new Error("db unavailable");
+      },
+      fetch: (async () => {
+        called += 1;
+        return jsonResponse({});
+      }) as typeof fetch,
+    });
     await assert.rejects(
-      () => tool.execute({ operation: "checks", repo: "owner/repo", sha: "b".repeat(39) }),
-      /fixed 40-character/,
+      () =>
+        throwingResolver.execute({
+          operation: "file",
+          projectKey: BINDING.projectKey,
+          sha,
+          path: "README.md",
+        }),
+      /binding lookup failed/,
+    );
+    const outsideAllowlist = new GitHubReadTool({
+      token: "secret-token",
+      allowedRepos: ["other/repo"],
+      resolveProject: () => BINDING,
+      fetch: (async () => {
+        called += 1;
+        return jsonResponse({});
+      }) as typeof fetch,
+    });
+    await assert.rejects(
+      () =>
+        outsideAllowlist.execute({
+          operation: "file",
+          projectKey: BINDING.projectKey,
+          sha,
+          path: "README.md",
+        }),
+      /allow list/,
     );
     assert.equal(called, 0);
   });
@@ -448,6 +617,7 @@ describe("read-only GitHub connector", () => {
     const tool = new GitHubReadTool({
       token: "secret-token",
       allowedRepos: ["owner/repo"],
+      resolveProject,
       fetch: (async () =>
         jsonResponse([
           { type: "file", path: "a", sha: "a".repeat(40), size: 1 },
@@ -457,6 +627,7 @@ describe("read-only GitHub connector", () => {
     });
     const result = await tool.execute({
       operation: "file",
+      projectKey: BINDING.projectKey,
       repo: "owner/repo",
       sha: "d".repeat(40),
       path: "docs",

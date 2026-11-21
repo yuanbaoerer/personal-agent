@@ -26,6 +26,7 @@ import type {
 import { noopWake } from "./runtime/types.ts";
 import { createHttpServer, type AppLogger } from "./server.ts";
 import { openStore } from "./storage/node.ts";
+import { ProjectRepository } from "./storage/projects.ts";
 
 const MAINTENANCE_INTERVAL_MS = 1_000;
 
@@ -180,9 +181,17 @@ async function main(): Promise<void> {
           config: config.github.oauth,
         })
       : undefined;
+  const projectBindings =
+    owner === undefined ? undefined : new ProjectRepository(store.db);
+  const resolveProject =
+    owner === undefined || projectBindings === undefined
+      ? undefined
+      : (projectKey: string) =>
+          projectBindings.findActiveByKey(owner.id, projectKey);
   const github = {
     token: config.github.token,
     allowedRepos: config.github.allowedRepos,
+    resolveProject,
     tokenProvider:
       githubOAuth === undefined ? undefined : () => githubOAuth.accessToken(),
   };
