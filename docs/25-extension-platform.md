@@ -1,5 +1,7 @@
 # 25 · Extension Platform：Plugin / Skills / MCP / Credential Architecture
 
+> **2026-11-21 最近已核查基线**：[27 · 下一阶段实施方案](27-next-stage-delivery.md)，main `d2e6896`。内置 V1 的 PluginCatalog/SkillLoader/只读 Remote MCP/任务级 ExtensionPolicy 已合并，#79 增加已校验 IP 连接固定；main run `44861731421` 四个跨平台相关 job 通过，test 427/427。真实 REST/MCP 只读对照和飞书**单独出站**有证据；完整 Feishu owner 入站、浏览器 OAuth 负例、真模型 Skill 遵循、GH-02/03/04 仍未验收。#80 MCP 远端工具“声明只读 ≠ 证明无副作用”的安全信任边界需先修复再扩大可调用 remote tools。V2/V3 长期必选但不阻断 GH L2；下文历史“pending”以当时日期解释。
+
 > 2026-11-21 · [#73 总跟踪](https://github.com/yuanbaoerer/personal-agent/issues/73) · 基线 c42243b · Extension Platform 为一级长期架构模块，完整开放插件生态为必选产品路线。保留 #41 Reliable Core 和 #65 GitHub 垂直场景以及原发布门槛。**V1 首批代码已合并 main**：PR #74（EXT-01/02）、#75（EXT-04 loader）、#76（EXT-03 只读 MCP）、#78（任务级 ExtensionPolicy）；真实证据 #77。
 >
 > **实施状态（2026-11-21，已合并 main）**
