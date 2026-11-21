@@ -94,6 +94,7 @@ export function createServices(options: {
   maxConcurrentTools?: number;
   maxToolCallsPerTask?: number;
   maxScheduleRunsPerDay?: number;
+  unattendedBudgetKnown?: boolean;
   budget?: BudgetService;
   magpie?: MagpieConfig;
   wake?: WakeScheduler;
@@ -198,6 +199,7 @@ export function createServices(options: {
     now,
     maxRunsPerDay: options.maxScheduleRunsPerDay,
     capabilities: catalog,
+    unattendedBudgetKnown: options.unattendedBudgetKnown ?? true,
   });
   const actionService = new ActionService({
     store,

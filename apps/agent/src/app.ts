@@ -196,6 +196,7 @@ export function createApp(deps: AppDeps): AppServices {
     now: deps.now,
     maxRunsPerDay: maxScheduleRunsPerDay,
     capabilities: catalog,
+    unattendedBudgetKnown: deps.budgetLimits?.maxCallsPerDay !== undefined,
   });
   const actionService = new ActionService({
     store,

@@ -34,6 +34,11 @@ export interface SchedulePolicyDeps {
   maxRunsPerDay?: number;
   /** Live catalog; a schedule must not fire a disabled capability. */
   capabilities?: CapabilityView;
+  /**
+   * False when the host has no daily model budget. Unattended runs must fail
+   * closed instead of spending an unknown amount.
+   */
+  unattendedBudgetKnown?: boolean;
 }
 
 export interface ScheduleDraftInput {
@@ -211,6 +216,7 @@ export class SchedulePolicyService {
   readonly #defaultExpiryMs: number;
   readonly #maxRunsPerDay: number;
   readonly #capabilities?: CapabilityView;
+  readonly #unattendedBudgetKnown: boolean;
 
   constructor(deps: SchedulePolicyDeps) {
     this.#store = deps.store;
@@ -223,6 +229,7 @@ export class SchedulePolicyService {
     this.#defaultExpiryMs = deps.defaultExpiryMs ?? 30 * 24 * 60 * 60_000;
     this.#maxRunsPerDay = Math.max(1, deps.maxRunsPerDay ?? 20);
     this.#capabilities = deps.capabilities;
+    this.#unattendedBudgetKnown = deps.unattendedBudgetKnown ?? true;
   }
 
   createDraft(
@@ -444,6 +451,23 @@ export class SchedulePolicyService {
     let used = this.#policies.countDispatchedSince(dayStart);
     let created = 0;
     for (const due of this.#policies.listDue(now.toISOString())) {
+      if (!this.#unattendedBudgetKnown) {
+        const scheduledAt = due.nextRunAt;
+        if (scheduledAt !== undefined) {
+          this.#policies.recordRun(
+            due.id,
+            scheduledAt,
+            "skipped",
+            undefined,
+            now.toISOString(),
+          );
+          this.#advanceAfterRun(due, scheduledAt, now, undefined, now.toISOString());
+        }
+        this.#audit("schedule_policy.skipped", due, now, {
+          reason: "budget_unknown",
+        });
+        continue;
+      }
       try {
         if (used >= this.#maxRunsPerDay) {
           const scheduledAt = due.nextRunAt;
