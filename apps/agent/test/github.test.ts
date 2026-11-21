@@ -356,10 +356,11 @@ describe("read-only GitHub connector", () => {
       repo: "owner/repo",
       sha,
       recursive: true,
+      limit: 1,
     });
     assert.match(calls[1] ?? "", /\/git\/trees\/a{40}\?recursive=1$/);
-    assert.equal((tree.evidence.items as unknown[]).length, 2);
-    assert.equal(tree.evidence.truncated, false);
+    assert.equal((tree.evidence.items as unknown[]).length, 1);
+    assert.equal(tree.evidence.truncated, true);
 
     const ref = await tool.execute({
       operation: "ref",
@@ -421,6 +422,10 @@ describe("read-only GitHub connector", () => {
       /safe repository-relative/,
     );
     await assert.rejects(
+      () => tool.execute({ operation: "file", repo: "owner/repo", sha, path: "/etc/passwd" }),
+      /safe repository-relative/,
+    );
+    await assert.rejects(
       () => tool.execute({ operation: "tree", repo: "owner/repo", sha: "not-a-sha" }),
       /fixed 40-character/,
     );
@@ -429,10 +434,36 @@ describe("read-only GitHub connector", () => {
       /safe branch/,
     );
     await assert.rejects(
+      () => tool.execute({ operation: "ref", repo: "owner/repo", ref: "heads/../main" }),
+      /safe branch/,
+    );
+    await assert.rejects(
       () => tool.execute({ operation: "checks", repo: "owner/repo", sha: "b".repeat(39) }),
       /fixed 40-character/,
     );
     assert.equal(called, 0);
+  });
+
+  it("bounds directory file listings", async () => {
+    const tool = new GitHubReadTool({
+      token: "secret-token",
+      allowedRepos: ["owner/repo"],
+      fetch: (async () =>
+        jsonResponse([
+          { type: "file", path: "a", sha: "a".repeat(40), size: 1 },
+          { type: "file", path: "b", sha: "b".repeat(40), size: 1 },
+          { type: "file", path: "c", sha: "c".repeat(40), size: 1 },
+        ])) as typeof fetch,
+    });
+    const result = await tool.execute({
+      operation: "file",
+      repo: "owner/repo",
+      sha: "d".repeat(40),
+      path: "docs",
+      limit: 1,
+    });
+    assert.equal((result.evidence.items as unknown[]).length, 1);
+    assert.equal(result.evidence.truncated, true);
   });
 
   it("is absent from the registry without a token or allow list", () => {

@@ -185,6 +185,8 @@ function collectEvidenceUrls(
     key === "url" ||
     key === "htmlUrl" ||
     key === "html_url" ||
+    key === "detailsUrl" ||
+    key === "downloadUrl" ||
     key === "externalRef"
   ) {
     collectUrlField(value, urls);

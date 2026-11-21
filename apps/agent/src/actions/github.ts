@@ -29,8 +29,8 @@ const MAX_ITEMS = 20;
 const DEFAULT_ITEMS = 5;
 const REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
-const REF_PATTERN = /^[A-Za-z0-9._/-]{1,255}$/;
-const PATH_PATTERN = /^[A-Za-z0-9._/ -]{1,500}$/;
+const REF_PATTERN = /^[\p{L}\p{N}._/@+-]{1,255}$/u;
+const PATH_PATTERN = /^[\p{L}\p{N}._/ @+-]{1,500}$/u;
 
 /**
  * Read-only GitHub connector. Every operation is a GET; the token is only
@@ -135,7 +135,7 @@ export class GitHubReadTool implements ActionTool {
         if (args.recursive !== undefined && typeof args.recursive !== "boolean") {
           throw new ToolRejectedError("recursive must be a boolean");
         }
-        return { operation, repo, sha, recursive: args.recursive === true };
+        return { operation, repo, sha, recursive: args.recursive === true, limit };
       }
       return { operation, repo, sha, limit };
     }
@@ -154,7 +154,7 @@ export class GitHubReadTool implements ActionTool {
       ) {
         throw new ToolRejectedError("path must be a safe repository-relative path");
       }
-      return { operation, repo, sha, path };
+      return { operation, repo, sha, path, limit };
     }
     return { operation, repo, limit };
   }
@@ -384,7 +384,9 @@ function mapEvidence(
       source:
         sha === undefined
           ? `https://github.com/${repo}`
-          : `https://github.com/${repo}/commit/${sha}`,
+          : stringValue(object.type) === "commit"
+            ? `https://github.com/${repo}/commit/${sha}`
+            : `https://github.com/${repo}`,
       url: stringValue(object.url),
     };
   }
@@ -544,12 +546,14 @@ function mapIssue(record: Record<string, unknown>): Record<string, unknown> {
         .map((label) => stringValue(asObject(label).name))
         .filter((label): label is string => label !== undefined)
     : [];
+  const body = stringValue(record.body);
   return {
     number: numberValue(record.number),
     title: firstLine(stringValue(record.title)),
     state: stringValue(record.state),
     author: stringValue(asObject(record.user).login),
-    body: truncateText(stringValue(record.body), 4_000),
+    body: truncateText(body, 4_000),
+    bodyTruncated: body !== undefined && body.length > 4_000,
     labels,
     isPullRequest: record.pull_request !== undefined,
     createdAt: stringValue(record.created_at),
@@ -577,6 +581,7 @@ function mapPullFile(record: Record<string, unknown>): Record<string, unknown> {
 
 function mapCheckRun(record: Record<string, unknown>): Record<string, unknown> {
   const output = asObject(record.output);
+  const summary = stringValue(output.summary);
   return {
     id: numberValue(record.id),
     name: stringValue(record.name),
@@ -587,14 +592,15 @@ function mapCheckRun(record: Record<string, unknown>): Record<string, unknown> {
     startedAt: stringValue(record.started_at),
     completedAt: stringValue(record.completed_at),
     outputTitle: firstLine(stringValue(output.title)),
-    outputSummary: truncateText(stringValue(output.summary), 2_000),
+    outputSummary: truncateText(summary, 2_000),
+    outputSummaryTruncated: summary !== undefined && summary.length > 2_000,
   };
 }
 
 function decodeUtf8(
   content: string,
   size: number | undefined,
-): { content?: string; contentTruncated?: boolean } {
+): { content?: string; contentTruncated?: boolean; contentEncodingInvalid?: boolean } {
   if (size !== undefined && size > 32 * 1024) {
     return { contentTruncated: true };
   }
@@ -607,7 +613,7 @@ function decodeUtf8(
       ),
     };
   } catch {
-    return { contentTruncated: true };
+    return { contentEncodingInvalid: true };
   }
 }
 
