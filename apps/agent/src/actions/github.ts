@@ -1,11 +1,20 @@
 import { ToolRejectedError, type ActionTool, type ToolExecution, type ToolVerification } from "./tools.ts";
 
+export interface GitHubProjectBinding {
+  projectKey: string;
+  repositoryId: number;
+  repositoryFullName: string;
+  status: "active" | "revoked";
+}
+
 export interface GitHubReadConfig {
   token?: string;
   /** Resolve a token at call time (OAuth credential store); overrides token. */
   tokenProvider?: () => string | undefined | Promise<string | undefined>;
   /** Exact owner/repo allow list; empty disables the connector. */
   allowedRepos: string[];
+  /** Resolve an active owner-scoped project binding for typed reads. */
+  resolveProject?: (projectKey: string) => GitHubProjectBinding | undefined;
   timeoutMs?: number;
   maxBytes?: number;
   fetch?: typeof fetch;
@@ -31,6 +40,15 @@ const REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
 const REF_PATTERN = /^[\p{L}\p{N}._/@+-]{1,255}$/u;
 const PATH_PATTERN = /^[\p{L}\p{N}._/ @+-]{1,500}$/u;
+const PROJECT_KEY_PATTERN = /^[a-z][a-z0-9._-]{0,63}$/;
+const TYPED_OPERATIONS = new Set<GitHubOperation>([
+  "ref",
+  "tree",
+  "file",
+  "issue",
+  "pull_files",
+  "checks",
+]);
 
 /**
  * Read-only GitHub connector. Every operation is a GET; the token is only
@@ -75,17 +93,75 @@ export class GitHubReadTool implements ActionTool {
         "operation must be repo, commits, issues, pulls, pull, ref, tree, file, issue, pull_files, or checks",
       );
     }
-    const repo = args.repo;
-    if (
-      typeof repo !== "string" ||
-      !REPO_PATTERN.test(repo) ||
-      repo.split("/").some((part) => part === "." || part === "..")
-    ) {
-      throw new ToolRejectedError("repo must be owner/name");
+    const typed = TYPED_OPERATIONS.has(operation);
+    let repo: string;
+    let projectKey: string | undefined;
+    let repositoryId: number | undefined;
+    if (typed) {
+      const requestedProject = args.projectKey;
+      if (
+        typeof requestedProject !== "string" ||
+        !PROJECT_KEY_PATTERN.test(requestedProject)
+      ) {
+        throw new ToolRejectedError(
+          `${operation} requires an active projectKey`,
+        );
+      }
+      if (this.#config.resolveProject === undefined) {
+        throw new ToolRejectedError(
+          "GitHub project bindings are not configured for typed reads",
+        );
+      }
+      let binding: GitHubProjectBinding | undefined;
+      try {
+        binding = this.#config.resolveProject(requestedProject);
+      } catch {
+        throw new ToolRejectedError("GitHub project binding lookup failed");
+      }
+      if (
+        binding === undefined ||
+        binding.status !== "active" ||
+        binding.projectKey !== requestedProject ||
+        !Number.isSafeInteger(binding.repositoryId) ||
+        binding.repositoryId < 1 ||
+        !REPO_PATTERN.test(binding.repositoryFullName) ||
+        binding.repositoryFullName
+          .split("/")
+          .some((part) => part === "." || part === "..")
+      ) {
+        throw new ToolRejectedError(
+          `project ${requestedProject} is not an active repository binding`,
+        );
+      }
+      projectKey = requestedProject;
+      repositoryId = binding.repositoryId;
+      repo = binding.repositoryFullName;
+      if (args.repo !== undefined) {
+        if (
+          typeof args.repo !== "string" ||
+          args.repo.toLowerCase() !== repo.toLowerCase()
+        ) {
+          throw new ToolRejectedError(
+            "repo does not match the active project binding",
+          );
+        }
+      }
+    } else {
+      const requestedRepo = args.repo;
+      if (
+        typeof requestedRepo !== "string" ||
+        !REPO_PATTERN.test(requestedRepo) ||
+        requestedRepo.split("/").some((part) => part === "." || part === "..")
+      ) {
+        throw new ToolRejectedError("repo must be owner/name");
+      }
+      repo = requestedRepo;
     }
     if (!this.#allowed.has(repo.toLowerCase())) {
       throw new ToolRejectedError("repository is not in the allow list");
     }
+    const project =
+      projectKey === undefined ? {} : { projectKey, repositoryId };
 
     const limitRaw = args.limit;
     const limit =
@@ -109,7 +185,7 @@ export class GitHubReadTool implements ActionTool {
           `${operation} requires a positive integer number`,
         );
       }
-      return { operation, repo, number, limit };
+      return { operation, repo, ...project, number, limit };
     }
     if (operation === "ref") {
       const ref = args.ref;
@@ -124,7 +200,7 @@ export class GitHubReadTool implements ActionTool {
       ) {
         throw new ToolRejectedError("ref must be a safe branch, tag or ref");
       }
-      return { operation, repo, ref };
+      return { operation, repo, ...project, ref };
     }
     if (operation === "tree" || operation === "checks") {
       const sha = args.sha;
@@ -135,9 +211,16 @@ export class GitHubReadTool implements ActionTool {
         if (args.recursive !== undefined && typeof args.recursive !== "boolean") {
           throw new ToolRejectedError("recursive must be a boolean");
         }
-        return { operation, repo, sha, recursive: args.recursive === true, limit };
+        return {
+          operation,
+          repo,
+          ...project,
+          sha,
+          recursive: args.recursive === true,
+          limit,
+        };
       }
-      return { operation, repo, sha, limit };
+      return { operation, repo, ...project, sha, limit };
     }
     if (operation === "file") {
       const sha = args.sha;
@@ -154,9 +237,9 @@ export class GitHubReadTool implements ActionTool {
       ) {
         throw new ToolRejectedError("path must be a safe repository-relative path");
       }
-      return { operation, repo, sha, path, limit };
+      return { operation, repo, ...project, sha, path, limit };
     }
-    return { operation, repo, limit };
+    return { operation, repo, ...project, limit };
   }
 
   async execute(args: Record<string, unknown>): Promise<ToolExecution> {
@@ -285,8 +368,15 @@ export class GitHubReadTool implements ActionTool {
       url,
       (response.headers.get("link") ?? "").includes('rel="next"'),
     );
+    const projectEvidence =
+      typeof canonical.projectKey === "string"
+        ? {
+            projectKey: canonical.projectKey,
+            repositoryId: canonical.repositoryId,
+          }
+        : {};
     return {
-      evidence,
+      evidence: { ...evidence, ...projectEvidence },
       externalRef: `https://github.com/${repo}`,
     };
   }

@@ -54,7 +54,7 @@ K13 与 K14 必须包含至少一个可控竞态复现测试；应用的锁、�
 
 **确认与范围（PA-10 部分，E1）**：模型解读的 `save_memory`/`remind` 进入最长 10 分钟确认项（提醒以 dueAt 为上限；owner + source inbox 唯一），`/确认` 后应用；`/取消确认`、过期、跨 owner 均不写入；显式 `/remember`、`/remind` 保持即时；timer 注册失败会取消 schedule 并报错。记忆已增加 global/project 作用域，Worker 只注入全局 + 当前 `Mandate.project`（最多 20 条），Router 不注入；真实提示注入负例与语义检索仍 pending。
 
-**只读 GitHub（PA-07 部分，E1）**：`github.read` 仅 GET，repo 精确白名单、Bearer token、拒重定向、8s 超时、单次 ≤20 项/≤200KB；返回 repo/commits/open issues/open pulls/PR 状态与来源 URL；工具名与 `github` Mandate resource 双重校验；401/403/429（含 retry-after）/404/timeout 可区分。新增 24h 可撤销只读预授权：仅对命中 repo 的 `github.read` 自动批准，report 事务提交后执行；撤销/过期阻止新提案，并让未执行的已批准 Action 在 claim 时失效；重复 report 不重复批准，post-commit 自动批准丢失时重放会补做。2026-11-21 增加固定 SHA 的 ref/tree/file/issue/PR files/checks typed read（E1；ProjectBinding 强制与真实私有仓库复验 pending）。真实 token/仓库 G1 与预算仍 pending；周期计划已部分落地，见下方 PA-08。
+**只读 GitHub（PA-07 部分，E1）**：`github.read` 仅 GET，repo 精确白名单、Bearer token、拒重定向、8s 超时、单次 ≤20 项/≤200KB；返回 repo/commits/open issues/open pulls/PR 状态与来源 URL；工具名与 `github` Mandate resource 双重校验；401/403/429（含 retry-after）/404/timeout 可区分。新增 24h 可撤销只读预授权：仅对命中 repo 的 `github.read` 自动批准，report 事务提交后执行；撤销/过期阻止新提案，并让未执行的已批准 Action 在 claim 时失效；重复 report 不重复批准，post-commit 自动批准丢失时重放会补做。2026-11-21 增加固定 SHA 的 ref/tree/file/issue/PR files/checks typed read，并强制 active ProjectBinding 解析 repo（E1；credentialRef/token binding 与真实私有仓库复验 pending）。真实 token/仓库 G1 与预算仍 pending；周期计划已部分落地，见下方 PA-08。
 
 **备份/校验（PA-14 部分，E1）**：`npm run backup` 使用 `VACUUM INTO` 复制 agent/pi SQLite；manifest 记录 SHA-256/字节/schema_version；复制后 `integrity_check`，目录/文件 700/600；`--verify` 重新校验并拒绝路径型文件名；`--restore --target` 先 verify，只恢复到空目录，拒绝高于当前 build 的 schema，恢复后重跑完整性检查。恢复/升级自动化、加密与保留期仍 pending。
 
