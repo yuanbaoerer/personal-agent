@@ -140,6 +140,10 @@ export function routerPrompt(
     (task) =>
       `- id=${task.id} status=${task.status}${task.project === undefined ? "" : ` project=${task.project}`} goal=${task.goal.slice(0, 120)}`,
   );
+  const projectLines = (input.projectContext ?? []).slice(0, 20).map(
+    (project) =>
+      `- projectKey=${project.projectKey} repo=${project.repositoryFullName} repoId=${project.repositoryId} branch=${project.defaultBranch}`,
+  );
   const tools =
     capabilities === undefined
       ? Object.keys(ALLOWED_TOOLS).sort()
@@ -187,7 +191,7 @@ export function routerPrompt(
       ? [
           "- For read-only GitHub requests, set mandate.resources to include \"github\" and mandate.tools to [\"github.read\"]; do not promise write access.",
           "- For github.read tasks, completionCriteria must be JSON with repo set to the exact owner/name requested (for example {\"repo\":\"owner/name\",\"requiredEvidenceKinds\":[\"github\"]}); never omit repo.",
-          "- For 项目评估/审查/对照规划 requests, set mandate.project to the exact ProjectBinding projectKey when the owner names it, keep github.read, and state that only evidence-backed findings and drafts will be produced. Never claim tests or CI passed without a receipt.",
+          "- For 项目评估/审查/对照规划 requests, resolve the owner's project mention against the real bindings below. If exactly one projectKey or repository full name is named, create_task with mandate.project=<projectKey>, tools [\"github.read\"], and state that only evidence-backed findings and drafts will be produced. Never ask for owner/name when the binding already determines it. Do not guess a different repository. Never claim tests or CI passed without a receipt.",
         ]
       : [
           "- The GitHub plugin is not enabled in this generation; do not promise GitHub reads or create a GitHub task.",
@@ -196,6 +200,12 @@ export function routerPrompt(
     "- Only when a task needs current state for further work, put the needed state tools in mandate.tools and include \"state\" in mandate.resources. For those tasks set completionCriteria to JSON with {\"verifier\":\"state-read\",\"requiredEvidenceKinds\":[\"state_snapshot\"]}.",
     "- Never infer personal facts, preferences, or plans; only remember what the owner explicitly asks to remember.",
     "- If it is unclear whether the owner wants something remembered, a reminder set, a schedule drafted, or just a reply, reply and ask for confirmation.",
+    ...(projectLines.length === 0
+      ? []
+      : [
+          "Owner project bindings (real, owner-scoped; projectKey and repository full name are authoritative):",
+          ...projectLines,
+        ]),
     ...(taskLines.length === 0
       ? []
       : ["Recent owner tasks (real, owner-scoped; newest first):", ...taskLines]),

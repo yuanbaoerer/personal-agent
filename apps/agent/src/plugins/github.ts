@@ -44,6 +44,8 @@ const GITHUB_MANIFEST = parsePluginManifest({
         "projectKey, operation, revision (commit or observed PR head SHA), target " +
         "(path, filename or check name), field and value. " +
         "Claims are checked against the matching receipt; omit unverifiable free text. " +
+        "Typed args: ref {ref:heads/main}; file {sha,path}; tree {sha,recursive}; checks {sha}; " +
+        "pull_files {number}; issue {number}; limit is 1..20. " +
         "Typed ref/tree/file/issue/pull_files/checks require projectKey; the active owner ProjectBinding resolves the repository and must agree with any repo supplied.",
       description: "Read-only GitHub repository, issue, pull request and commit metadata.",
     },

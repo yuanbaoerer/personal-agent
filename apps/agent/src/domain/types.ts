@@ -411,6 +411,51 @@ export interface IssueDraft {
   beforeHash?: string;
 }
 
+export type IssueDraftStatus =
+  | "draft"
+  | "pending_approval"
+  | "approved"
+  | "rejected"
+  | "expired"
+  | "superseded"
+  | "executing"
+  | "failed";
+
+/**
+ * Persisted, verifier-approved proposal for one GitHub issue write. The
+ * snapshot binds payload, target, source task revision, repository identity
+ * and credential epoch. Approval must match payloadHash exactly.
+ */
+export interface IssueDraftSnapshot {
+  id: string;
+  ownerId: string;
+  projectKey: string;
+  repositoryId: number;
+  repositoryFullName: string;
+  sourceTaskId: string;
+  sourceTaskRevision: number;
+  sourceAssignmentId: string;
+  commitSha: string;
+  findingIds: string[];
+  action: "create" | "update" | "comment";
+  targetIssue?: number;
+  beforeHash?: string;
+  /** Bounded excerpt of the issue body before the proposed write. */
+  beforeSummary?: string;
+  title: string;
+  body: string;
+  payloadHash: string;
+  idempotencyKey: string;
+  credentialRef: string;
+  credentialVersion?: number;
+  status: IssueDraftStatus;
+  writeTaskId?: string;
+  writeActionId?: string;
+  createdAt: string;
+  expiresAt: string;
+  updatedAt: string;
+}
+
 export interface WorkerReport {
   status: ReportStatus;
   summary: string;
@@ -707,6 +752,15 @@ export interface RouterInput {
   inboxId: string;
   /** Real owner-scoped candidates; the model may reference but not alter them. */
   taskContext?: RouterTaskContext[];
+  /** Real owner-scoped project bindings; projectKey -> immutable repository. */
+  projectContext?: RouterProjectContext[];
+}
+
+export interface RouterProjectContext {
+  projectKey: string;
+  repositoryId: number;
+  repositoryFullName: string;
+  defaultBranch: string;
 }
 
 export type Clock = () => Date;

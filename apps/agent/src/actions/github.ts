@@ -235,7 +235,8 @@ export class GitHubReadTool implements ActionTool {
     }
 
     if (operation === "pull" || operation === "issue" || operation === "pull_files") {
-      const number = args.number;
+      // `pullNumber` is a natural model alias; canonicalize it away.
+      const number = args.number ?? args.pullNumber;
       if (
         typeof number !== "number" ||
         !Number.isInteger(number) ||
@@ -260,10 +261,11 @@ export class GitHubReadTool implements ActionTool {
       ) {
         throw new ToolRejectedError("ref must be a safe branch, tag or ref");
       }
-      return { operation, repo, ...project, ref };
+      return { operation, repo, ...project, ref: normalizeGitRef(ref) };
     }
     if (operation === "tree" || operation === "checks") {
-      const sha = args.sha;
+      // `revision` is the claim field name; accept it as the read SHA.
+      const sha = args.sha ?? args.revision;
       if (typeof sha !== "string" || !SHA_PATTERN.test(sha)) {
         throw new ToolRejectedError(`${operation} requires a fixed 40-character commit SHA`);
       }
@@ -283,11 +285,11 @@ export class GitHubReadTool implements ActionTool {
       return { operation, repo, ...project, sha, limit };
     }
     if (operation === "file") {
-      const sha = args.sha;
+      const sha = args.sha ?? args.revision;
       if (typeof sha !== "string" || !SHA_PATTERN.test(sha)) {
         throw new ToolRejectedError("file requires a fixed 40-character commit SHA");
       }
-      const path = args.path;
+      const path = args.path ?? args.target;
       if (
         typeof path !== "string" ||
         !PATH_PATTERN.test(path) ||
@@ -815,7 +817,9 @@ function describeFailure(response: Response, operation: GitHubOperation): string
       : `github permission denied for ${operation}`;
   }
   if (response.status === 404) {
-    return "github repository or resource not found";
+    return operation === "ref"
+      ? "github ref not found; use heads/<branch> or tags/<tag>"
+      : "github repository or resource not found";
   }
   return `github request failed with status ${response.status}`;
 }
@@ -1148,6 +1152,18 @@ function truncateText(value: string | undefined, max: number): string | undefine
     return undefined;
   }
   return value.length > max ? `${value.slice(0, max)}…` : value;
+}
+
+/**
+ * GET /git/ref expects `heads/main` or `tags/v1`. Owners commonly write
+ * `main` or `refs/heads/main`; normalize those deterministically instead of
+ * failing a read on a syntactic detail.
+ */
+function normalizeGitRef(ref: string): string {
+  const withoutPrefix = ref.startsWith("refs/") ? ref.slice("refs/".length) : ref;
+  return withoutPrefix.startsWith("heads/") || withoutPrefix.startsWith("tags/")
+    ? withoutPrefix
+    : `heads/${withoutPrefix}`;
 }
 
 function encodeRef(ref: string): string {

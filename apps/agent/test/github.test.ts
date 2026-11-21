@@ -720,6 +720,90 @@ describe("read-only GitHub connector", () => {
     assert.doesNotMatch(calls[2]?.url ?? "", /\/repos\/owner\/repo$/);
   });
 
+  it("normalizes owner-written refs and explains a missing ref", async () => {
+    const tool = new GitHubReadTool({
+      token: "secret-token",
+      allowedRepos: ["owner/repo"],
+      resolveProject,
+      fetch: (async () =>
+        new Response(JSON.stringify({ message: "Not Found" }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        })) as typeof fetch,
+    });
+    const canonical = tool.canonicalize({
+      operation: "ref",
+      projectKey: BINDING.projectKey,
+      repo: "owner/repo",
+      ref: "main",
+    });
+    assert.equal(canonical.ref, "heads/main");
+    assert.equal(
+      tool.canonicalize({
+        operation: "ref",
+        projectKey: BINDING.projectKey,
+        repo: "owner/repo",
+        ref: "refs/heads/main",
+      }).ref,
+      "heads/main",
+    );
+    assert.equal(
+      tool.canonicalize({
+        operation: "ref",
+        projectKey: BINDING.projectKey,
+        repo: "owner/repo",
+        ref: "tags/v1",
+      }).ref,
+      "tags/v1",
+    );
+    assert.deepEqual(
+      tool.canonicalize({
+        operation: "file",
+        projectKey: BINDING.projectKey,
+        repo: "owner/repo",
+        revision: "a".repeat(40),
+        target: "README.md",
+      }),
+      {
+        operation: "file",
+        repo: "owner/repo",
+        projectKey: BINDING.projectKey,
+        repositoryId: 101,
+        sha: "a".repeat(40),
+        path: "README.md",
+        limit: 5,
+      },
+    );
+    assert.equal(
+      tool.canonicalize({
+        operation: "checks",
+        projectKey: BINDING.projectKey,
+        repo: "owner/repo",
+        revision: "b".repeat(40),
+      }).sha,
+      "b".repeat(40),
+    );
+    assert.equal(
+      tool.canonicalize({
+        operation: "pull_files",
+        projectKey: BINDING.projectKey,
+        repo: "owner/repo",
+        pullNumber: 95,
+      }).number,
+      95,
+    );
+    await assert.rejects(
+      () =>
+        tool.execute({
+          operation: "ref",
+          projectKey: BINDING.projectKey,
+          repo: "owner/repo",
+          ref: "main",
+        }),
+      /github ref not found; use heads\/<branch> or tags\/<tag>/,
+    );
+  });
+
   it("rejects a repository identity mismatch or an unavailable project credential", async () => {
     const credentials = new CredentialBroker(() => new Date());
     credentials.register("github:project", {

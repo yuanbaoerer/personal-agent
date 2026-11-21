@@ -150,6 +150,25 @@ describe("router decision parsing", () => {
     assert.match(prompt, /revise_task/);
   });
 
+  it("gives the model the real project bindings and forbids asking for owner/name", () => {
+    const prompt = routerPrompt({
+      ownerId: "owner",
+      conversationId: "conversation",
+      text: "检查 personal-agent 项目的最新实施情况",
+      inboxId: "inbox",
+      projectContext: [
+        {
+          projectKey: "personal-agent",
+          repositoryId: 101,
+          repositoryFullName: "owner/repo",
+          defaultBranch: "main",
+        },
+      ],
+    });
+    assert.match(prompt, /projectKey=personal-agent repo=owner\/repo repoId=101/);
+    assert.match(prompt, /Never ask for owner\/name/);
+  });
+
   it("allows supplement_task and requires explicit memory and reminder intent", () => {
     const prompt = routerPrompt({
       ownerId: "owner",
@@ -243,6 +262,24 @@ describe("worker report validation", () => {
   it("rejects an invalid status or missing fields", () => {
     assert.equal(parseWorkerReport('{"status":"done"}'), undefined);
     assert.equal(parseWorkerReport("no json"), undefined);
+  });
+
+  it("converts strict tool-call envelopes into proposed actions", () => {
+    const report = parseWorkerReport(
+      'I will inspect.\n<function_call>{"name":"github.read","arguments":{"operation":"repo","repo":"owner/repo"}}</function_call>',
+    );
+    assert.equal(report?.status, "working");
+    assert.deepEqual(report?.proposedActions, [
+      { tool: "github.read", args: { operation: "repo", repo: "owner/repo" } },
+    ]);
+    assert.deepEqual(report?.evidence, [
+      { kind: "github", value: "https://github.com/owner/repo" },
+    ]);
+    // Unclosed or unparseable tags are not invented into actions.
+    assert.equal(
+      parseWorkerReport('<function_call>{"name":"x"</function_call>'),
+      undefined,
+    );
   });
 
   it("parses review findings and derives draft idempotency keys", () => {
@@ -572,6 +609,33 @@ describe("project review task creation", () => {
     assert.equal(criteria.projectKey, "personal-agent");
     assert.equal(criteria.verifier, "project-review");
     const outbox = services.store.listRecentOutbox(20).map((row) => row.text);
+    assert.ok(outbox.some((text) => text.includes("项目：personal-agent")));
+  });
+
+  it("creates the bound review task when the model replies asking for owner/name", async () => {
+    const services = createServices({
+      github: {
+        token: "secret",
+        allowedRepos: ["owner/repo"],
+        fetch: (async () => new Response("{}")) as typeof fetch,
+      },
+    });
+    bindPersonalAgent(services);
+    services.model.push({
+      action: "reply",
+      text: "请提供 personal-agent 的精确 GitHub 仓库 owner/name，以及规划文件路径。",
+    });
+    await sendText(services, "检查 personal-agent 项目的最新实施情况，生成待办修改草稿。只读，不要实际修改 GitHub。", "evt_review_model_reply");
+
+    const tasks = services.tasks.listByOwner(services.owner.id);
+    assert.equal(tasks.length, 1);
+    const task = tasks[0] as TaskRecord;
+    assert.equal(task.mandate.project, "personal-agent");
+    assert.deepEqual(task.mandate.skills, ["github.project-review"]);
+    const criteria = JSON.parse(task.completionCriteria) as Record<string, unknown>;
+    assert.equal(criteria.repo, "owner/repo");
+    assert.equal(criteria.repositoryId, 101);
+    const outbox = services.store.listRecentOutbox(10).map((row) => row.text);
     assert.ok(outbox.some((text) => text.includes("项目：personal-agent")));
   });
 

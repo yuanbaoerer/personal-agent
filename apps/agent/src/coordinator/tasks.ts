@@ -7,7 +7,9 @@ import type {
   GithubClaim,
   GithubItemClaim,
   GithubTypedClaim,
+  IssueDraft,
   MemoryRecord,
+  ProjectFinding,
   StateClaim,
   SkillRejection,
   ExtensionPolicy,
@@ -56,6 +58,17 @@ export interface ActionProposer {
   finalizeReportedActions?(actionIds: readonly string[]): void;
 }
 
+export interface VerifiedDraftSink {
+  recordVerified(input: {
+    task: TaskRecord;
+    assignment: AssignmentRecord;
+    findings: readonly ProjectFinding[];
+    drafts: readonly IssueDraft[];
+    actions: readonly ActionRecord[];
+  }): unknown;
+  supersedeForTask(taskId: string, keepRevision: number | undefined): number;
+}
+
 export interface TaskServiceDeps {
   store: Store;
   tasks: TaskRepository;
@@ -79,6 +92,8 @@ export interface TaskServiceDeps {
   capabilities?: CapabilityView;
   /** Node-only SKILL.md index; omitted means skills are unavailable. */
   skills?: SkillRuntime;
+  /** Persists verifier-approved issue drafts and invalidates old revisions. */
+  verifiedDrafts?: VerifiedDraftSink;
 }
 
 export interface CreateTaskInput {
@@ -133,6 +148,7 @@ export class TaskService {
   readonly #extensions?: { snapshot(): TaskExtensionSnapshot };
   readonly #capabilities?: CapabilityView;
   readonly #skills?: SkillRuntime;
+  readonly #verifiedDrafts?: VerifiedDraftSink;
   #proposer: ActionProposer | undefined;
 
   constructor(deps: TaskServiceDeps) {
@@ -160,6 +176,7 @@ export class TaskService {
     this.#extensions = deps.extensions;
     this.#capabilities = deps.capabilities;
     this.#skills = deps.skills;
+    this.#verifiedDrafts = deps.verifiedDrafts;
   }
 
   setActionProposer(proposer: ActionProposer): void {
@@ -337,6 +354,7 @@ export class TaskService {
     }
 
     this.#auditSuperseded(this.#actions.supersedeForTask(taskId, now), "task_revised", now);
+    this.#verifiedDrafts?.supersedeForTask(taskId, task.revision);
     this.#cancelTaskEffects(taskId, now);
     this.#store.cancelOutboxForTask(taskId, now);
     if (activeSessions.length > 0) {
@@ -466,6 +484,7 @@ export class TaskService {
     }
 
     this.#auditSuperseded(this.#actions.supersedeForTask(taskId, now), "task_cancelled", now);
+    this.#verifiedDrafts?.supersedeForTask(taskId, undefined);
     this.#cancelTaskEffects(taskId, now);
     this.#store.cancelOutboxForTask(taskId, now);
     this.#store.recordAudit({
@@ -1223,24 +1242,40 @@ export class TaskService {
           );
           return { status: "done" };
         }
-        const updated = this.#tasks.updateTask(task.id, task.revision, {
-          status: "succeeded",
-          resultRef: report.summary,
-          lastError: undefined,
-          verification: completion.verification,
-          updatedAt: now,
+        const isProjectReview =
+          completion.verification.verifier === "project-review";
+        const findings = isProjectReview ? (report.findings ?? []) : [];
+        const reviewDrafts = assignDraftKeys(
+          findings,
+          report.issueDrafts ?? [],
+        );
+        const updated = this.#store.db.transaction(() => {
+          if (isProjectReview && findings.length > 0) {
+            this.#verifiedDrafts?.recordVerified({
+              task,
+              assignment,
+              findings,
+              drafts: reviewDrafts,
+              actions: this.#actions
+                .listByTask(task.id)
+                .filter((action) => action.taskRevision === task.revision),
+            });
+          }
+          return this.#tasks.updateTask(task.id, task.revision, {
+            status: "succeeded",
+            resultRef: report.summary,
+            lastError: undefined,
+            verification: completion.verification,
+            updatedAt: now,
+          });
         });
         if (updated === undefined) {
           return { status: "done" };
         }
         const review =
-          report.findings === undefined ||
-          completion.verification.verifier !== "project-review"
+          !isProjectReview
             ? ""
-            : `\n\n${summarizeProjectReview(
-                report.findings,
-                assignDraftKeys(report.findings, report.issueDrafts ?? []),
-              )}`;
+            : `\n\n${summarizeProjectReview(findings, reviewDrafts)}`;
         this.#reply(
           task,
           "result",
@@ -1531,6 +1566,7 @@ function workerPrompt(
 ): string {
   const lines = [
     "You are a task Worker with a separate context. Work only inside the Mandate.",
+    "This host has NO tool-calling channel: never emit function_call, tool_call or XML tags. Reads and writes must be proposed inside the JSON report's proposedActions array; the host executes them and returns receipts in the next assignment.",
     "Do not claim that an external write happened. Propose writes as actions.",
     "Return one JSON object only, with this shape:",
     '{"status":"ready|working|waiting_user|waiting_external|failed",',
@@ -1620,6 +1656,15 @@ function workerPrompt(
       '{"findings":[{"id":"f1","requirementRef":"plan section","classification":"observed|inferred|unknown","severity":"critical|high|medium|low","repositoryId":123,"commitSha":"<40-hex or unknown for a gap>","evidenceRefs":["<source URL or path from an action receipt>"],"expected":"...","actual":"...","impact":"...","existingIssueMatches":[60],"suggestedAction":"...","evidenceGap":"required for unknown","coverage":"complete|partial|unknown","truncated":false}]}',
       '{"issueDrafts":[{"action":"create|update|comment","targetIssue":60,"title":"...","body":"...","findingIds":["f1"],"beforeHash":"<sha256 of the existing issue body for update>","requiresOwnerApproval":true}]}',
       "Start with a repo read to obtain the immutable repositoryId, then a ref read to resolve the branch to a fixed commit SHA before typed file/tree/checks reads.",
+      "Typed read args (use exactly these field names; limit is 1..20):",
+      '{"operation":"ref","projectKey":"<key>","repo":"owner/name","ref":"heads/main"}',
+      '{"operation":"file","projectKey":"<key>","repo":"owner/name","sha":"<40-hex>","path":"docs/24-github-project-management.md"}',
+      '{"operation":"tree","projectKey":"<key>","repo":"owner/name","sha":"<40-hex>","recursive":true}',
+      '{"operation":"pull_files","projectKey":"<key>","repo":"owner/name","number":95,"limit":20}',
+      '{"operation":"checks","projectKey":"<key>","repo":"owner/name","sha":"<40-hex>","limit":20}',
+      '{"operation":"issue","projectKey":"<key>","repo":"owner/name","number":62}',
+      '{"operation":"issues","repo":"owner/name","limit":20}',
+      "Do not invent placeholder SHAs: copy the 40-hex sha from the ref or file receipt. A read with revision/target/pullNumber aliases is accepted, but sha/path/number is canonical.",
       "Every observed finding must cite a receipt at the same repositoryId and commitSha; never invent issue numbers or test results.",
       "update/comment drafts must target an issue already listed in the finding's existingIssueMatches; update drafts must also carry beforeHash from that issue's body receipt. Create drafts must not duplicate an existing issue.",
       "Issue drafts are proposals only. This task cannot write to GitHub, and the program derives their idempotency key.",
@@ -1874,20 +1919,21 @@ function reportFindings(
 }
 
 export function parseWorkerReport(text: string): WorkerReport | undefined {
+  const toolCalls = parseToolCallBlocks(text);
   const start = text.indexOf("{");
   const end = text.lastIndexOf("}");
   if (start < 0 || end <= start) {
-    return undefined;
+    return toolCalls === undefined ? undefined : toolCallReport(text, toolCalls);
   }
 
   let value: unknown;
   try {
     value = JSON.parse(text.slice(start, end + 1));
   } catch {
-    return undefined;
+    return toolCalls === undefined ? undefined : toolCallReport(text, toolCalls);
   }
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+    return toolCalls === undefined ? undefined : toolCallReport(text, toolCalls);
   }
   const record = value as Record<string, unknown>;
   const status = record.status;
@@ -1898,13 +1944,13 @@ export function parseWorkerReport(text: string): WorkerReport | undefined {
     status !== "ready" &&
     status !== "failed"
   ) {
-    return undefined;
+    return toolCalls === undefined ? undefined : toolCallReport(text, toolCalls);
   }
   if (typeof record.summary !== "string") {
-    return undefined;
+    return toolCalls === undefined ? undefined : toolCallReport(text, toolCalls);
   }
   if (!Array.isArray(record.evidence)) {
-    return undefined;
+    return toolCalls === undefined ? undefined : toolCallReport(text, toolCalls);
   }
 
   const evidence: Evidence[] = [];
@@ -1967,5 +2013,76 @@ export function parseWorkerReport(text: string): WorkerReport | undefined {
   };
 }
 
+
+/**
+ * Some models answer with a tool-call envelope even when the host exposes no
+ * tool channel. Convert only strict function_call/tool_call blocks into
+ * proposals; every proposal still goes through canonicalization, mandate and
+ * action approval before it can run.
+ */
+function parseToolCallBlocks(text: string): ProposedAction[] | undefined {
+  const calls: ProposedAction[] = [];
+  const pattern =
+    /<(function_call|tool_call)>\s*([\s\S]*?)\s*<\/\1>/g;
+  for (const match of text.matchAll(pattern)) {
+    const body = match[2];
+    if (body === undefined) {
+      continue;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      continue;
+    }
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      continue;
+    }
+    const record = parsed as Record<string, unknown>;
+    const tool = record.name ?? record.tool;
+    const args = record.arguments ?? record.args;
+    if (
+      typeof tool === "string" &&
+      tool.trim().length > 0 &&
+      typeof args === "object" &&
+      args !== null &&
+      !Array.isArray(args)
+    ) {
+      calls.push({ tool, args: args as Record<string, unknown> });
+    }
+  }
+  return calls.length > 0 ? calls : undefined;
+}
+
+function toolCallReport(
+  text: string,
+  calls: ProposedAction[],
+): WorkerReport {
+  const repo = calls
+    .map((call) => call.args.repo)
+    .find((value): value is string => typeof value === "string");
+  const prose = text
+    .replace(/<(function_call|tool_call)>[\s\S]*?<\/\1>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 300);
+  return {
+    status: "working",
+    summary:
+      prose.length > 0
+        ? prose
+        : "模型以工具调用格式提出读取；已转换为待审批动作。",
+    evidence: [
+      {
+        kind: repo === undefined ? "tool_proposal" : "github",
+        value:
+          repo === undefined
+            ? calls.map((call) => call.tool).join(",")
+            : `https://github.com/${repo}`,
+      },
+    ],
+    proposedActions: calls,
+  };
+}
 
 export { evaluateCompletion } from "./completion.ts";
