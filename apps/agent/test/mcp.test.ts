@@ -277,6 +277,15 @@ describe("MCP read-only plugin", () => {
         dnsLookup: async () => [],
       });
       assert.match(unresolved.error ?? "", /did not resolve/);
+
+      // 127.0.0.9 is not the system localhost answer. If the pin were ignored,
+      // the fake server on 127.0.0.1 would answer; with pinning it cannot.
+      const pinnedElsewhere = await connectMcpPlugin(
+        { ...definition(hostnameUrl), timeoutMs: 500 },
+        { dnsLookup: async () => [{ address: "127.0.0.9", family: 4 }] },
+      );
+      assert.match(pinnedElsewhere.error ?? "", /timed out|fetch failed|connect/i);
+      assert.equal(pinnedElsewhere.plugin.configured, false);
     } finally {
       await fake.close();
     }
