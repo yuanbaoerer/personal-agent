@@ -16,7 +16,7 @@
 | L3 Development Orchestrator Pilot | Issue→Coding Agent→测试→Draft PR→独立 Review | GH-05/06 实际闭环及恢复 |
 | L4 Autonomous Maintainer（后续） | 有界的持续监控、需求识别、返工与主人决策 | 先有连续使用证据；自动写/合并不在本阶段 |
 
-当前：github.read GET-only、单 owner PAT/OAuth E1、repo 白名单及 24h 只读预授权；状态/结构化 Intent、Action audit、claims 与本地预算已有实现；真实 GitHub 只读 G1 与 Feishu 出站已有证据，真实 E3/Issue 写仍未完成。ProjectBinding（`pa_projects`、owner-scoped projectKey、不可变 repoId、branch/credentialRef、plan paths、API/CLI、revoked 历史）已落地；固定 SHA 源码/PR diff/CI、Issue 写和管理工作流仍未实现。2026-11-21 跨平台 CI 已恢复，main run `44860766068` 通过（当前 434 tests）；此前账单期间的合并仅以本地测试为依据。没有证据表明当前已经支持真实 Issue 写、完整源码读取或 Coding Agent 调度。不可把 ChatGPT 的 GitHub 插件能力算进项目自身实现。
+当前：github.read GET-only、单 owner PAT/OAuth E1、repo 白名单及 24h 只读预授权；状态/结构化 Intent、Action audit、claims 与本地预算已有实现；真实 GitHub 只读 G1 与 Feishu 出站已有证据，真实 E3/Issue 写仍未完成。ProjectBinding（`pa_projects`、owner-scoped projectKey、不可变 repoId、branch/credentialRef、plan paths、API/CLI、revoked 历史）已落地；固定 SHA 的 ref/tree/file/issue/PR files/checks typed read 已实现（尚未强制使用 ProjectBinding），Issue 写和管理工作流仍未实现。2026-11-21 跨平台 CI 已恢复，main run `44860766068` 通过（当前 437 tests）；此前账单期间的合并仅以本地测试为依据。没有证据表明当前已经支持真实 Issue 写、完整源码读取或 Coding Agent 调度。不可把 ChatGPT 的 GitHub 插件能力算进项目自身实现。
 
 ## 2. 工程主线与依赖
 
@@ -59,6 +59,8 @@ SchedulePolicy -> read-only project observation (guarded)
 ### GitHub 读取（GH-01/02）
 
 先以真实精确 repo 的 fine-grained read-only PAT 检查 G1，保留已选 D21 OAuth App（OAuth repo scope 宽于只读）；配置、撤销和负例均留证。读取工具扩展为 typed operations：repo/ref/commit、tree/file、Issue detail、PR changed files/diff、checks/workflow status。固定 commit SHA；PR 绑定 base/head；返回 provenance、路径/行号、永久 URL、truncated/unknown。遵守现有限额，新增任务累计页数/字节/时长上限；不得通用任意 HTTP URL、全仓库无界抓取、执行仓库文本；拒绝二进制/超限及敏感路径，CI logs 默认不抓原始内容。外部内容不可信，不得触发授权、命令或记忆更新。
+
+2026-11-21 typed read 首批实现：`github.read` 新增 `ref`、`tree`、`file`、`issue`、`pull_files`、`checks`。tree/file/checks 必须传固定 40 位 commit SHA；file path 拒绝绝对路径和 `..`；PR files/checks 仍受 repo allowlist 与 limit 约束；返回固定 SHA 的 source URL、路径/SHA、truncated/coverage 和 patch/content 截断标记。尚未接入 ProjectBinding 的 repo/credential 强制匹配，也未实现 Issue 写、CI log 原文或全仓库抓取；GH02 不能因该 typed read 完成而关闭。
 
 ### Issue 写入（GH-03）
 

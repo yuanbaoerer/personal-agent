@@ -259,6 +259,213 @@ describe("read-only GitHub connector", () => {
     );
   });
 
+  it("reads fixed-SHA files, trees, refs, issues, PR files and checks with provenance", async () => {
+    const sha = "a".repeat(40);
+    const calls: string[] = [];
+    const tool = new GitHubReadTool({
+      token: "secret-token",
+      allowedRepos: ["owner/repo"],
+      fetch: (async (input: string | URL | Request) => {
+        const url = new URL(String(input));
+        calls.push(url.toString());
+        if (url.pathname.endsWith("/contents/docs/24.md")) {
+          return jsonResponse({
+            type: "file",
+            path: "docs/24.md",
+            name: "24.md",
+            sha,
+            size: 7,
+            encoding: "base64",
+            content: Buffer.from("# Plan\n", "utf8").toString("base64"),
+            html_url: `https://github.com/owner/repo/blob/${sha}/docs/24.md`,
+          });
+        }
+        if (url.pathname.endsWith(`/git/trees/${sha}`)) {
+          return jsonResponse({
+            sha,
+            truncated: false,
+            tree: [
+              { path: "docs", mode: "040000", type: "tree", sha: "b".repeat(40) },
+              { path: "docs/24.md", mode: "100644", type: "blob", sha, size: 7 },
+            ],
+          });
+        }
+        if (url.pathname.endsWith("/git/ref/heads/main")) {
+          return jsonResponse({
+            ref: "refs/heads/main",
+            object: { sha, type: "commit", url: `https://api.github.com/commits/${sha}` },
+          });
+        }
+        if (url.pathname.endsWith("/issues/12")) {
+          return jsonResponse({
+            number: 12,
+            title: "Typed reads",
+            state: "open",
+            body: "body text",
+            user: { login: "owner" },
+            html_url: "https://github.com/owner/repo/issues/12",
+          });
+        }
+        if (url.pathname.endsWith("/pulls/12/files")) {
+          return jsonResponse([
+            {
+              filename: "src/a.ts",
+              status: "modified",
+              additions: 2,
+              deletions: 1,
+              changes: 3,
+              sha,
+              patch: "@@ -1 +1 @@",
+            },
+          ]);
+        }
+        if (url.pathname.endsWith(`/commits/${sha}/check-runs`)) {
+          return jsonResponse({
+            total_count: 1,
+            check_runs: [
+              {
+                id: 9,
+                name: "ci",
+                status: "completed",
+                conclusion: "success",
+                head_sha: sha,
+                details_url: `https://github.com/owner/repo/commit/${sha}/checks`,
+              },
+            ],
+          });
+        }
+        return jsonResponse({});
+      }) as typeof fetch,
+    });
+
+    const file = await tool.execute({
+      operation: "file",
+      repo: "owner/repo",
+      sha,
+      path: "docs/24.md",
+    });
+    assert.match(calls[0] ?? "", /\/contents\/docs\/24\.md\?ref=a{40}$/);
+    assert.equal((file.evidence.item as Record<string, unknown>).content, "# Plan\n");
+    assert.equal(
+      (file.evidence.item as Record<string, unknown>).path,
+      "docs/24.md",
+    );
+
+    const tree = await tool.execute({
+      operation: "tree",
+      repo: "owner/repo",
+      sha,
+      recursive: true,
+      limit: 1,
+    });
+    assert.match(calls[1] ?? "", /\/git\/trees\/a{40}\?recursive=1$/);
+    assert.equal((tree.evidence.items as unknown[]).length, 1);
+    assert.equal(tree.evidence.truncated, true);
+
+    const ref = await tool.execute({
+      operation: "ref",
+      repo: "owner/repo",
+      ref: "heads/main",
+    });
+    assert.equal(ref.evidence.sha, sha);
+    assert.equal(ref.evidence.type, "commit");
+
+    const issue = await tool.execute({
+      operation: "issue",
+      repo: "owner/repo",
+      number: 12,
+    });
+    assert.equal((issue.evidence.item as Record<string, unknown>).title, "Typed reads");
+
+    const files = await tool.execute({
+      operation: "pull_files",
+      repo: "owner/repo",
+      number: 12,
+      limit: 1,
+    });
+    assert.equal(
+      (files.evidence.items as Array<Record<string, unknown>>)[0]?.filename,
+      "src/a.ts",
+    );
+    assert.match(files.evidence.source as string, /\/pull\/12\/files$/);
+
+    const checks = await tool.execute({
+      operation: "checks",
+      repo: "owner/repo",
+      sha,
+      limit: 1,
+    });
+    assert.equal(
+      (checks.evidence.items as Array<Record<string, unknown>>)[0]?.conclusion,
+      "success",
+    );
+    assert.equal(calls.length, 6);
+  });
+
+  it("rejects unsafe typed-read arguments before fetching", async () => {
+    let called = 0;
+    const tool = new GitHubReadTool({
+      token: "secret-token",
+      allowedRepos: ["owner/repo"],
+      fetch: (async () => {
+        called += 1;
+        return jsonResponse({});
+      }) as typeof fetch,
+    });
+    const sha = "a".repeat(40);
+    await assert.rejects(
+      () => tool.execute({ operation: "file", repo: "owner/repo", sha: "abc", path: "README.md" }),
+      /fixed 40-character/,
+    );
+    await assert.rejects(
+      () => tool.execute({ operation: "file", repo: "owner/repo", sha, path: "../secret" }),
+      /safe repository-relative/,
+    );
+    await assert.rejects(
+      () => tool.execute({ operation: "file", repo: "owner/repo", sha, path: "/etc/passwd" }),
+      /safe repository-relative/,
+    );
+    await assert.rejects(
+      () => tool.execute({ operation: "tree", repo: "owner/repo", sha: "not-a-sha" }),
+      /fixed 40-character/,
+    );
+    await assert.rejects(
+      () => tool.execute({ operation: "ref", repo: "owner/repo", ref: "-main" }),
+      /safe branch/,
+    );
+    await assert.rejects(
+      () => tool.execute({ operation: "ref", repo: "owner/repo", ref: "heads/../main" }),
+      /safe branch/,
+    );
+    await assert.rejects(
+      () => tool.execute({ operation: "checks", repo: "owner/repo", sha: "b".repeat(39) }),
+      /fixed 40-character/,
+    );
+    assert.equal(called, 0);
+  });
+
+  it("bounds directory file listings", async () => {
+    const tool = new GitHubReadTool({
+      token: "secret-token",
+      allowedRepos: ["owner/repo"],
+      fetch: (async () =>
+        jsonResponse([
+          { type: "file", path: "a", sha: "a".repeat(40), size: 1 },
+          { type: "file", path: "b", sha: "b".repeat(40), size: 1 },
+          { type: "file", path: "c", sha: "c".repeat(40), size: 1 },
+        ])) as typeof fetch,
+    });
+    const result = await tool.execute({
+      operation: "file",
+      repo: "owner/repo",
+      sha: "d".repeat(40),
+      path: "docs",
+      limit: 1,
+    });
+    assert.equal((result.evidence.items as unknown[]).length, 1);
+    assert.equal(result.evidence.truncated, true);
+  });
+
   it("is absent from the registry without a token or allow list", () => {
     const store = createStore();
     const services = createServices({

@@ -22,7 +22,19 @@ const GITHUB_MANIFEST = parsePluginManifest({
       replayPolicy: "verify",
       timeoutMs: 10_000,
       permissions: ["repository.read"],
-      operations: ["repo", "commits", "issues", "pulls", "pull"],
+      operations: [
+        "repo",
+        "commits",
+        "issues",
+        "pulls",
+        "pull",
+        "ref",
+        "tree",
+        "file",
+        "issue",
+        "pull_files",
+        "checks",
+      ],
       guidance:
         "GitHub receipts contain the API fields under previous action results. " +
         "For every issue/PR/commit field you state, add a githubClaim: " +

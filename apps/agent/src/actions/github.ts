@@ -11,12 +11,26 @@ export interface GitHubReadConfig {
   fetch?: typeof fetch;
 }
 
-type GitHubOperation = "repo" | "commits" | "issues" | "pulls" | "pull";
+type GitHubOperation =
+  | "repo"
+  | "commits"
+  | "issues"
+  | "pulls"
+  | "pull"
+  | "ref"
+  | "tree"
+  | "file"
+  | "issue"
+  | "pull_files"
+  | "checks";
 
 const API_BASE = "https://api.github.com";
 const MAX_ITEMS = 20;
 const DEFAULT_ITEMS = 5;
 const REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+const SHA_PATTERN = /^[0-9a-f]{40}$/i;
+const REF_PATTERN = /^[\p{L}\p{N}._/@+-]{1,255}$/u;
+const PATH_PATTERN = /^[\p{L}\p{N}._/ @+-]{1,500}$/u;
 
 /**
  * Read-only GitHub connector. Every operation is a GET; the token is only
@@ -49,10 +63,16 @@ export class GitHubReadTool implements ActionTool {
       operation !== "commits" &&
       operation !== "issues" &&
       operation !== "pulls" &&
-      operation !== "pull"
+      operation !== "pull" &&
+      operation !== "ref" &&
+      operation !== "tree" &&
+      operation !== "file" &&
+      operation !== "issue" &&
+      operation !== "pull_files" &&
+      operation !== "checks"
     ) {
       throw new ToolRejectedError(
-        "operation must be repo, commits, issues, pulls, or pull",
+        "operation must be repo, commits, issues, pulls, pull, ref, tree, file, issue, pull_files, or checks",
       );
     }
     const repo = args.repo;
@@ -78,16 +98,63 @@ export class GitHubReadTool implements ActionTool {
       throw new ToolRejectedError(`limit must be an integer between 1 and ${MAX_ITEMS}`);
     }
 
-    if (operation === "pull") {
+    if (operation === "pull" || operation === "issue" || operation === "pull_files") {
       const number = args.number;
       if (
         typeof number !== "number" ||
         !Number.isInteger(number) ||
         number < 1
       ) {
-        throw new ToolRejectedError("pull requires a positive integer number");
+        throw new ToolRejectedError(
+          `${operation} requires a positive integer number`,
+        );
       }
       return { operation, repo, number, limit };
+    }
+    if (operation === "ref") {
+      const ref = args.ref;
+      if (
+        typeof ref !== "string" ||
+        !REF_PATTERN.test(ref) ||
+        ref.startsWith("-") ||
+        ref.startsWith("/") ||
+        ref.endsWith("/") ||
+        ref.includes("..") ||
+        ref.split("/").some((part) => part === "" || part === "." || part === "..")
+      ) {
+        throw new ToolRejectedError("ref must be a safe branch, tag or ref");
+      }
+      return { operation, repo, ref };
+    }
+    if (operation === "tree" || operation === "checks") {
+      const sha = args.sha;
+      if (typeof sha !== "string" || !SHA_PATTERN.test(sha)) {
+        throw new ToolRejectedError(`${operation} requires a fixed 40-character commit SHA`);
+      }
+      if (operation === "tree") {
+        if (args.recursive !== undefined && typeof args.recursive !== "boolean") {
+          throw new ToolRejectedError("recursive must be a boolean");
+        }
+        return { operation, repo, sha, recursive: args.recursive === true, limit };
+      }
+      return { operation, repo, sha, limit };
+    }
+    if (operation === "file") {
+      const sha = args.sha;
+      if (typeof sha !== "string" || !SHA_PATTERN.test(sha)) {
+        throw new ToolRejectedError("file requires a fixed 40-character commit SHA");
+      }
+      const path = args.path;
+      if (
+        typeof path !== "string" ||
+        !PATH_PATTERN.test(path) ||
+        path.startsWith("/") ||
+        path.endsWith("/") ||
+        path.split("/").some((part) => part === "" || part === "." || part === "..")
+      ) {
+        throw new ToolRejectedError("path must be a safe repository-relative path");
+      }
+      return { operation, repo, sha, path, limit };
     }
     return { operation, repo, limit };
   }
@@ -110,13 +177,33 @@ export class GitHubReadTool implements ActionTool {
         ? `/repos/${repo}/pulls/${canonical.number as number}`
         : operation === "repo"
           ? `/repos/${repo}`
-          : `/repos/${repo}/${operation}`;
+          : operation === "issue"
+            ? `/repos/${repo}/issues/${canonical.number as number}`
+            : operation === "pull_files"
+              ? `/repos/${repo}/pulls/${canonical.number as number}/files`
+              : operation === "ref"
+                ? `/repos/${repo}/git/ref/${encodeRef(canonical.ref as string)}`
+                : operation === "tree"
+                  ? `/repos/${repo}/git/trees/${canonical.sha as string}`
+                  : operation === "file"
+                    ? `/repos/${repo}/contents/${encodePath(canonical.path as string)}`
+                    : operation === "checks"
+                      ? `/repos/${repo}/commits/${canonical.sha as string}/check-runs`
+                      : `/repos/${repo}/${operation}`;
     const params = new URLSearchParams();
     if (operation === "issues" || operation === "pulls") {
       params.set("state", "open");
       params.set("per_page", String(limit));
-    } else if (operation === "commits") {
+    } else if (
+      operation === "commits" ||
+      operation === "pull_files" ||
+      operation === "checks"
+    ) {
       params.set("per_page", String(limit));
+    } else if (operation === "tree") {
+      if (canonical.recursive === true) params.set("recursive", "1");
+    } else if (operation === "file") {
+      params.set("ref", canonical.sha as string);
     }
     const url = this.#url(path, params);
 
@@ -284,6 +371,98 @@ function mapEvidence(
       item: mapPull(asObject(body)),
     };
   }
+  if (operation === "ref") {
+    const record = asObject(body);
+    const object = asObject(record.object);
+    const sha = stringValue(object.sha)?.slice(0, 40);
+    return {
+      operation,
+      repo,
+      ref: stringValue(record.ref),
+      sha,
+      type: stringValue(object.type),
+      source:
+        sha === undefined
+          ? `https://github.com/${repo}`
+          : stringValue(object.type) === "commit"
+            ? `https://github.com/${repo}/commit/${sha}`
+            : `https://github.com/${repo}`,
+      url: stringValue(object.url),
+    };
+  }
+  if (operation === "tree") {
+    const record = asObject(body);
+    const rawItems = Array.isArray(record.tree) ? record.tree : [];
+    return {
+      operation,
+      repo,
+      sha: stringValue(record.sha)?.slice(0, 40),
+      source: `https://github.com/${repo}/tree/${stringValue(record.sha) ?? ""}`,
+      request: requestUrl.pathname,
+      items: rawItems.slice(0, limit).map((item) => {
+        const entry = asObject(item);
+        return {
+          path: stringValue(entry.path),
+          mode: stringValue(entry.mode),
+          type: stringValue(entry.type),
+          sha: stringValue(entry.sha),
+          size: numberValue(entry.size),
+        };
+      }),
+      truncated: record.truncated === true || rawItems.length > limit || hasNextPage,
+    };
+  }
+  if (operation === "file") {
+    if (Array.isArray(body)) {
+      return {
+        operation,
+        repo,
+        source: `https://github.com/${repo}`,
+        items: body.slice(0, limit).map((item) => mapContentItem(asObject(item))),
+        truncated: body.length > limit || hasNextPage,
+      };
+    }
+    const record = asObject(body);
+    return {
+      operation,
+      repo,
+      source:
+        stringValue(record.html_url) ??
+        `https://github.com/${repo}`,
+      item: mapContentItem(record),
+    };
+  }
+  if (operation === "issue") {
+    const record = asObject(body);
+    return {
+      operation,
+      repo,
+      source: stringValue(record.html_url) ?? `https://github.com/${repo}`,
+      item: mapIssue(record),
+    };
+  }
+  if (operation === "pull_files") {
+    const items = Array.isArray(body) ? body.slice(0, limit) : [];
+    return {
+      operation,
+      repo,
+      source: `https://github.com/${repo}/pull/${pathPart(requestUrl, 5)}/files`,
+      items: items.map((item) => mapPullFile(asObject(item))),
+      truncated: hasNextPage || (Array.isArray(body) && body.length > limit),
+    };
+  }
+  if (operation === "checks") {
+    const record = asObject(body);
+    const runs = Array.isArray(record.check_runs) ? record.check_runs : [];
+    return {
+      operation,
+      repo,
+      source: `https://github.com/${repo}/commit/${pathPart(requestUrl, 5)}/checks`,
+      items: runs.slice(0, limit).map((item) => mapCheckRun(asObject(item))),
+      truncated: hasNextPage || runs.length > limit,
+      totalCount: numberValue(record.total_count),
+    };
+  }
 
   const items = Array.isArray(body) ? body.slice(0, limit) : [];
   return {
@@ -335,6 +514,126 @@ function mapPull(record: Record<string, unknown>): Record<string, unknown> {
     updatedAt: stringValue(record.updated_at),
     url: stringValue(record.html_url),
   };
+}
+
+function mapContentItem(record: Record<string, unknown>): Record<string, unknown> {
+  const type = stringValue(record.type);
+  const encoding = stringValue(record.encoding);
+  const content = stringValue(record.content);
+  const size = numberValue(record.size);
+  const decoded =
+    type === "file" && encoding === "base64" && content !== undefined
+      ? decodeUtf8(content, size)
+      : {};
+  return {
+    type,
+    path: stringValue(record.path),
+    name: stringValue(record.name),
+    sha: stringValue(record.sha),
+    size,
+    encoding,
+    downloadUrl: stringValue(record.download_url),
+    htmlUrl: stringValue(record.html_url),
+    target: stringValue(record.target),
+    ...decoded,
+  };
+}
+
+function mapIssue(record: Record<string, unknown>): Record<string, unknown> {
+  const labels = Array.isArray(record.labels)
+    ? record.labels
+        .slice(0, 20)
+        .map((label) => stringValue(asObject(label).name))
+        .filter((label): label is string => label !== undefined)
+    : [];
+  const body = stringValue(record.body);
+  return {
+    number: numberValue(record.number),
+    title: firstLine(stringValue(record.title)),
+    state: stringValue(record.state),
+    author: stringValue(asObject(record.user).login),
+    body: truncateText(body, 4_000),
+    bodyTruncated: body !== undefined && body.length > 4_000,
+    labels,
+    isPullRequest: record.pull_request !== undefined,
+    createdAt: stringValue(record.created_at),
+    updatedAt: stringValue(record.updated_at),
+    url: stringValue(record.html_url),
+  };
+}
+
+function mapPullFile(record: Record<string, unknown>): Record<string, unknown> {
+  const patch = stringValue(record.patch);
+  const truncatedPatch = truncateText(patch, 8_000);
+  return {
+    filename: stringValue(record.filename),
+    status: stringValue(record.status),
+    additions: numberValue(record.additions),
+    deletions: numberValue(record.deletions),
+    changes: numberValue(record.changes),
+    sha: stringValue(record.sha),
+    previousFilename: stringValue(record.previous_filename),
+    patch: truncatedPatch,
+    patchTruncated:
+      patch !== undefined && truncatedPatch !== patch,
+  };
+}
+
+function mapCheckRun(record: Record<string, unknown>): Record<string, unknown> {
+  const output = asObject(record.output);
+  const summary = stringValue(output.summary);
+  return {
+    id: numberValue(record.id),
+    name: stringValue(record.name),
+    status: stringValue(record.status),
+    conclusion: stringValue(record.conclusion),
+    headSha: stringValue(record.head_sha),
+    detailsUrl: stringValue(record.details_url),
+    startedAt: stringValue(record.started_at),
+    completedAt: stringValue(record.completed_at),
+    outputTitle: firstLine(stringValue(output.title)),
+    outputSummary: truncateText(summary, 2_000),
+    outputSummaryTruncated: summary !== undefined && summary.length > 2_000,
+  };
+}
+
+function decodeUtf8(
+  content: string,
+  size: number | undefined,
+): { content?: string; contentTruncated?: boolean; contentEncodingInvalid?: boolean } {
+  if (size !== undefined && size > 32 * 1024) {
+    return { contentTruncated: true };
+  }
+  try {
+    const binary = atob(content.replace(/\s+/g, ""));
+    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+    return {
+      content: new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(
+        bytes,
+      ),
+    };
+  } catch {
+    return { contentEncodingInvalid: true };
+  }
+}
+
+function truncateText(value: string | undefined, max: number): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  return value.length > max ? `${value.slice(0, max)}…` : value;
+}
+
+function encodeRef(ref: string): string {
+  return ref.split("/").map(encodeURIComponent).join("/");
+}
+
+function encodePath(path: string): string {
+  return path.split("/").map(encodeURIComponent).join("/");
+}
+
+function pathPart(url: URL, index: number): string {
+  return url.pathname.split("/")[index] ?? "";
 }
 
 function asObject(value: unknown): Record<string, unknown> {
