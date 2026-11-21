@@ -363,6 +363,16 @@ describe("read-only GitHub connector", () => {
     assert.equal(canonical.repo, BINDING.repositoryFullName);
     assert.equal(canonical.projectKey, BINDING.projectKey);
     assert.equal(canonical.repositoryId, BINDING.repositoryId);
+    const caseMatched = tool.canonicalize(
+      {
+        operation: "file",
+        projectKey: BINDING.projectKey,
+        sha,
+        path: "README.md",
+      },
+      { ownerId: "owner-1", project: "Personal-Agent" },
+    );
+    assert.equal(caseMatched.repo, BINDING.repositoryFullName);
 
     const file = await tool.execute({
       operation: "file",

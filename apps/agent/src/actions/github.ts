@@ -118,7 +118,7 @@ export class GitHubReadTool implements ActionTool {
       }
       if (
         context?.project !== undefined &&
-        context.project !== requestedProject
+        context.project.toLowerCase() !== requestedProject
       ) {
         throw new ToolRejectedError(
           "projectKey does not match the task mandate project",
