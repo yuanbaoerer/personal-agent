@@ -27,6 +27,7 @@ class FakeGitHub {
   comments: Record<string, unknown>[] = [];
   failAfterPost = false;
   rateLimitPost = false;
+  mainSha = MAIN_SHA;
   private nextIssue = 500;
   private nextComment = 1;
 
@@ -37,6 +38,12 @@ class FakeGitHub {
     this.requests.push({ method, path: url.pathname, body });
     if (url.pathname === `/repos/${REPO}`) {
       return json({ id: REPO_ID, full_name: REPO });
+    }
+    if (url.pathname === `/repos/${REPO}/git/ref/heads/main`) {
+      return json({
+        ref: "refs/heads/main",
+        object: { sha: this.mainSha, type: "commit" },
+      });
     }
     if (url.pathname === `/repos/${REPO}/issues` && method === "GET") {
       return json([...this.issues].reverse());
@@ -138,6 +145,11 @@ function setup(options: { failAfterPost?: boolean } = {}) {
     githubIssueWrite: { credentialRef: "github:issues" },
     builtinPlugins: [createGithubPlugin(readConfig, writeConfig)],
   });
+  credentials.register("github:default", {
+    token: "read-token",
+    scopes: ["repository.read"],
+    ownerId: services.owner.id,
+  });
   credentials.register("github:issues", {
     token: "write-secret",
     scopes: ["repository.read", "issues.write"],
@@ -151,7 +163,7 @@ function setup(options: { failAfterPost?: boolean } = {}) {
       repositoryId: REPO_ID,
       repositoryFullName: REPO,
       defaultBranch: "main",
-      credentialRef: "github:issues",
+      credentialRef: "github:default",
       allowedPlanPaths: ["README.md"],
     },
     "admin",
@@ -541,5 +553,81 @@ describe("issue draft approval: plugin lifecycle", () => {
     );
     const outbox = services.store.listRecentOutbox(10).map((row) => row.text);
     assert.ok(outbox.some((text) => /issue_write_capability_unavailable|无法批准/.test(text)));
+  });
+});
+
+describe("issue write origin fence", () => {
+  it("rejects a Worker-proposed issue write and a non-draft approved action", () => {
+    const { services } = setup();
+    const task = services.taskService.createExternalActionTask({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "origin-fence",
+      goal: "write",
+      completionCriteria: "done",
+      mandate: {
+        resources: ["github"],
+        tools: ["github.issue.create"],
+        project: PROJECT_KEY,
+      },
+    });
+    const assignment = { id: "assignment:origin" } as AssignmentRecord;
+    const proposed = services.actionService.proposeForReport(task, assignment, [
+      {
+        tool: "github.issue.create",
+        args: { title: "worker proposal", body: "not from a draft" },
+      },
+    ]);
+    assert.equal(proposed.count, 0);
+    assert.equal(proposed.rejected, 1);
+
+    const { action } = services.actions.insert({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      taskId: task.id,
+      taskRevision: task.revision,
+      fencingToken: 0,
+      tool: "github.issue.create",
+      args: { title: "direct", body: "not from a draft" },
+      argsHash: "hash",
+      expiresAt: "2026-01-01T00:10:00.000Z",
+      nonce: "nonce-origin",
+      sourceKey: "worker:proposal:direct",
+      createdAt: NOW.toISOString(),
+    });
+    const approved = services.actionService.approve({
+      actionId: action.id,
+      nonce: action.nonce,
+      approverId: services.owner.id,
+      conversationId: services.conversation.id,
+      expectedArgsHash: action.argsHash,
+      expectedTaskRevision: action.taskRevision,
+    });
+    assert.equal(approved.ok, false);
+    assert.equal(approved.reason, "write_requires_approved_draft");
+  });
+});
+
+
+describe("issue draft approval: revision drift", () => {
+  it("supersedes a draft when the repository moved past the verified commit", async () => {
+    const { services, fake } = setup();
+    const { draft, payloadHash } = seedDraft(services, { key: "3" });
+    fake.mainSha = "d".repeat(40);
+    await sendText(
+      services,
+      `/draft approve ${draft.id} ${payloadHash}`,
+      "evt_draft_revision_changed",
+    );
+    assert.equal(
+      services.issueDrafts.get(services.owner.id, draft.id)?.status,
+      "superseded",
+    );
+    const outbox = services.store.listRecentOutbox(10).map((row) => row.text);
+    assert.ok(outbox.some((text) => /revision_changed/.test(text)));
+    assert.equal(
+      fake.requests.filter((request) => request.method === "POST").length,
+      0,
+    );
   });
 });

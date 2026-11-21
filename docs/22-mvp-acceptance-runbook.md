@@ -154,7 +154,7 @@ pa drafts reject <draft-id> --yes
 
 - 隔离测试仓库（不是 `personal-agent` 业务仓库）。
 - 独立 fine-grained PAT：仅该 repo、Metadata read + Issues write；配置 `GITHUB_ISSUE_WRITE_TOKEN`、`GITHUB_ISSUE_WRITE_REPOS=<owner/test-repo>`。
-- ProjectBinding 的 `credentialRef` 必须等于 `GITHUB_ISSUE_WRITE_CREDENTIAL_REF`（默认 `github:issues`）。
+- ProjectBinding 的 `credentialRef` 仍是**只读**凭据；写入使用独立的 `GITHUB_ISSUE_WRITE_CREDENTIAL_REF`（默认 `github:issues`），不得与只读 ref 混用。
 - 先完成只读评估并产生 `pending_approval` 草稿。
 
 流程：

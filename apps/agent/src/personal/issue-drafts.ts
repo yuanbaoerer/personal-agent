@@ -48,6 +48,7 @@ export class IssueDraftService {
   readonly #projects: ProjectRepository;
   readonly #tasks: TaskRepository;
   readonly #credentials?: CredentialBroker;
+  readonly #writeCredentialRef?: string;
   readonly #now: () => Date;
   readonly #ttlMs: number;
 
@@ -57,6 +58,8 @@ export class IssueDraftService {
     projects: ProjectRepository;
     tasks: TaskRepository;
     credentials?: CredentialBroker;
+    /** Separate Issues-write ref; never the binding's read credential. */
+    writeCredentialRef?: string;
     now?: () => Date;
     ttlMs?: number;
   }) {
@@ -65,6 +68,7 @@ export class IssueDraftService {
     this.#projects = deps.projects;
     this.#tasks = deps.tasks;
     this.#credentials = deps.credentials;
+    this.#writeCredentialRef = deps.writeCredentialRef;
     this.#now = deps.now ?? (() => new Date());
     this.#ttlMs = deps.ttlMs ?? DEFAULT_TTL_MS;
   }
@@ -90,7 +94,9 @@ export class IssueDraftService {
     const now = this.#now();
     const at = now.toISOString();
     const expiresAt = new Date(now.getTime() + this.#ttlMs).toISOString();
-    const credential = this.#credentials?.status(binding.credentialRef);
+    const writeCredentialRef =
+      this.#writeCredentialRef ?? binding.credentialRef;
+    const credential = this.#credentials?.status(writeCredentialRef);
     const supersededForRevision = this.#drafts.supersedeForTask(
       input.task.id,
       input.task.revision,
@@ -191,7 +197,7 @@ export class IssueDraftService {
         body: draft.body,
         payloadHash,
         idempotencyKey: draft.idempotencyKey,
-        credentialRef: binding.credentialRef,
+        credentialRef: writeCredentialRef,
         ...(credential === undefined
           ? {}
           : { credentialVersion: credential.version }),
@@ -355,7 +361,8 @@ export class IssueDraftService {
       binding.repositoryId !== draft.repositoryId ||
       binding.repositoryFullName.toLowerCase() !==
         draft.repositoryFullName.toLowerCase() ||
-      binding.credentialRef !== draft.credentialRef
+      (this.#writeCredentialRef !== undefined &&
+        this.#writeCredentialRef !== draft.credentialRef)
     ) {
       return supersede("project_binding_changed");
     }

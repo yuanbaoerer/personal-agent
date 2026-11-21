@@ -342,6 +342,12 @@ export function resolveProjectMention(input: {
         projectKeys: [mentioned.projectKey, project.projectKey].sort(),
       };
     }
+    const namedRepo = extractGithubRepo(input.text);
+    if (mentioned === undefined && namedRepo !== undefined) {
+      // The owner named a repository that is not an active binding; the
+      // model's project must not override that explicit mention.
+      return { status: "missing", requested: namedRepo, projectKeys };
+    }
     return { status: "resolved", project };
   }
 
@@ -1933,11 +1939,11 @@ export class Router implements InboundHandler {
     return true;
   }
 
-  #handleDraftCommand(
+  async #handleDraftCommand(
     match: RegExpExecArray,
     ownerId: string,
     conversationId: string,
-  ): ReplyDraft[] {
+  ): Promise<ReplyDraft[]> {
     if (this.#issueDrafts === undefined) {
       return [{ purpose: "failure", text: "还没有持久化的 Issue 草稿。" }];
     }
@@ -1998,7 +2004,7 @@ export class Router implements InboundHandler {
           },
         ];
       }
-      const result = this.#issueDraftApproval.approve({
+      const result = await this.#issueDraftApproval.approve({
         ownerId,
         conversationId,
         draftId: id,

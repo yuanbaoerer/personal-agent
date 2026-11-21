@@ -149,11 +149,6 @@ class GitHubIssueWriteTool implements ActionTool {
         `project ${projectKey} is not an active repository binding`,
       );
     }
-    if (binding.credentialRef !== this.#config.issueCredentialRef) {
-      throw new ToolRejectedError(
-        "project binding does not use the configured issue write credential",
-      );
-    }
     if (!this.#allowed.has(binding.repositoryFullName.toLowerCase())) {
       throw new ToolRejectedError(
         "repository is not in the issue write allow list",
@@ -179,10 +174,10 @@ class GitHubIssueWriteTool implements ActionTool {
     }
     if (
       args.credentialRef !== undefined &&
-      args.credentialRef !== binding.credentialRef
+      args.credentialRef !== this.#config.issueCredentialRef
     ) {
       throw new ToolRejectedError(
-        "credentialRef does not match the active project binding",
+        "credentialRef does not match the configured issue write credential",
       );
     }
     const credentialVersion = args.credentialVersion;
@@ -210,7 +205,7 @@ class GitHubIssueWriteTool implements ActionTool {
       projectKey,
       repo: binding.repositoryFullName.toLowerCase(),
       repositoryId: binding.repositoryId,
-      credentialRef: binding.credentialRef,
+      credentialRef: this.#config.issueCredentialRef,
       credentialVersion,
       payloadHash,
       idempotencyKey,
@@ -544,7 +539,7 @@ class GitHubIssueWriteTool implements ActionTool {
     const items = Array.isArray(response.body) ? response.body : [];
     for (const item of items) {
       const issue = parseIssue(item);
-      if (issue.body.includes(idempotencyKey)) {
+      if (!issue.isPullRequest && issue.body.includes(idempotencyKey)) {
         return issue;
       }
     }

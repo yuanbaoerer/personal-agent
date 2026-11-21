@@ -140,6 +140,7 @@ export function createApp(deps: AppDeps): AppServices {
     projects,
     tasks,
     credentials: deps.github?.credentials,
+    writeCredentialRef: deps.githubIssueWrite?.credentialRef,
     now: deps.now,
   });
   const projectService = new ProjectService({
@@ -219,6 +220,8 @@ export function createApp(deps: AppDeps): AppServices {
           store,
           drafts: draftRepository,
           actions,
+          projects,
+          readTool: registry.get("github.read"),
           draftService: issueDrafts,
           taskService,
           actionService,

@@ -166,7 +166,7 @@ export class TaskService {
     this.#leaseMs = deps.assignmentLeaseMs ?? 120_000;
     this.#maxAssignmentLifetimeMs =
       deps.assignmentMaxLifetimeMs ?? 10 * 60_000;
-    this.#maxTaskAttempts = deps.maxTaskAttempts ?? 6;
+    this.#maxTaskAttempts = deps.maxTaskAttempts ?? 3;
     this.#budget = deps.budget;
     this.#completion =
       deps.completionVerifier ??
@@ -300,6 +300,19 @@ export class TaskService {
       `external:${outcome.verification.verifier}:${outcome.verification.verdict}`,
     );
     return updated;
+  }
+
+  /**
+   * A read-only project review legitimately needs several tool rounds before
+   * it can report findings. Grant a bounded extra allowance only for that
+   * skill; other tasks keep the configured attempt budget.
+   */
+  #attemptLimit(task: TaskRecord): number {
+    const reviewExtra =
+      task.mandate.skills?.includes("github.project-review") === true ? 3 : 0;
+    return (
+      this.#maxTaskAttempts + reviewExtra + this.#tasks.countInputs(task.id)
+    );
   }
 
   #activePluginIds(): string[] {
@@ -614,7 +627,7 @@ export class TaskService {
       // task; requeueing it again would redispatch forever. Each accepted
       // owner input grants one additional work round, so a long task that is
       // supplemented is not failed as if the supplements were retries.
-      if (task.attempts >= this.#maxTaskAttempts + this.#tasks.countInputs(task.id)) {
+      if (task.attempts >= this.#attemptLimit(task)) {
         const failed = this.#tasks.updateTask(task.id, task.revision, {
           status: "failed",
           lastError: `assignment lease expired after ${task.attempts} attempt(s)`,
@@ -700,8 +713,7 @@ export class TaskService {
       };
     }
 
-    const attemptLimit =
-      this.#maxTaskAttempts + this.#tasks.countInputs(claimed.task.id);
+    const attemptLimit = this.#attemptLimit(claimed.task);
     if (claimed.task.attempts > attemptLimit) {
       const at = this.#now().toISOString();
       this.#tasks.markAssignmentExpired(claimed.assignment.id, at);
@@ -1408,7 +1420,7 @@ export class TaskService {
       case "working": {
         if (
           task.attempts >=
-          this.#maxTaskAttempts + this.#tasks.countInputs(task.id)
+          this.#attemptLimit(task)
         ) {
           this.#tasks.updateTask(task.id, task.revision, {
             status: "failed",

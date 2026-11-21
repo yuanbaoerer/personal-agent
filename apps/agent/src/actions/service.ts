@@ -183,6 +183,12 @@ export class ActionService {
       this.#maxToolCallsPerTask - this.#actions.listByTask(task.id).length;
     const autoApprove: string[] = [];
     for (const item of proposed) {
+      if (item.tool.startsWith("github.issue.")) {
+        // Typed issue writes are only proposed by the draft approval bridge,
+        // never directly by a Worker report.
+        rejected += 1;
+        continue;
+      }
       const canonical = this.#canonicalProposal(task, item);
       if (canonical === undefined) {
         continue;
@@ -1073,6 +1079,12 @@ export class ActionService {
     }
     if (!task.mandate.tools.includes(action.tool)) {
       return "tool_outside_mandate";
+    }
+    if (
+      action.tool.startsWith("github.issue.") &&
+      (action.sourceKey === undefined || !action.sourceKey.startsWith("draft:"))
+    ) {
+      return "write_requires_approved_draft";
     }
     const tool = this.#tools.get(action.tool);
     if (

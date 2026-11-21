@@ -85,6 +85,7 @@ function mapAction(row: ActionRow): ActionRecord {
     pluginDigest: row.plugin_digest ?? undefined,
     catalogGeneration:
       row.catalog_generation === null ? undefined : Number(row.catalog_generation),
+    ...(row.source_key === null ? {} : { sourceKey: row.source_key }),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

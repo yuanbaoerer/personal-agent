@@ -4,6 +4,8 @@ import type { ActionService } from "../actions/service.ts";
 import type { CapabilityView } from "../plugins/fence.ts";
 import type { IssueDraftRepository } from "../storage/issue-drafts.ts";
 import type { ActionRepository } from "../storage/actions.ts";
+import type { ProjectRepository } from "../storage/projects.ts";
+import type { ActionTool } from "../actions/tooling.ts";
 import type { Store } from "../storage/store.ts";
 import type { TaskService } from "../coordinator/tasks.ts";
 import type { IssueDraftService, IssueDraftView } from "./issue-drafts.ts";
@@ -32,6 +34,8 @@ export class IssueDraftApprovalBridge {
   readonly #store: Store;
   readonly #drafts: IssueDraftRepository;
   readonly #actions: ActionRepository;
+  readonly #projects: ProjectRepository;
+  readonly #readTool?: ActionTool;
   readonly #draftService: IssueDraftService;
   readonly #taskService: TaskService;
   readonly #actionService: ActionService;
@@ -44,6 +48,8 @@ export class IssueDraftApprovalBridge {
     store: Store;
     drafts: IssueDraftRepository;
     actions: ActionRepository;
+    projects: ProjectRepository;
+    readTool?: ActionTool;
     draftService: IssueDraftService;
     taskService: TaskService;
     actionService: ActionService;
@@ -55,6 +61,8 @@ export class IssueDraftApprovalBridge {
     this.#store = deps.store;
     this.#drafts = deps.drafts;
     this.#actions = deps.actions;
+    this.#projects = deps.projects;
+    this.#readTool = deps.readTool;
     this.#draftService = deps.draftService;
     this.#taskService = deps.taskService;
     this.#actionService = deps.actionService;
@@ -102,13 +110,13 @@ export class IssueDraftApprovalBridge {
     });
   }
 
-  approve(input: {
+  async approve(input: {
     ownerId: string;
     conversationId: string;
     draftId: string;
     payloadHash: string;
     actorId: string;
-  }): DraftApprovalResult {
+  }): Promise<DraftApprovalResult> {
     const draft = this.#draftService.get(input.ownerId, input.draftId);
     if (draft === undefined) {
       return { ok: false, reason: "draft_not_found" };
@@ -130,6 +138,41 @@ export class IssueDraftApprovalBridge {
       credential.version !== draft.credentialVersion
     ) {
       return { ok: false, reason: "credential_changed", draft };
+    }
+    const revision = await this.#currentRevision(draft, input.ownerId);
+    if (!revision.ok) {
+      return { ok: false, reason: revision.reason, draft };
+    }
+    if (revision.sha.toLowerCase() !== draft.commitSha.toLowerCase()) {
+      const at = this.#now().toISOString();
+      const superseded = this.#drafts.updateStatus(
+        draft.id,
+        "superseded",
+        at,
+        {},
+        ["pending_approval"],
+      );
+      this.#store.recordAudit({
+        actorId: input.actorId,
+        event: "issue_draft.superseded",
+        subjectType: "issue_draft",
+        subjectId: draft.id,
+        after: {
+          reason: "revision_changed",
+          recorded: draft.commitSha,
+          current: revision.sha,
+        },
+        traceId: `issue-draft:${draft.id}`,
+        occurredAt: at,
+      });
+      return {
+        ok: false,
+        reason: "revision_changed",
+        draft:
+          superseded === undefined
+            ? draft
+            : this.#draftService.get(input.ownerId, draft.id),
+      };
     }
     const tool = TOOL_FOR_ACTION[draft.action];
     const info = this.#capabilities.toolInfo(tool);
@@ -242,6 +285,41 @@ export class IssueDraftApprovalBridge {
       action: proposed.action,
       taskId: task.id,
     };
+  }
+
+  /**
+   * A draft is only approvable while the repository still points at the
+   * verified commit. This prevents an old approval from writing after main
+   * moved; a new review must produce a new snapshot.
+   */
+  async #currentRevision(
+    draft: IssueDraftSnapshot,
+    ownerId: string,
+  ): Promise<{ ok: true; sha: string } | { ok: false; reason: string }> {
+    if (this.#readTool === undefined) {
+      return { ok: false, reason: "revision_check_unavailable" };
+    }
+    const binding = this.#projects.findActiveByKey(ownerId, draft.projectKey);
+    if (binding === undefined || binding.repositoryId !== draft.repositoryId) {
+      return { ok: false, reason: "project_binding_changed" };
+    }
+    try {
+      const result = await this.#readTool.execute(
+        {
+          operation: "ref",
+          projectKey: draft.projectKey,
+          repo: binding.repositoryFullName,
+          ref: `heads/${binding.defaultBranch}`,
+        },
+        { ownerId, project: draft.projectKey },
+      );
+      const sha = result.evidence.sha;
+      return typeof sha === "string" && /^[0-9a-f]{40}$/i.test(sha)
+        ? { ok: true, sha }
+        : { ok: false, reason: "revision_check_failed" };
+    } catch {
+      return { ok: false, reason: "revision_check_failed" };
+    }
   }
 
   reject(

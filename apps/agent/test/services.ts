@@ -133,6 +133,7 @@ export function createServices(options: {
     projects,
     tasks,
     credentials: options.github?.credentials,
+    writeCredentialRef: options.githubIssueWrite?.credentialRef,
     now,
   });
   const projectService = new ProjectService({
@@ -223,6 +224,8 @@ export function createServices(options: {
           store,
           drafts: new IssueDraftRepository(db),
           actions,
+          projects,
+          readTool: registry.get("github.read"),
           draftService: issueDrafts,
           taskService,
           actionService,
