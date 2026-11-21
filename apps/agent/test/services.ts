@@ -31,6 +31,8 @@ import { SchedulePolicyRepository } from "../src/storage/schedule-policies.ts";
 import { EffectRepository } from "../src/storage/effects.ts";
 import { MemoryRepository, ScheduleRepository } from "../src/storage/personal.ts";
 import { ProjectRepository } from "../src/storage/projects.ts";
+import { IssueDraftRepository } from "../src/storage/issue-drafts.ts";
+import { IssueDraftService } from "../src/personal/issue-drafts.ts";
 import { TaskRepository } from "../src/storage/tasks.ts";
 import type { Store } from "../src/storage/store.ts";
 import { ProjectService } from "../src/personal/projects.ts";
@@ -49,6 +51,7 @@ export interface TestServices {
   preauthorizations: PreauthorizationRepository;
   schedulePolicies: SchedulePolicyRepository;
   projects: ProjectRepository;
+  issueDrafts: IssueDraftService;
   runtime: FakeRuntime;
   lamp: MockLampTool;
   tools: ToolRegistry;
@@ -121,7 +124,20 @@ export function createServices(options: {
   const preauthorizations = new PreauthorizationRepository(db);
   const schedulePolicies = new SchedulePolicyRepository(db);
   const projects = new ProjectRepository(db);
-  const projectService = new ProjectService({ projects, store, now });
+  const issueDrafts = new IssueDraftService({
+    store,
+    drafts: new IssueDraftRepository(db),
+    projects,
+    tasks,
+    credentials: options.github?.credentials,
+    now,
+  });
+  const projectService = new ProjectService({
+    projects,
+    store,
+    now,
+    drafts: issueDrafts,
+  });
   const state = new StateReadService({
     tasks,
     schedules,
@@ -162,6 +178,7 @@ export function createServices(options: {
     extensions: catalog,
     capabilities: catalog,
     skills: options.skills,
+    verifiedDrafts: issueDrafts,
   });
   const preauthorization = new PreauthorizationService({
     store,
@@ -248,6 +265,7 @@ export function createServices(options: {
     preauthorizations,
     schedulePolicies,
     projects,
+    issueDrafts,
     runtime,
     lamp,
     tools: registry,

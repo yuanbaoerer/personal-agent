@@ -163,7 +163,7 @@ export class TaskService {
     this.#leaseMs = deps.assignmentLeaseMs ?? 120_000;
     this.#maxAssignmentLifetimeMs =
       deps.assignmentMaxLifetimeMs ?? 10 * 60_000;
-    this.#maxTaskAttempts = deps.maxTaskAttempts ?? 3;
+    this.#maxTaskAttempts = deps.maxTaskAttempts ?? 6;
     this.#budget = deps.budget;
     this.#completion =
       deps.completionVerifier ??
@@ -1722,10 +1722,25 @@ function workerPrompt(
   }
   if (priorActions.length > 0) {
     lines.push("Previous action results (use these instead of proposing the same action again):");
+    let remaining = 60_000;
     for (const action of priorActions) {
-      lines.push(
-        `- ${action.tool} ${action.status} args=${JSON.stringify(action.args)} evidence=${JSON.stringify(action.evidence ?? {})}`,
-      );
+      if (remaining <= 0) {
+        lines.push("- … more receipts exist in the assignment record; cite their source URLs from the evidence you already saw.");
+        break;
+      }
+      const evidence = JSON.stringify(action.evidence ?? {});
+      const bounded =
+        evidence.length > 8_000
+          ? `${evidence.slice(0, 8_000)}…[evidence truncated in prompt; the full receipt is persisted]`
+          : evidence;
+      const line = `- ${action.tool} ${action.status} args=${JSON.stringify(action.args)} evidence=${bounded}`;
+      if (line.length > remaining) {
+        lines.push(`${line.slice(0, remaining)}…[prompt budget reached]`);
+        remaining = 0;
+        continue;
+      }
+      lines.push(line);
+      remaining -= line.length;
     }
   }
   return lines.join("\n");

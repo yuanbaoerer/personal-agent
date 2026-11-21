@@ -222,3 +222,66 @@ describe("client CLI and SDK", () => {
     ]);
   });
 });
+
+describe("drafts CLI", () => {
+  const draft = {
+    id: "draft-1",
+    ownerId: "owner",
+    projectKey: "personal-agent",
+    repositoryId: 101,
+    repositoryFullName: "owner/repo",
+    sourceTaskId: "task-1",
+    sourceTaskRevision: 1,
+    sourceAssignmentId: "assignment-1",
+    commitSha: "a".repeat(40),
+    findingIds: ["f1"],
+    action: "create",
+    title: "Add draft snapshot lifecycle",
+    body: "Persist payload and approval binding.",
+    payloadHash: "b".repeat(64),
+    idempotencyKey: "c".repeat(32),
+    credentialRef: "github:default",
+    credentialVersion: 1,
+    status: "pending_approval",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    expiresAt: "2026-01-08T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  };
+
+  it("lists and rejects drafts through the client API", async () => {
+    const requests: { method: string; url: string }[] = [];
+    const fakeFetch: typeof fetch = async (input, init) => {
+      const request = new Request(input, init);
+      requests.push({ method: request.method, url: request.url });
+      if (request.method === "POST") {
+        return jsonResponse({ draft: { ...draft, status: "rejected" } });
+      }
+      return jsonResponse({ drafts: [draft] });
+    };
+    const env = { PA_API_URL: "http://api.local", PA_API_TOKEN: "pa_secret" };
+    const list = captureIo();
+    assert.equal(
+      await runCli(
+        ["drafts", "list", "--project", "personal-agent", "--status", "pending_approval", "--json"],
+        env,
+        list.io,
+        fakeFetch,
+      ),
+      0,
+    );
+    assert.match(requests[0]?.url ?? "", /\/api\/v1\/drafts\?/);
+    assert.match(requests[0]?.url ?? "", /project=personal-agent/);
+    assert.match(requests[0]?.url ?? "", /status=pending_approval/);
+    assert.match(list.out.join("\n"), /owner\/repo/);
+
+    const reject = captureIo();
+    assert.equal(
+      await runCli(["drafts", "reject", "draft-1", "--yes"], env, reject.io, fakeFetch),
+      0,
+    );
+    assert.equal(requests[1]?.method, "POST");
+    assert.match(requests[1]?.url ?? "", /\/api\/v1\/drafts\/draft-1\/reject$/);
+    assert.match(reject.out.join("\n"), /rejected/);
+    assert.match(reject.out.join("\n"), /before:/);
+  });
+});

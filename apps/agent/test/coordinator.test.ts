@@ -748,7 +748,7 @@ describe("task and assignment coordination", () => {
 
   it("fails a task when an expired assignment reaches the attempt limit", () => {
     let current = new Date("2026-01-01T00:00:00.000Z");
-    const services = createServices({ now: () => current });
+    const services = createServices({ now: () => current, maxTaskAttempts: 3 });
     const task = services.taskService.create({
       ownerId: services.owner.id,
       conversationId: services.conversation.id,

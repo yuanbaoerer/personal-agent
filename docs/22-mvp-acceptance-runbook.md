@@ -135,3 +135,15 @@ sqlite3 data/agent.sqlite "select status,text from pa_outbox order by created_at
 ```
 
 若 owner 未提供真实 GitHub 凭据或无法从真实飞书发送，记录 BLOCKED；不得用 mock/fake API 结果标记 E3。
+
+## 7. 草稿审核（L2W-01，无写入）
+
+真实只读评估完成后，owner 可通过 CLI 查看：
+
+```sh
+pa drafts list --status pending_approval
+pa drafts show <draft-id>
+pa drafts reject <draft-id> --yes
+```
+
+期望：列表/详情包含目标 repository/Issue、source task/revision、commit SHA、finding ids、beforeSummary、拟写入正文、payloadHash 与 expiresAt；`reject` 后状态为 `rejected`，再次 reject 返回冲突。此阶段不得出现任何 GitHub 写请求或写入成功声明。

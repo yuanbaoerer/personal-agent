@@ -140,3 +140,16 @@ L2 需 GH01–06 与相关 GH09；L3 pilot 需 GH07–10 与相应 #41 原验收
 - 安全负例：错误 projectKey、task mandate 不符、跨 owner、绑定撤销、缺失/撤销凭据、repositoryId 不匹配、PR head 漂移、跨 revision finding、settled action 重放；均在任何 fetch 前或 Verifier 处失败。
 - E1：`project-review-e2e.test.ts` 5 场景；全量 471 tests passed。
 - 真实 E3 尚未通过真实飞书入站；owner 步骤见 [22 · Runbook](22-mvp-acceptance-runbook.md) §6。无 owner 凭据时保持 BLOCKED。
+
+## 9. 2026-11-22 L2W-01：DraftSnapshot 生命周期
+
+**状态：CODE_COMPLETE + E1_PASS；本阶段不执行 GitHub 写入。**
+
+- 通过 `project-review` Verifier 的草稿持久化到 `pa_issue_drafts`：目标 repo/repoId、source task/revision/assignment、commit SHA、findings、action/targetIssue、beforeHash/beforeSummary、payloadHash、idempotencyKey、credentialRef/version、状态与过期时间。
+- 草稿只在 Verifier 成功后由 TaskService 在同一事务内持久化；未通过验证的报告不会产生审批对象。
+- 重复评估按 `(owner, repositoryId, idempotencyKey)` 去重：同 payload/同 revision/同 findings 复用原行；payload 变化时旧行 superseded，新行重新待审批。
+- 失效检查：expiry、source task revision/cancel/fail、ProjectBinding 解绑或更新、credential revoke/rotate 都会使旧草稿 superseded；ProjectService 解绑/更新时主动失效。
+- 审批载荷 `payloadHash` 由程序计算，绑定 repoId、commit、action、目标 Issue、标题、正文与 idempotencyKey；外部 Issue 被修改的校验将在 Approval Bridge 写前重新读取时执行。
+- API/CLI：`GET /api/v1/drafts`、`GET /api/v1/drafts/:id`、`POST /api/v1/drafts/:id/reject`；`pa drafts list|show|reject`，展示目标 repo/Issue、来源、before/after、payloadHash 与过期时间。
+- E1：全量 480 tests passed，覆盖持久化、去重、reject、revision/binding/credential 失效、expiry 与 API/CLI 权限。
+- 未实现（L2W-02）：owner approve 命令、写入 Action、GitHub API 调用。当前没有任何写路径。
