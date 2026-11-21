@@ -5,6 +5,7 @@ All notable changes are recorded here. This project does not yet have a stable r
 ## Unreleased
 
 - Extension Platform V1 first slice merged to main: PR #74 (plugin runtime + GitHub plugin), #75 (SKILL.md runtime), #76 (read-only MCP host), #78 (task-level ExtensionPolicy), with real acceptance evidence in #77. 426 tests pass; typecheck, secret scan, install smoke and deploy dry-run pass. Remaining: WorkProfile/ModeCatalog, MCP OAuth/stdio/writes, Feishu inbound, real OAuth negatives and CI billing.
+- EXT-03 follow-up: MCP non-trusted connections are pinned to the DNS address that passed validation via an undici Agent; `trustedHosts` remains an explicit proxy/on-prem bypass. Response streams still hard-fail at 2 MiB.
 - Reliable core: persistent Inbox/Outbox, Task/Assignment fencing, TaskInput barriers, Action approval/claim guards, restart recovery, duplicate delivery handling.
 - Read-only GitHub connector with explicit repo allowlist and revocable preauthorization.
 - Sharded task completion verification with `needs_review` and `/ack`.

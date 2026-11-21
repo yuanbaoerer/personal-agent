@@ -138,7 +138,7 @@ curl -fsS http://127.0.0.1:8787/healthz
 - `pa_memories` 增加 `project` 作用域（空为全局）；`/remember [--project=名称] key=value`、`/memory [--project=名称]`、`/forget [--project=名称] key`；同一 key 可在不同项目并存。
 - Worker prompt 只注入全局 + 当前 Task `mandate.project` 的记忆，最多 20 条/每条 1000 字符，不注入其他项目；Router 不注入记忆。项目名只允许 1–64 位字母/数字/点/下划线/连字符。
 - 模型 `save_memory` 可带 project，确认卡显示项目后再写入；`/confirm` 仍按项目隔离复核。
-- `npm test`：426 个确定性测试通过（当前）；`npm run install:smoke` 在临时干净副本通过。包含 Client API/CLI/TUI 契约、插件 catalog/lifecycle、SKILL.md loader、ExtensionPolicy 与 MCP host 测试；macos-26-arm64 与 windows-2025-vs2026 CI job 已配置，但 2026-11-20 最新 run 因账户账单未启动；SSE child/main SIGKILL/重启测试通过。
+- `npm test`：427 个确定性测试通过（当前）；`npm run install:smoke` 在临时干净副本通过。包含 Client API/CLI/TUI 契约、插件 catalog/lifecycle、SKILL.md loader、ExtensionPolicy 与 MCP host 测试；macos-26-arm64 与 windows-2025-vs2026 CI job 已配置，但 2026-11-20 最新 run 因账户账单未启动；SSE child/main SIGKILL/重启测试通过。
 - 证据边界：E1；真实模型误触发/提示注入负例、语义检索与项目权限模型仍 pending。
 
 **2026-11-18 验证（PA-07 部分）：**

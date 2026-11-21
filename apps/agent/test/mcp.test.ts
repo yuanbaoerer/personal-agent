@@ -21,6 +21,7 @@ import { createStore } from "./helpers.ts";
 const NOW = new Date("2026-01-01T00:00:00.000Z");
 
 interface FakeServerOptions {
+  host?: string;
   requireAuth?: string;
   tools?: { name: string; description?: string }[];
   call?: (name: string, args: Record<string, unknown>) => Promise<Record<string, unknown>>;
@@ -96,8 +97,9 @@ async function startFakeServer(options: FakeServerOptions = {}) {
       void server.close();
     });
   });
+  const host = options.host ?? "127.0.0.1";
   const port = await new Promise<number>((resolve, reject) => {
-    http.listen(0, "127.0.0.1", () => {
+    http.listen(0, host, () => {
       const address = http.address();
       if (address === null || typeof address === "string") {
         reject(new Error("fake MCP server did not bind"));
@@ -107,7 +109,7 @@ async function startFakeServer(options: FakeServerOptions = {}) {
     });
   });
   return {
-    url: `http://127.0.0.1:${port}/mcp`,
+    url: `http://${host}:${port}/mcp`,
     calls,
     close: () =>
       new Promise<void>((resolve) => {
@@ -241,6 +243,49 @@ describe("MCP read-only plugin", () => {
       assert.match(JSON.stringify(execution.evidence), /echo:hello/);
       assert.equal(fake.calls[0]?.auth, "Bearer mcp-secret");
       result.plugin.close?.();
+    } finally {
+      await fake.close();
+    }
+  });
+
+  it("pins an untrusted hostname through the validated resolver", async () => {
+    const fake = await startFakeServer();
+    try {
+      const hostnameUrl = fake.url.replace("127.0.0.1", "localhost");
+      let lookups = 0;
+      let sawAll = false;
+      const result = await connectMcpPlugin(definition(hostnameUrl), {
+        dnsLookup: async () => [{ address: "127.0.0.1", family: 4 }],
+        onPinnedLookup: (hostname, all) => {
+          assert.equal(hostname, "localhost");
+          lookups += 1;
+          sawAll ||= all;
+        },
+      });
+      assert.equal(result.error, undefined);
+      assert.equal(result.plugin.configured, true);
+      const tool = result.plugin.createTools()[0];
+      assert.ok(tool);
+      const execution = await tool.execute({ value: "pinned" });
+      assert.match(JSON.stringify(execution.evidence), /echo:pinned/);
+      assert.equal(fake.calls.length, 1);
+      assert.ok(lookups > 0, "expected the pinned resolver to be used");
+      assert.equal(sawAll, true, "expected Node all-address lookup mode");
+      result.plugin.close?.();
+
+      const unresolved = await connectMcpPlugin(definition(hostnameUrl), {
+        dnsLookup: async () => [],
+      });
+      assert.match(unresolved.error ?? "", /did not resolve/);
+
+      // 127.0.0.9 is not the system localhost answer. If the pin were ignored,
+      // the fake server on 127.0.0.1 would answer; with pinning it cannot.
+      const pinnedElsewhere = await connectMcpPlugin(
+        { ...definition(hostnameUrl), timeoutMs: 500 },
+        { dnsLookup: async () => [{ address: "127.0.0.9", family: 4 }] },
+      );
+      assert.match(pinnedElsewhere.error ?? "", /timed out|fetch failed|connect/i);
+      assert.equal(pinnedElsewhere.plugin.configured, false);
     } finally {
       await fake.close();
     }
