@@ -14,11 +14,31 @@ import { PluginCatalog } from "../src/plugins/catalog.ts";
 import {
   connectMcpPlugin,
   parseMcpServers,
+  type McpConnectOptions,
+  type McpReadOnlyContract,
   type McpServerDefinition,
 } from "../src/plugins/mcp.ts";
 import { createStore } from "./helpers.ts";
 
 const NOW = new Date("2026-01-01T00:00:00.000Z");
+
+const TEST_CONTRACT: McpReadOnlyContract = {
+  provider: "test",
+  version: "1",
+  hosts: ["127.0.0.1", "localhost", "10.0.0.1", "example.com"],
+  tools: {
+    echo: {
+      description: "Echo a value.",
+      verification: "Test-only contract.",
+    },
+    missing: {
+      description: "Declared but absent from the fake server.",
+      verification: "Test-only contract.",
+    },
+  },
+};
+
+const TEST_OPTIONS: McpConnectOptions = { contracts: [TEST_CONTRACT] };
 
 interface FakeServerOptions {
   host?: string;
@@ -130,6 +150,8 @@ function definition(url: string, overrides: Partial<McpServerDefinition> = {}): 
   return {
     id: "fake-mcp",
     name: "Fake MCP",
+    provider: "test",
+    contractVersion: "1",
     url,
     allowInsecureLocalhost: true,
     tools: [
@@ -150,12 +172,24 @@ describe("MCP config", () => {
         {
           id: "fake-mcp",
           name: "Fake",
+          provider: "test",
+          contractVersion: "1",
           url: "https://example.com/mcp",
-          tools: [{ remoteName: "echo", name: "echo" }],
+          tools: [
+            {
+              remoteName: "echo",
+              name: "echo",
+              args: { perPage: { type: "number", min: 1 } },
+            },
+          ],
         },
       ],
     };
     assert.equal(parseMcpServers(valid).length, 1);
+    const emptyTrustedHosts = parseMcpServers({
+      servers: [{ ...valid.servers[0], trustedHosts: [] }],
+    });
+    assert.deepEqual(emptyTrustedHosts[0]?.trustedHosts, []);
     const trusted = parseMcpServers({
       servers: [
         {
@@ -173,11 +207,17 @@ describe("MCP config", () => {
       /invalid hostname/,
     );
     assert.throws(
-      () => parseMcpServers({ servers: [{ ...valid.servers[0], authEnv: "GITHUB_TOKEN" }] }),
+      () =>
+        parseMcpServers({
+          servers: [{ ...valid.servers[0], authEnv: "GITHUB_TOKEN" }],
+        }),
       /PA_MCP_/,
     );
     assert.throws(
-      () => parseMcpServers({ servers: [{ ...valid.servers[0], id: "Bad Id" }] }),
+      () =>
+        parseMcpServers({
+          servers: [{ ...valid.servers[0], id: "Bad Id" }],
+        }),
       /id is invalid/,
     );
     assert.throws(
@@ -197,13 +237,116 @@ describe("MCP config", () => {
     );
   });
 
-  it("rejects private or insecure URLs before connecting", async () => {
-    const insecure = await connectMcpPlugin({
-      ...definition("http://127.0.0.1:9/mcp"),
-      allowInsecureLocalhost: false,
+  it("rejects unverified providers, endpoints and remote tools", async () => {
+    const valid = {
+      id: "github-mcp",
+      name: "GitHub MCP",
+      provider: "github",
+      contractVersion: "1",
+      url: "https://api.githubcopilot.com/mcp/",
+      tools: [{ remoteName: "get_commit", name: "get_commit" }],
+    };
+    assert.equal(parseMcpServers({ servers: [valid] }).length, 1);
+
+    const provider = await connectMcpPlugin(
+      definition("https://example.com/mcp", { provider: "unknown" }),
+      TEST_OPTIONS,
+    );
+    assert.match(provider.error ?? "", /no compiled read-only contract/);
+    assert.equal(provider.plugin.configured, false);
+
+    const version = await connectMcpPlugin(
+      definition("https://example.com/mcp", { contractVersion: "2" }),
+      TEST_OPTIONS,
+    );
+    assert.match(version.error ?? "", /no read-only contract version/);
+
+    const endpoint = await connectMcpPlugin(
+      definition("https://evil.example/mcp"),
+      TEST_OPTIONS,
+    );
+    assert.match(endpoint.error ?? "", /not verified for test@1/);
+
+    for (const remoteName of ["create_issue", "get_secret_write"]) {
+      const tool = await connectMcpPlugin(
+        definition("https://example.com/mcp", {
+          tools: [{ remoteName, name: remoteName }],
+        }),
+        TEST_OPTIONS,
+      );
+      assert.match(tool.error ?? "", /not verified as read-only/);
+      assert.deepEqual(tool.plugin.manifest.exports.tools, []);
+    }
+  });
+
+  it("does not expose a remote write tool merely because it was configured", async () => {
+    const fake = await startFakeServer({
+      tools: [
+        { name: "create_issue" },
+        { name: "get_secret_write" },
+      ],
     });
+    try {
+      const result = await connectMcpPlugin(
+        definition(fake.url, {
+          tools: [{ remoteName: "create_issue", name: "create_issue" }],
+        }),
+        TEST_OPTIONS,
+      );
+      assert.match(result.error ?? "", /not verified as read-only/);
+      assert.equal(result.plugin.configured, false);
+      assert.deepEqual(result.plugin.manifest.exports.tools, []);
+      assert.deepEqual(result.plugin.manifest.capabilities, []);
+      assert.match(result.plugin.manifest.description ?? "", /no verified read-only tools/);
+      assert.throws(() => result.plugin.createTools(), /not verified as read-only/);
+      const store = createStore();
+      const registry = new ToolRegistry();
+      const catalog = new PluginCatalog({
+        store,
+        registry,
+        plugins: [result.plugin],
+        now: () => NOW,
+      });
+      assert.deepEqual(catalog.toolNamesFor("fake-mcp"), []);
+      assert.equal(registry.get("fake-mcp.create_issue"), undefined);
+      store.close();
+
+      const disguised = await connectMcpPlugin(
+        definition(fake.url, {
+          tools: [{ remoteName: "get_secret_write", name: "get_secret_write" }],
+        }),
+        TEST_OPTIONS,
+      );
+      assert.match(disguised.error ?? "", /not verified as read-only/);
+      assert.deepEqual(disguised.plugin.manifest.exports.tools, []);
+
+      const production = await connectMcpPlugin({
+        ...definition("https://api.githubcopilot.com/mcp/"),
+        provider: "github",
+        contractVersion: "1",
+        tools: [{ remoteName: "create_issue", name: "create_issue" }],
+      });
+      assert.match(production.error ?? "", /not verified as read-only/);
+      assert.equal(production.plugin.configured, false);
+      assert.deepEqual(production.plugin.manifest.exports.tools, []);
+    } finally {
+      await fake.close();
+    }
+  });
+
+  it("rejects private or insecure URLs before connecting", async () => {
+    const insecure = await connectMcpPlugin(
+      {
+        ...definition("http://127.0.0.1:9/mcp"),
+        allowInsecureLocalhost: false,
+      },
+      TEST_OPTIONS,
+    );
     assert.match(insecure.error ?? "", /https|localhost/);
-    const privateUrl = await connectMcpPlugin(definition("https://10.0.0.1/mcp"));
+    const privateUrl = await connectMcpPlugin(
+      definition("https://10.0.0.1/mcp"),
+      TEST_OPTIONS,
+    );
     assert.match(privateUrl.error ?? "", /private address/);
   });
 });
@@ -220,15 +363,25 @@ describe("MCP read-only plugin", () => {
     try {
       const result = await connectMcpPlugin(
         definition(fake.url, { authEnv: "PA_MCP_TEST_TOKEN" }),
-        { env: { PA_MCP_TEST_TOKEN: "mcp-secret" } },
+        { ...TEST_OPTIONS, env: { PA_MCP_TEST_TOKEN: "mcp-secret" } },
       );
       assert.equal(result.error, undefined);
       assert.equal(result.plugin.configured, true);
       assert.deepEqual(result.plugin.manifest.exports.tools, ["fake-mcp.echo"]);
       assert.equal(
         result.plugin.manifest.capabilities[0]?.description,
-        undefined,
+        "Echo a value.",
       );
+      const readOnlyContract = result.plugin.manifest.config.readOnlyContract as {
+        tools: string[];
+        verification: { name: string; verification: string }[];
+      };
+      assert.deepEqual(readOnlyContract.tools, ["echo", "missing"]);
+      assert.deepEqual(
+        readOnlyContract.verification.map((item) => item.name),
+        ["echo"],
+      );
+      assert.match(readOnlyContract.verification[0]?.verification ?? "", /Test-only/);
       const tool = result.plugin.createTools()[0];
       assert.ok(tool);
       assert.equal(tool.name, "fake-mcp.echo");
@@ -255,6 +408,7 @@ describe("MCP read-only plugin", () => {
       let lookups = 0;
       let sawAll = false;
       const result = await connectMcpPlugin(definition(hostnameUrl), {
+        ...TEST_OPTIONS,
         dnsLookup: async () => [{ address: "127.0.0.1", family: 4 }],
         onPinnedLookup: (hostname, all) => {
           assert.equal(hostname, "localhost");
@@ -274,6 +428,7 @@ describe("MCP read-only plugin", () => {
       result.plugin.close?.();
 
       const unresolved = await connectMcpPlugin(definition(hostnameUrl), {
+        ...TEST_OPTIONS,
         dnsLookup: async () => [],
       });
       assert.match(unresolved.error ?? "", /did not resolve/);
@@ -282,7 +437,10 @@ describe("MCP read-only plugin", () => {
       // the fake server on 127.0.0.1 would answer; with pinning it cannot.
       const pinnedElsewhere = await connectMcpPlugin(
         { ...definition(hostnameUrl), timeoutMs: 500 },
-        { dnsLookup: async () => [{ address: "127.0.0.9", family: 4 }] },
+        {
+          ...TEST_OPTIONS,
+          dnsLookup: async () => [{ address: "127.0.0.9", family: 4 }],
+        },
       );
       assert.match(pinnedElsewhere.error ?? "", /timed out|fetch failed|connect/i);
       assert.equal(pinnedElsewhere.plugin.configured, false);
@@ -296,7 +454,7 @@ describe("MCP read-only plugin", () => {
     try {
       const noAuth = await connectMcpPlugin(
         definition(fake.url, { authEnv: "PA_MCP_TEST_TOKEN" }),
-        { env: {} },
+        { ...TEST_OPTIONS, env: {} },
       );
       assert.match(noAuth.error ?? "", /auth is missing/);
       assert.throws(() => noAuth.plugin.createTools(), /auth is missing/);
@@ -306,7 +464,7 @@ describe("MCP read-only plugin", () => {
           authEnv: "PA_MCP_TEST_TOKEN",
           tools: [{ remoteName: "missing", name: "missing" }],
         }),
-        { env: { PA_MCP_TEST_TOKEN: "mcp-secret" } },
+        { ...TEST_OPTIONS, env: { PA_MCP_TEST_TOKEN: "mcp-secret" } },
       );
       assert.match(missingTool.error ?? "", /declared MCP tool is missing/);
     } finally {
@@ -317,7 +475,7 @@ describe("MCP read-only plugin", () => {
   it("registers only the declared tool in the catalog and disables it hot", async () => {
     const fake = await startFakeServer();
     try {
-      const result = await connectMcpPlugin(definition(fake.url));
+      const result = await connectMcpPlugin(definition(fake.url), TEST_OPTIONS);
       assert.equal(result.error, undefined);
       const store = createStore();
       const registry = new ToolRegistry();
@@ -345,7 +503,7 @@ describe("MCP read-only plugin", () => {
       }),
     });
     try {
-      const result = await connectMcpPlugin(definition(fake.url));
+      const result = await connectMcpPlugin(definition(fake.url), TEST_OPTIONS);
       assert.equal(result.error, undefined);
       const tool = result.plugin.createTools()[0];
       assert.ok(tool);
@@ -380,6 +538,7 @@ describe("MCP read-only plugin", () => {
             },
           ],
         }),
+        TEST_OPTIONS,
       );
       assert.equal(result.error, undefined);
       const tool = result.plugin.createTools()[0];

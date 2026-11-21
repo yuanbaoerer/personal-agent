@@ -18,6 +18,7 @@ const ID_PATTERN = /^[a-z][a-z0-9-]{0,63}$/;
 const TOOL_SUFFIX = /^[a-z][a-z0-9_.-]{0,100}$/;
 const VERSION_PATTERN =
   /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$/;
+const CONTRACT_VERSION_PATTERN = /^[0-9A-Za-z][0-9A-Za-z.-]{0,19}$/;
 const AUTH_ENV = /^PA_MCP_[A-Z0-9_]{1,80}$/;
 const MAX_TOOLS = 50;
 const MAX_TEXT_BYTES = 32 * 1024;
@@ -48,10 +49,60 @@ export interface McpToolDefinition {
   args?: Record<string, McpArgSpec>;
 }
 
+export interface McpReadOnlyContractTool {
+  /** Host-authored description; remote descriptions are never trusted. */
+  description: string;
+  /** How this tool was verified to be read-only. */
+  verification: string;
+}
+
+/**
+ * A compiled, owner-auditable contract for remote tools that are known to be
+ * read-only. A JSON config alone can never create one of these: arbitrary
+ * remote methods are not trusted merely because a local config says so.
+ */
+export interface McpReadOnlyContract {
+  provider: string;
+  version: string;
+  hosts: readonly string[];
+  tools: Readonly<Record<string, McpReadOnlyContractTool>>;
+}
+
+/**
+ * The only remote provider with a real read-only acceptance record today.
+ * Keep this list deliberately small; add a tool only after its remote
+ * semantics have been checked and a negative test exists.
+ */
+export const GITHUB_MCP_READ_ONLY_CONTRACT: McpReadOnlyContract = {
+  provider: "github",
+  version: "1",
+  hosts: ["api.githubcopilot.com"],
+  tools: {
+    get_commit: {
+      description: "Read one Git commit by repository and SHA.",
+      verification:
+        "2026-11-20: official api.githubcopilot.com/mcp tools/call compared with REST G1; see docs/acceptance/2026-11-20-real-github-mcp.md.",
+    },
+    list_pull_requests: {
+      description: "List pull requests in one repository.",
+      verification:
+        "2026-11-20: official api.githubcopilot.com/mcp tools/call compared with REST G1; see docs/acceptance/2026-11-20-real-github-mcp.md.",
+    },
+  },
+};
+
+const DEFAULT_MCP_READ_ONLY_CONTRACTS: readonly McpReadOnlyContract[] = [
+  GITHUB_MCP_READ_ONLY_CONTRACT,
+];
+
 export interface McpServerDefinition {
   id: string;
   name: string;
   version?: string;
+  /** Compiled provider contract id, for example `github`. */
+  provider: string;
+  /** Exact version of the compiled read-only contract. */
+  contractVersion: string;
   url: string;
   /** Environment variable holding the bearer token; never a token itself. */
   authEnv?: string;
@@ -70,6 +121,8 @@ export interface McpConnectOptions {
   dnsLookup?: DnsLookup;
   /** Test seam for asserting that the pinned resolver was used. */
   onPinnedLookup?: (hostname: string, all: boolean) => void;
+  /** Host-code/test seam; never populated from PA_MCP_CONFIG. */
+  contracts?: readonly McpReadOnlyContract[];
   timeoutMs?: number;
 }
 
@@ -93,12 +146,15 @@ export async function connectMcpPlugin(
   options: McpConnectOptions = {},
 ): Promise<McpPluginResult> {
   const normalized = normalizeDefinition(definition);
-  const manifest = mcpManifest(normalized);
+  const contracts = options.contracts ?? DEFAULT_MCP_READ_ONLY_CONTRACTS;
+  let manifest = mcpManifest(normalized, []);
   const timeoutMs = normalized.timeoutMs ?? 15_000;
   let failure: string | undefined;
   let client: Client | undefined;
   let agent: Agent | undefined;
   try {
+    const contract = resolveReadOnlyContract(normalized, contracts);
+    manifest = mcpManifest(normalized, normalized.tools, contract);
     const trustedHosts = normalized.trustedHosts ?? [];
     const allowLocalhost = normalized.allowInsecureLocalhost === true;
     const token = resolveAuth(normalized, options.env ?? process.env);
@@ -248,6 +304,18 @@ function parseServer(value: unknown, index: number): McpServerDefinition {
     throw new Error(`servers[${index}].id is invalid`);
   }
   const name = stringValue(record.name, `servers[${index}].name`, 120);
+  const provider = stringValue(record.provider, `servers[${index}].provider`, 64);
+  if (!ID_PATTERN.test(provider)) {
+    throw new Error(`servers[${index}].provider is invalid`);
+  }
+  const contractVersion = stringValue(
+    record.contractVersion,
+    `servers[${index}].contractVersion`,
+    20,
+  );
+  if (!CONTRACT_VERSION_PATTERN.test(contractVersion)) {
+    throw new Error(`servers[${index}].contractVersion is invalid`);
+  }
   const url = stringValue(record.url, `servers[${index}].url`, 2_000);
   const authEnv =
     record.authEnv === undefined
@@ -283,6 +351,8 @@ function parseServer(value: unknown, index: number): McpServerDefinition {
     id,
     name,
     version,
+    provider,
+    contractVersion,
     url,
     authEnv,
     allowInsecureLocalhost: record.allowInsecureLocalhost === true,
@@ -310,7 +380,7 @@ function parseTool(value: unknown, field: string): McpToolDefinition {
     }
     args = {};
     for (const [key, spec] of Object.entries(argsRecord)) {
-      if (!/^[a-z][a-z0-9_]{0,63}$/.test(key)) {
+      if (!/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(key)) {
         throw new Error(`${field}.args has invalid key ${key}`);
       }
       args[key] = parseArg(spec, `${field}.args.${key}`);
@@ -369,8 +439,8 @@ function parseArg(value: unknown, field: string): McpArgSpec {
 }
 
 function parseHosts(value: unknown, field: string): string[] {
-  if (!Array.isArray(value) || value.length === 0 || value.length > 10) {
-    throw new Error(`${field} must contain 1-10 hostnames`);
+  if (!Array.isArray(value) || value.length > 10) {
+    throw new Error(`${field} must contain at most 10 hostnames`);
   }
   const hosts = value.map((item) => {
     if (typeof item !== "string") {
@@ -390,6 +460,18 @@ function normalizeDefinition(definition: McpServerDefinition): McpServerDefiniti
   if (!ID_PATTERN.test(id)) {
     throw new Error("MCP server id is invalid");
   }
+  const provider =
+    typeof definition.provider === "string" ? definition.provider.trim() : "";
+  if (!ID_PATTERN.test(provider)) {
+    throw new Error("MCP server provider is invalid");
+  }
+  const contractVersion =
+    typeof definition.contractVersion === "string"
+      ? definition.contractVersion.trim()
+      : "";
+  if (!CONTRACT_VERSION_PATTERN.test(contractVersion)) {
+    throw new Error("MCP server contractVersion is invalid");
+  }
   const names = new Set<string>();
   const tools = definition.tools.map((tool) => {
     if (names.has(tool.name)) {
@@ -408,13 +490,63 @@ function normalizeDefinition(definition: McpServerDefinition): McpServerDefiniti
   return {
     ...definition,
     id,
+    provider,
+    contractVersion,
     tools,
     trustedHosts: definition.trustedHosts?.map((host) => host.trim().toLowerCase()),
     timeoutMs: definition.timeoutMs ?? 15_000,
   };
 }
 
-function mcpManifest(definition: McpServerDefinition): PluginManifest {
+function resolveReadOnlyContract(
+  definition: McpServerDefinition,
+  contracts: readonly McpReadOnlyContract[],
+): McpReadOnlyContract {
+  const candidates = contracts.filter(
+    (contract) => contract.provider === definition.provider,
+  );
+  if (candidates.length === 0) {
+    throw new Error(
+      `MCP provider ${definition.provider} has no compiled read-only contract`,
+    );
+  }
+  const contract = candidates.find(
+    (candidate) => candidate.version === definition.contractVersion,
+  );
+  if (contract === undefined) {
+    throw new Error(
+      `MCP provider ${definition.provider} has no read-only contract version ${definition.contractVersion}`,
+    );
+  }
+  let hostname: string;
+  try {
+    hostname = normalizedHostname(new URL(definition.url).hostname);
+  } catch {
+    throw new Error("MCP url is invalid");
+  }
+  if (!contract.hosts.some((host) => normalizedHostname(host) === hostname)) {
+    throw new Error(
+      `MCP endpoint ${hostname} is not verified for ${contract.provider}@${contract.version}`,
+    );
+  }
+  for (const tool of definition.tools) {
+    if (!Object.hasOwn(contract.tools, tool.remoteName)) {
+      throw new Error(
+        `MCP tool ${tool.remoteName} is not verified as read-only by ${contract.provider}@${contract.version}`,
+      );
+    }
+  }
+  return contract;
+}
+
+function mcpManifest(
+  definition: McpServerDefinition,
+  tools: readonly McpToolDefinition[],
+  contract?: McpReadOnlyContract,
+): PluginManifest {
+  const contractTools = contract
+    ? Object.keys(contract.tools)
+    : [];
   return parsePluginManifest({
     id: definition.id,
     name: definition.name,
@@ -423,10 +555,10 @@ function mcpManifest(definition: McpServerDefinition): PluginManifest {
     trust: "builtin",
     entrypoint: "builtin:mcp",
     exports: {
-      tools: definition.tools.map((tool) => `${definition.id}.${tool.name}`),
+      tools: tools.map((tool) => `${definition.id}.${tool.name}`),
       skills: [],
     },
-    capabilities: definition.tools.map((tool) => ({
+    capabilities: tools.map((tool) => ({
       name: `${definition.id}.${tool.name}`,
       resource: tool.resource ?? definition.id,
       readOnly: true,
@@ -434,18 +566,39 @@ function mcpManifest(definition: McpServerDefinition): PluginManifest {
       timeoutMs: tool.timeoutMs ?? definition.timeoutMs ?? 15_000,
       permissions: [`${definition.id}.read`],
       operations: ["read"],
-      description: tool.description,
+      description:
+        tool.description ??
+        contract?.tools[tool.remoteName]?.description,
     })),
     auth: definition.authEnv === undefined ? [] : ["bearer-env"],
-    permissions: [`${definition.id}.read`],
+    permissions: tools.length === 0 ? [] : [`${definition.id}.read`],
     defaultPolicy: "enabled",
     config: {
       url: definition.url,
       authEnv: definition.authEnv,
       trustedHosts: definition.trustedHosts,
+      provider: definition.provider,
+      contractVersion: definition.contractVersion,
       tools: definition.tools.map((tool) => tool.remoteName),
+      ...(contract
+        ? {
+            readOnlyContract: {
+              provider: contract.provider,
+              version: contract.version,
+              tools: contractTools,
+              verification: tools.map((tool) => ({
+                name: tool.remoteName,
+                verification:
+                  contract.tools[tool.remoteName]?.verification ?? "missing",
+              })),
+            },
+          }
+        : {}),
     },
-    description: `Remote read-only MCP server ${definition.name}`,
+    description:
+      tools.length === 0
+        ? `Remote MCP server ${definition.name} (no verified read-only tools)`
+        : `Remote read-only MCP server ${definition.name}`,
   });
 }
 
