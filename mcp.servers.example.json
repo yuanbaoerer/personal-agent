@@ -1,24 +1,38 @@
 {
   "servers": [
     {
-      "id": "example-mcp",
-      "name": "Example read-only MCP",
+      "id": "github-mcp",
+      "name": "GitHub official MCP (verified read-only contract)",
       "version": "0.1.0",
-      "url": "https://mcp.example.com/mcp",
-      "authEnv": "PA_MCP_EXAMPLE_TOKEN",
+      "provider": "github",
+      "contractVersion": "1",
+      "url": "https://api.githubcopilot.com/mcp/",
+      "authEnv": "PA_MCP_GITHUB_TOKEN",
       "trustedHosts": [],
       "timeoutMs": 15000,
       "tools": [
         {
-          "remoteName": "search_docs",
-          "name": "search_docs",
-          "description": "Search documentation through the remote MCP server.",
+          "remoteName": "get_commit",
+          "name": "get_commit",
+          "description": "Read one Git commit by repository and SHA.",
           "args": {
-            "query": {
+            "owner": { "type": "string", "required": true, "maxLength": 200 },
+            "repo": { "type": "string", "required": true, "maxLength": 200 },
+            "sha": { "type": "string", "required": true, "maxLength": 200 }
+          }
+        },
+        {
+          "remoteName": "list_pull_requests",
+          "name": "list_pull_requests",
+          "description": "List pull requests in one repository.",
+          "args": {
+            "owner": { "type": "string", "required": true, "maxLength": 200 },
+            "repo": { "type": "string", "required": true, "maxLength": 200 },
+            "state": {
               "type": "string",
-              "required": true,
-              "maxLength": 200
-            }
+              "enum": ["open", "closed", "all"]
+            },
+            "perPage": { "type": "number", "min": 1, "max": 100 }
           }
         }
       ]
