@@ -44,12 +44,31 @@ Task status: `succeeded`.
 
 Findings (3 observed), each cited a fixed-SHA file receipt; Issue matches were backed by issue receipts.
 
+## Receipt identifiers
+
+| Item | Id |
+| --- | --- |
+| Task | `dfb9b763-073f-4250-a8ab-794bdc733a8a` |
+| repo receipt | `66b90d47-c86f-4486-8e5e-ffddc5e0438b` |
+| ref receipt | `15811448-015d-4426-8248-56bb9ae2f35b` |
+| file receipt (docs/21) | `1a05dd79-6a73-4952-b5e7-74908f678fc0` |
+| file receipt (docs/24) | `288ef935-0654-4779-b613-307f7efd9be7` |
+| tree receipt (truncated) | `fe753447-c5ee-4ce2-bc70-86cb7f9bc09f` |
+| checks receipt | `4a8fb80c-f4c8-4a26-ae72-a0704b6d9632` |
+| issue list receipt | `b471febb-5a73-40b8-87bc-fb9a4739c0a9` |
+| issue #62 receipt | `c0018ef2-f420-4dc2-8eb0-61ab1886d77f` |
+| issue #65 receipt | `9e9037ec-776a-4813-865b-7ec127ae0441` |
+| PR #97 files receipt | `0561107b-8349-432b-bc59-163586a1c9db` |
+| outbox result | `d48c867c-4f49-42ce-bf99-bb57a0720c11` |
+
 ## Persisted drafts
 
 | Action | Target | Status | commitSha | repositoryId | credentialVersion |
 | --- | --- | --- | --- | --- | --- |
 | comment | #65 | pending_approval | `345faac…` | 1445007789 | 1 |
 | comment | #62 | pending_approval | `345faac…` | 1445007789 | 1 |
+
+Draft ids: `ddb2fa12-70a8-467f-8129-756960fe44e4` (#65, payload `72c51072…`) and `720b8244-7bbd-44a1-92b9-6d3c21419ded` (#62, payload `a4f0912c…`).
 
 Each row carries `payloadHash`, `beforeHash`/`beforeSummary`, source task/revision/assignment and idempotency key. No GitHub write occurred.
 
