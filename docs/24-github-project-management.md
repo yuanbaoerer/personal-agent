@@ -139,7 +139,7 @@ L2 需 GH01–06 与相关 GH09；L3 pilot 需 GH07–10 与相应 #41 原验收
 - receipt 截断检测下沉到嵌套字段（file content、issue body、patch、check output）；引用截断来源却声明 `coverage=complete` 会被 Verifier 拒绝。
 - 安全负例：错误 projectKey、task mandate 不符、跨 owner、绑定撤销、缺失/撤销凭据、repositoryId 不匹配、PR head 漂移、跨 revision finding、settled action 重放；均在任何 fetch 前或 Verifier 处失败。
 - E1：`project-review-e2e.test.ts` 5 场景；全量 471 tests passed。
-- 真实 E3 尚未通过真实飞书入站；owner 步骤见 [22 · Runbook](22-mvp-acceptance-runbook.md) §6。无 owner 凭据时保持 BLOCKED。
+- 真实模型 + 真实 GitHub 只读取证已通过（repoId 1445007789，main 345faacf...，3 observed findings，2 pending drafts，Verifier succeeded）；记录见 [docs/acceptance/2026-11-22-real-project-review.md](acceptance/2026-11-22-real-project-review.md)。真实飞书入站/收件仍是 BLOCKED，不能据此标记 A5/E3 完成。
 
 ## 9. 2026-11-22 L2W-01：DraftSnapshot 生命周期
 
@@ -166,5 +166,5 @@ L2 需 GH01–06 与相关 GH09；L3 pilot 需 GH07–10 与相应 #41 原验收
 - 写前：update/comment 先 GET issue，拒绝 PR-as-issue；update 比较 beforeHash，发现人工修改立即失败并要求重新批准；不声称 GitHub 提供原子 CAS。
 - 幂等：create/comment 使用持久 idempotency marker；重放/重试先查找 marker，不重复 POST；update 在写前发现已是目标状态则 no-op。
 - 写后：GET 资源核对 issue/comment id、URL、正文/marker；失败或超时标记 unknown 并先 reconcile，绝不盲目重试 POST；ActionService 的 lease/revision/plugin/credential fence 继续生效。
-- E1：`github-issue.test.ts` 覆盖 create/update/comment、重复、scope/owner/repoId/allowlist/epoch、lost POST、conflict、429；`draft-approval.test.ts` 覆盖 approve/replay/reject/binding revoke/credential rotation/unknown reconcile/update conflict/comment/429。全量 495 tests passed。
+- E1：`github-issue.test.ts` 覆盖 create/update/comment、重复、scope/owner/repoId/allowlist/epoch、lost POST、conflict、429；`draft-approval.test.ts` 覆盖 approve/replay/reject/binding revoke/credential rotation/unknown reconcile/update conflict/comment/429/重启后 reconcile。全量 497 tests passed。
 - 真实写验收未执行：没有 owner 指定的隔离测试仓库与 Issues-write 凭据；不得在业务仓库试故障或写入。

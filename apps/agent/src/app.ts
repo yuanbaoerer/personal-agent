@@ -218,6 +218,7 @@ export function createApp(deps: AppDeps): AppServices {
       : new IssueDraftApprovalBridge({
           store,
           drafts: draftRepository,
+          actions,
           draftService: issueDrafts,
           taskService,
           actionService,

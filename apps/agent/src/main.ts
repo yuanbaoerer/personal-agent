@@ -377,6 +377,10 @@ async function main(): Promise<void> {
         app.actionService.sweep();
         const expiredConfirmations = app.confirmation.expirePending();
         const expiredDrafts = app.issueDrafts.expireDue();
+        const settledDrafts =
+          owner === undefined
+            ? 0
+            : (app.issueDraftApproval?.reconcileOwner(owner.id) ?? 0);
         const fired = await app.reminders.fireDue();
         const scheduled = app.schedulePolicy.fireDue();
         const effectResult = await app.effectDispatcher.drain(20);

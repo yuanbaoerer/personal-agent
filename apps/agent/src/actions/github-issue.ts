@@ -528,7 +528,7 @@ class GitHubIssueWriteTool implements ActionTool {
   ): Promise<IssueRecord | undefined> {
     const response = await this.#request(
       "GET",
-      `/repos/${repo}/issues?state=all&sort=created&direction=desc&per_page=30`,
+      `/repos/${repo}/issues?state=all&sort=created&direction=desc&per_page=100`,
       credential,
     );
     const items = Array.isArray(response.body) ? response.body : [];

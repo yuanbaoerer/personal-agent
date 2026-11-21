@@ -3,6 +3,7 @@ import type { ActionRecord, IssueDraftSnapshot } from "../domain/types.ts";
 import type { ActionService } from "../actions/service.ts";
 import type { CapabilityView } from "../plugins/fence.ts";
 import type { IssueDraftRepository } from "../storage/issue-drafts.ts";
+import type { ActionRepository } from "../storage/actions.ts";
 import type { Store } from "../storage/store.ts";
 import type { TaskService } from "../coordinator/tasks.ts";
 import type { IssueDraftService, IssueDraftView } from "./issue-drafts.ts";
@@ -30,6 +31,7 @@ export interface DraftApprovalResult {
 export class IssueDraftApprovalBridge {
   readonly #store: Store;
   readonly #drafts: IssueDraftRepository;
+  readonly #actions: ActionRepository;
   readonly #draftService: IssueDraftService;
   readonly #taskService: TaskService;
   readonly #actionService: ActionService;
@@ -41,6 +43,7 @@ export class IssueDraftApprovalBridge {
   constructor(deps: {
     store: Store;
     drafts: IssueDraftRepository;
+    actions: ActionRepository;
     draftService: IssueDraftService;
     taskService: TaskService;
     actionService: ActionService;
@@ -51,6 +54,7 @@ export class IssueDraftApprovalBridge {
   }) {
     this.#store = deps.store;
     this.#drafts = deps.drafts;
+    this.#actions = deps.actions;
     this.#draftService = deps.draftService;
     this.#taskService = deps.taskService;
     this.#actionService = deps.actionService;
@@ -58,6 +62,38 @@ export class IssueDraftApprovalBridge {
     this.#capabilities = deps.capabilities;
     this.#writeCredentialRef = deps.writeCredentialRef;
     this.#now = deps.now ?? (() => new Date());
+  }
+
+  /**
+   * Restart recovery: a crash after the external write but before settlement
+   * leaves the draft in `executing`. Re-read the action and settle it without
+   * issuing another write.
+   */
+  reconcileOwner(ownerId: string): number {
+    let settled = 0;
+    for (const draft of this.#drafts.list(ownerId, { status: "executing" })) {
+      if (draft.writeActionId === undefined) {
+        continue;
+      }
+      const action = this.#actions.get(draft.writeActionId);
+      if (action === undefined) {
+        this.#drafts.updateStatus(draft.id, "failed", this.#now().toISOString());
+        settled += 1;
+        continue;
+      }
+      if (
+        action.status === "succeeded" ||
+        action.status === "failed" ||
+        action.status === "needs_manual" ||
+        action.status === "expired" ||
+        action.status === "superseded" ||
+        action.status === "denied"
+      ) {
+        this.onActionSettled(action);
+        settled += 1;
+      }
+    }
+    return settled;
   }
 
   install(): void {

@@ -447,3 +447,74 @@ describe("issue draft approval: update and failure paths", () => {
     );
   });
 });
+
+describe("issue draft restart reconciliation", () => {
+  it("settles an already-succeeded action without issuing another write", async () => {
+    const { services, fake } = setup();
+    const { draft, payloadHash } = seedDraft(services, { key: "5" });
+    await sendText(
+      services,
+      `/draft approve ${draft.id} ${payloadHash}`,
+      "evt_draft_restart_seed",
+    );
+    const task = writeTask(services);
+    assert.ok(task);
+    const snapshot = services.issueDrafts.get(services.owner.id, draft.id);
+    assert.ok(snapshot);
+    services.store.db.run(
+      "UPDATE pa_issue_drafts SET status = 'executing' WHERE id = ?",
+      draft.id,
+    );
+    services.store.db.run(
+      "UPDATE pa_tasks SET status = 'waiting_user' WHERE id = ?",
+      task.id,
+    );
+    const settled = services.issueDraftApproval?.reconcileOwner(
+      services.owner.id,
+    );
+    assert.equal(settled, 1);
+    assert.equal(
+      services.issueDrafts.get(services.owner.id, draft.id)?.status,
+      "approved",
+    );
+    assert.equal(services.tasks.get(task.id)?.status, "succeeded");
+    assert.equal(
+      fake.requests.filter(
+        (request) => request.method === "POST" && request.path === `/repos/${REPO}/issues`,
+      ).length,
+      1,
+    );
+  });
+
+  it("turns an unresolved action into needs_review, never success", async () => {
+    const { services } = setup();
+    const { draft, payloadHash } = seedDraft(services, { key: "6" });
+    await sendText(
+      services,
+      `/draft approve ${draft.id} ${payloadHash}`,
+      "evt_draft_manual_seed",
+    );
+    const task = writeTask(services);
+    const snapshot = services.issueDrafts.get(services.owner.id, draft.id);
+    assert.ok(task && snapshot);
+    assert.ok(snapshot.writeActionId);
+    services.store.db.run(
+      "UPDATE pa_issue_drafts SET status = 'executing' WHERE id = ?",
+      draft.id,
+    );
+    services.store.db.run(
+      "UPDATE pa_tasks SET status = 'waiting_user' WHERE id = ?",
+      task.id,
+    );
+    services.store.db.run(
+      "UPDATE pa_actions SET status = 'needs_manual' WHERE id = ?",
+      snapshot.writeActionId,
+    );
+    services.issueDraftApproval?.reconcileOwner(services.owner.id);
+    assert.equal(
+      services.issueDrafts.get(services.owner.id, draft.id)?.status,
+      "failed",
+    );
+    assert.equal(services.tasks.get(task.id)?.status, "needs_review");
+  });
+});

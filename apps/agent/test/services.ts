@@ -222,6 +222,7 @@ export function createServices(options: {
       : new IssueDraftApprovalBridge({
           store,
           drafts: new IssueDraftRepository(db),
+          actions,
           draftService: issueDrafts,
           taskService,
           actionService,
