@@ -1,6 +1,6 @@
 # 26 · MCP Host（EXT-03，只读 V1）
 
-> 2026-11-20 · [#69](https://github.com/yuanbaoerer/personal-agent/issues/69) · 本次实现的是 **Node 只读远程 MCP**。不包含任意 MCP 安装、写入穿透、stdio 本地子进程、OAuth discovery/PKCE 或真实 GitHub MCP 对照；这些仍未完成，不能用 local fake server 替代真实验收。
+> **2026-11-21 当前状态** · [#69](https://github.com/yuanbaoerer/personal-agent/issues/69) / [#80 MCP 语义只读审计](https://github.com/yuanbaoerer/personal-agent/issues/80) / [27 · 当前实施计划](27-next-stage-delivery.md)。Node remote Streamable HTTP 只读 Host 已合并；真实 GitHub 官方 MCP 两项只读工具已与 REST 对照，详见验收记录；PR #79 已修复非 trusted Host 的已校验 DNS 地址固定，main 427/427 CI tests 与跨平台四任务通过。**MCP OAuth、stdio、完整重连/resume 与写路径未实现**。另外“本地将任何已声明 remote tool 标记 readOnly”不代表远端无副作用：扩大 MCP 工具范围前必须完成 #80 语义映射/最小凭据负例。
 
 ## 1. 范围与安全边界
 
@@ -71,7 +71,7 @@ MCP Host 把显式配置的远程 MCP server 暴露为受信内置插件。Disco
 
 未完成/阻塞：
 
-- 真实远端 MCP（含 GitHub 官方 MCP）只读对照未执行，需要 owner 提供 URL/token 并接受真实网络调用。
+- 已完成真实 GitHub 官方 MCP `get_commit` 和 `list_pull_requests` 只读对照；但远端工具实际副作用的语义核验与可扩展信任边界仍受 #80 阻断。
 - MCP OAuth discovery/PKCE/resource/refresh、stdio 本地 transport、分页/通知/resume、SSE 断线重连未实现。
 - 未做 MCP 写穿透；`#61` 仍要求 typed action/审批/幂等/verify。
-- DNS rebinding、MCP server 自身被攻陷、跨调用数据残留仍是 residual risk；V2 才评估第三方隔离。
+- #79 已为非 trusted 主机实现每次 URL/DNS 验证后连接固定到受检 IP；`trustedHosts` 明确跳过该固定机制，仅限用户信任代理。MCP server 自身被攻陷、受信映射被滥用、跨调用数据残留仍是 residual risk；V2 将继续评估第三方隔离。
