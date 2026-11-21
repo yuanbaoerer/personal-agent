@@ -1,5 +1,7 @@
 # 21 · MVP Functional Ready：私有自用主体功能实施纲领
 
+> **2026-11-21 实施与验收更新**：[27 · 下一阶段交付方案](27-next-stage-delivery.md) 与 #41/#65/#73 协同。Plugin V1 首批已合并并在 main CI 427/427 tests + macOS/Windows/install-smoke 通过；私有仓库 GitHub REST/MCP 只读及飞书单独出站已有证据，**不等于完整 owner 飞书入站 G1/E3**。#41 M01–M14 及后台安全预算/恢复门槛继续保留，当前按 #80、#68、#60、#62、#61 实施 GitHub Project Manager L2，不能提前宣布 MVP Functional Ready。后续历史段落的“下一步”以对应时点理解。
+
 > **2026-11-20 Extension Platform 衔接**：[25 · Extension Platform](25-extension-platform.md) / [#73](https://github.com/yuanbaoerer/personal-agent/issues/73) 为下一工程检查点，#65 仍为下一业务检查点。GH-00/01 真实安全验收与 EXT-01 并行；#68 迁移 GitHub 首插件，#69/#70 MCP/Skills 与 GH-02/04 协作。当前不开发任意第三方包或市场，但 V2/V3 是长期必选，不降级 M01–M14。
 
 > **2026-11-20 下一产品检查点**：在 #41 原 M01–M14 与正式版本要求不变的前提下，[24 · GitHub Project Management MVP](24-github-project-management.md) / [#65](https://github.com/yuanbaoerer/personal-agent/issues/65) 作为第一个垂直场景。GH-00/01 先修已知预算/任务指代/claims 一致性问题并完成真实飞书/GitHub G1；允许并行准备只读扩展，未经对应安全与真实验收不启用写入、无人值守或付费开发。后续 GH-02–04 实现项目评估与审批式 Issue 维护，再 GH-05/06 开发协调与独立审查。
