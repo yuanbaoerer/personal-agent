@@ -1,4 +1,10 @@
-import { ToolRejectedError, type ActionTool, type ToolExecution, type ToolVerification } from "./tools.ts";
+import {
+  ToolRejectedError,
+  type ActionTool,
+  type ToolExecutionContext,
+  type ToolExecution,
+  type ToolVerification,
+} from "./tools.ts";
 
 export interface GitHubProjectBinding {
   projectKey: string;
@@ -74,7 +80,10 @@ export class GitHubReadTool implements ActionTool {
     this.#allowed = new Set(config.allowedRepos.map((repo) => repo.toLowerCase()));
   }
 
-  canonicalize(args: Record<string, unknown>): Record<string, unknown> {
+  canonicalize(
+    args: Record<string, unknown>,
+    context?: ToolExecutionContext,
+  ): Record<string, unknown> {
     const operation = args.operation;
     if (
       operation !== "repo" &&
@@ -105,6 +114,14 @@ export class GitHubReadTool implements ActionTool {
       ) {
         throw new ToolRejectedError(
           `${operation} requires an active projectKey`,
+        );
+      }
+      if (
+        context?.project !== undefined &&
+        context.project !== requestedProject
+      ) {
+        throw new ToolRejectedError(
+          "projectKey does not match the task mandate project",
         );
       }
       if (this.#config.resolveProject === undefined) {
@@ -242,8 +259,11 @@ export class GitHubReadTool implements ActionTool {
     return { operation, repo, ...project, limit };
   }
 
-  async execute(args: Record<string, unknown>): Promise<ToolExecution> {
-    const canonical = this.canonicalize(args);
+  async execute(
+    args: Record<string, unknown>,
+    context?: ToolExecutionContext,
+  ): Promise<ToolExecution> {
+    const canonical = this.canonicalize(args, context);
     const operation = canonical.operation as GitHubOperation;
     const repo = canonical.repo as string;
     const limit = canonical.limit as number;

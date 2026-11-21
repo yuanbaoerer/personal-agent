@@ -354,12 +354,24 @@ describe("read-only GitHub connector", () => {
       projectKey: BINDING.projectKey,
       repo: BINDING.repositoryFullName,
     };
+    const canonical = tool.canonicalize({
+      operation: "file",
+      projectKey: BINDING.projectKey,
+      sha,
+      path: "README.md",
+    });
+    assert.equal(canonical.repo, BINDING.repositoryFullName);
+    assert.equal(canonical.projectKey, BINDING.projectKey);
+    assert.equal(canonical.repositoryId, BINDING.repositoryId);
+
     const file = await tool.execute({
       operation: "file",
       ...projectArgs,
       sha,
       path: "docs/24.md",
     });
+    assert.equal(file.evidence.projectKey, BINDING.projectKey);
+    assert.equal(file.evidence.repositoryId, BINDING.repositoryId);
     assert.match(calls[0] ?? "", /\/contents\/docs\/24\.md\?ref=a{40}$/);
     assert.equal((file.evidence.item as Record<string, unknown>).content, "# Plan\n");
     assert.equal(
@@ -509,6 +521,19 @@ describe("read-only GitHub connector", () => {
     );
     await assert.rejects(
       () =>
+        tool.execute(
+          {
+            operation: "file",
+            projectKey: BINDING.projectKey,
+            sha,
+            path: "README.md",
+          },
+          { ownerId: "owner-1", project: "other-project" },
+        ),
+      /task mandate project/,
+    );
+    await assert.rejects(
+      () =>
         tool.execute({
           operation: "file",
           repo: "owner/repo",
@@ -516,6 +541,64 @@ describe("read-only GitHub connector", () => {
           path: "README.md",
         }),
       /requires an active projectKey/,
+    );
+    const noResolver = new GitHubReadTool({
+      token: "secret-token",
+      allowedRepos: ["owner/repo"],
+      fetch: (async () => {
+        called += 1;
+        return jsonResponse({});
+      }) as typeof fetch,
+    });
+    await assert.rejects(
+      () =>
+        noResolver.execute({
+          operation: "file",
+          projectKey: BINDING.projectKey,
+          sha,
+          path: "README.md",
+        }),
+      /bindings are not configured/,
+    );
+    const throwingResolver = new GitHubReadTool({
+      token: "secret-token",
+      allowedRepos: ["owner/repo"],
+      resolveProject: () => {
+        throw new Error("db unavailable");
+      },
+      fetch: (async () => {
+        called += 1;
+        return jsonResponse({});
+      }) as typeof fetch,
+    });
+    await assert.rejects(
+      () =>
+        throwingResolver.execute({
+          operation: "file",
+          projectKey: BINDING.projectKey,
+          sha,
+          path: "README.md",
+        }),
+      /binding lookup failed/,
+    );
+    const outsideAllowlist = new GitHubReadTool({
+      token: "secret-token",
+      allowedRepos: ["other/repo"],
+      resolveProject: () => BINDING,
+      fetch: (async () => {
+        called += 1;
+        return jsonResponse({});
+      }) as typeof fetch,
+    });
+    await assert.rejects(
+      () =>
+        outsideAllowlist.execute({
+          operation: "file",
+          projectKey: BINDING.projectKey,
+          sha,
+          path: "README.md",
+        }),
+      /allow list/,
     );
     assert.equal(called, 0);
   });
