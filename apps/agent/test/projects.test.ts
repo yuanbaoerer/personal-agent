@@ -121,7 +121,11 @@ describe("project bindings", () => {
 
     const renamed = services.projectService.bind(
       owner,
-      input({ repositoryFullName: "yuanbaoerer/personal-agent-renamed" }),
+      {
+        projectKey: "personal-agent",
+        repositoryId: 101,
+        repositoryFullName: "yuanbaoerer/personal-agent-renamed",
+      },
       "admin",
     );
     assert.equal(renamed.created, false);
@@ -131,6 +135,12 @@ describe("project bindings", () => {
       renamed.project.repositoryFullName,
       "yuanbaoerer/personal-agent-renamed",
     );
+    assert.equal(renamed.project.defaultBranch, "main");
+    assert.equal(renamed.project.credentialRef, "github:default");
+    assert.deepEqual(renamed.project.allowedPlanPaths, [
+      "README.md",
+      "docs/24-github-project-management.md",
+    ]);
 
     const updated = services.projectService.bind(
       owner,
@@ -222,6 +232,7 @@ describe("project bindings", () => {
       input({ defaultBranch: "main/../release" }),
       input({ defaultBranch: "-release" }),
       input({ defaultBranch: "release.lock" }),
+      input({ defaultBranch: "release." }),
       input({ defaultBranch: "feature@{1}" }),
       input({ credentialRef: "" }),
       input({ credentialRef: "ghp_1234567890abcdef" }),

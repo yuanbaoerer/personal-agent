@@ -82,10 +82,28 @@ export class ProjectService {
       if (sameBinding(byKey, normalized)) {
         return { project: byKey, created: false };
       }
+      const update = {
+        ...normalized,
+        defaultBranch:
+          input.defaultBranch === undefined
+            ? byKey.defaultBranch
+            : normalized.defaultBranch,
+        credentialRef:
+          input.credentialRef === undefined
+            ? byKey.credentialRef
+            : normalized.credentialRef,
+        allowedPlanPaths:
+          input.allowedPlanPaths === undefined
+            ? byKey.allowedPlanPaths
+            : normalized.allowedPlanPaths,
+      };
+      if (sameBinding(byKey, update)) {
+        return { project: byKey, created: false };
+      }
       const updated = this.#projects.updateDetails(
         ownerId,
         byKey.id,
-        normalized,
+        update,
         this.#now().toISOString(),
       );
       if (updated === undefined) {
@@ -244,6 +262,7 @@ function normalizeBranch(value: unknown): string {
     branch.startsWith("-") ||
     branch.startsWith("/") ||
     branch.endsWith("/") ||
+    branch.endsWith(".") ||
     branch.endsWith(".lock") ||
     branch.includes("//") ||
     branch.includes("..") ||
