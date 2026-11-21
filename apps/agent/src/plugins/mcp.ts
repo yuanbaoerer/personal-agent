@@ -1,8 +1,9 @@
 import { lookup } from "node:dns/promises";
-import { isIP } from "node:net";
+import { isIP, type LookupFunction } from "node:net";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { Agent, fetch as undiciFetch } from "undici";
 
 import {
   ToolRejectedError,
@@ -21,6 +22,11 @@ const AUTH_ENV = /^PA_MCP_[A-Z0-9_]{1,80}$/;
 const MAX_TOOLS = 50;
 const MAX_TEXT_BYTES = 32 * 1024;
 const MAX_MCP_RESPONSE_BYTES = 2 * 1024 * 1024;
+
+interface SafeAddress {
+  address: string;
+  family: 4 | 6;
+}
 
 export interface McpArgSpec {
   type: "string" | "number" | "boolean";
@@ -82,12 +88,10 @@ export async function connectMcpPlugin(
   const timeoutMs = normalized.timeoutMs ?? 15_000;
   let failure: string | undefined;
   let client: Client | undefined;
+  let agent: Agent | undefined;
   try {
-    await assertSafeUrl(
-      normalized.url,
-      normalized.allowInsecureLocalhost === true,
-      normalized.trustedHosts ?? [],
-    );
+    const trustedHosts = normalized.trustedHosts ?? [];
+    const allowLocalhost = normalized.allowInsecureLocalhost === true;
     const token = resolveAuth(normalized, options.env ?? process.env);
     const headers: Record<string, string> = {
       accept: "application/json, text/event-stream",
@@ -95,7 +99,14 @@ export async function connectMcpPlugin(
     if (token !== undefined) {
       headers.authorization = `Bearer ${token}`;
     }
-    const trustedHosts = normalized.trustedHosts ?? [];
+    const pinned = new Map<string, SafeAddress>();
+    if (options.fetch === undefined) {
+      agent = new Agent({
+        connect: {
+          lookup: pinnedLookup(pinned),
+        },
+      });
+    }
     const baseFetch = options.fetch ?? fetch;
     const guardedFetch: typeof fetch = async (input, init) => {
       const url =
@@ -104,12 +115,21 @@ export async function connectMcpPlugin(
           : input instanceof URL
             ? input.href
             : input.url;
-      await assertSafeUrl(
-        url,
-        normalized.allowInsecureLocalhost === true,
-        trustedHosts,
-      );
-      const response = await baseFetch(input, init);
+      const target = new URL(url);
+      const hostname = normalizedHostname(target.hostname);
+      const safe = await resolveSafeAddress(url, allowLocalhost, trustedHosts);
+      let response: Response;
+      if (agent !== undefined && !trustedHosts.includes(hostname)) {
+        // Pin the connection to the address that passed validation instead of
+        // letting the HTTP stack resolve the hostname a second time.
+        pinned.set(hostname, safe);
+        response = (await undiciFetch(input as never, {
+          ...(init as RequestInit),
+          dispatcher: agent,
+        } as never)) as unknown as Response;
+      } else {
+        response = await baseFetch(input, init);
+      }
       const contentLength = response.headers.get("content-length");
       if (
         contentLength !== null &&
@@ -140,11 +160,12 @@ export async function connectMcpPlugin(
     }
 
     return {
-      plugin: providerFor(normalized, manifest, client),
+      plugin: providerFor(normalized, manifest, client, agent),
     };
   } catch (error) {
     failure = errorMessage(error);
     void client?.close();
+    void agent?.close();
   }
 
   // A failed connection still yields a manifest so the catalog can show the
@@ -418,6 +439,7 @@ function providerFor(
   definition: McpServerDefinition,
   manifest: PluginManifest,
   client: Client,
+  agent?: Agent,
 ): BuiltinPlugin {
   const tools = definition.tools.map((definitionTool) =>
     mcpTool(definition, definitionTool, client),
@@ -433,6 +455,9 @@ function providerFor(
     },
     close(): void {
       void client.close();
+      if (agent !== undefined) {
+        void agent.close();
+      }
     },
   };
 }
@@ -638,11 +663,11 @@ function resolveAuth(
   return value;
 }
 
-async function assertSafeUrl(
+async function resolveSafeAddress(
   raw: string,
   allowLocalhost: boolean,
   trustedHosts: readonly string[],
-): Promise<void> {
+): Promise<SafeAddress> {
   let url: URL;
   try {
     url = new URL(raw);
@@ -652,10 +677,7 @@ async function assertSafeUrl(
   if (url.username.length > 0 || url.password.length > 0) {
     throw new Error("MCP url must not contain credentials");
   }
-  const hostname =
-    url.hostname.startsWith("[") && url.hostname.endsWith("]")
-      ? url.hostname.slice(1, -1)
-      : url.hostname;
+  const hostname = normalizedHostname(url.hostname);
   const localhost =
     hostname === "localhost" ||
     hostname === "127.0.0.1" ||
@@ -663,22 +685,49 @@ async function assertSafeUrl(
   if (url.protocol !== "https:" && !(allowLocalhost && localhost && url.protocol === "http:")) {
     throw new Error("MCP url must use https (http is only allowed for explicit localhost tests)");
   }
-  const trusted = trustedHosts.includes(hostname.toLowerCase());
+  const trusted = trustedHosts.includes(hostname);
   if (isIP(hostname) !== 0) {
     if (!(allowLocalhost && localhost) && !trusted && isPrivateAddress(hostname)) {
       throw new Error("MCP url resolves to a private address");
     }
-    return;
+    return { address: hostname, family: isIP(hostname) === 6 ? 6 : 4 };
   }
   const addresses = await lookup(hostname, { all: true, verbatim: true });
-  if (
-    addresses.length === 0 ||
-    (addresses.some((address) => isPrivateAddress(address.address)) && !trusted)
-  ) {
-    if (!(allowLocalhost && localhost)) {
-      throw new Error("MCP url resolves to a private address");
-    }
+  if (addresses.length === 0) {
+    throw new Error("MCP url did not resolve");
   }
+  if (
+    !(allowLocalhost && localhost) &&
+    !trusted &&
+    addresses.some((address) => isPrivateAddress(address.address))
+  ) {
+    throw new Error("MCP url resolves to a private address");
+  }
+  const chosen = addresses.find((address) => !isPrivateAddress(address.address)) ?? addresses[0];
+  if (chosen === undefined) {
+    throw new Error("MCP url did not resolve");
+  }
+  return {
+    address: chosen.address,
+    family: chosen.family === 6 ? 6 : 4,
+  };
+}
+
+function normalizedHostname(hostname: string): string {
+  return hostname.startsWith("[") && hostname.endsWith("]")
+    ? hostname.slice(1, -1).toLowerCase()
+    : hostname.toLowerCase();
+}
+
+function pinnedLookup(pinned: Map<string, SafeAddress>): LookupFunction {
+  return (hostname, _options, callback) => {
+    const entry = pinned.get(hostname.toLowerCase());
+    if (entry === undefined) {
+      callback(new Error(`MCP host was not validated: ${hostname}`), "", 4);
+      return;
+    }
+    callback(null, entry.address, entry.family);
+  };
 }
 
 function isPrivateAddress(address: string): boolean {

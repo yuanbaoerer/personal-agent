@@ -11,8 +11,8 @@ MCP Host 把显式配置的远程 MCP server 暴露为受信内置插件。Disco
 - Bearer token 只能来自 `PA_MCP_*` 环境变量；manifest、任务、日志和模型参数都不能提供 token。禁止把宿主其他凭据透传给 MCP server。
 - 每个 server 必须在配置中列出 `tools[]`、本地名称、resource 和允许参数；未列出的远程工具永远不注册。参数按显式 `type/required/maxLength/min/max/enum` 校验，未知参数拒绝。
 - 所有暴露工具固定 `readOnly: true`、`replayPolicy: "verify"`；不提供 MCP 写操作。写入仍必须走 Core typed Action 审批/核验，当前未开放。
-- 单次调用有 timeout；每次 HTTP 请求（连接、list、call）重新做 URL/DNS 校验，响应流在 2 MiB 处硬失败；文本再截断到 32KB，图片/音频只记录类型，不把 base64 注入 prompt。最多 20 个 server、每 server 50 个工具。
-- DNS 在“校验”和“连接”之间仍可能被重绑定；当前靠每次请求前复核把窗口压小，未做 IP pinning。`trustedHosts` 会显式跳过私网检查，必须由 owner 确认。MCP server 不是安全沙箱，也不是权限系统。禁用插件仍通过 catalog generation 撤销待审批动作。
+- 单次调用有 timeout；每次 HTTP 请求（连接、list、call）重新做 URL/DNS 校验，并把连接 lookup 固定到已校验地址（undici Agent），避免校验与连接使用两次解析；响应流在 2 MiB 处硬失败；文本再截断到 32KB，图片/音频只记录类型，不把 base64 注入 prompt。最多 20 个 server、每 server 50 个工具。
+- `trustedHosts` 会显式跳过私网检查和 IP pinning（用于代理/内网/真实 GitHub MCP），必须由 owner 确认；非 trusted host 仍做 pinning。MCP server 不是安全沙箱，也不是权限系统。禁用插件仍通过 catalog generation 撤销待审批动作。
 
 ## 2. 配置
 
@@ -64,7 +64,7 @@ MCP Host 把显式配置的远程 MCP server 暴露为受信内置插件。Disco
 - 远程恶意 description 不进入 manifest/工具描述。
 - bearer token 只从 `PA_MCP_*` 读取并发送到配置 server；缺失时 fail closed。
 - 未知参数、超长参数、私有/insecure URL、慢调用 timeout、catalog 热禁用。
-- 2 MiB 传输层响应上限与 32KB 文本截断；每次请求前 DNS/URL 复核。
+- 2 MiB 传输层响应上限与 32KB 文本截断；每次请求前 DNS/URL 复核，非 trusted 连接固定到已校验 IP。
 - 工具结果截断与错误映射。
 
 2026-11-20 对真实 `https://api.githubcopilot.com/mcp/` 做了只读探测：远端 46 个工具，宿主只 allowlist `get_commit` / `list_pull_requests`，两次真实 `tools/call` 成功，返回的 commit SHA、message 与 PR #74 和 REST G1 证据一致；远端写工具未注册。该环境代理把域名解析到 `198.18.1.19`，因此显式配置了 `trustedHosts: ["api.githubcopilot.com"]`；否则宿主按设计拒绝私网映射。记录见 `docs/acceptance/2026-11-20-real-github-mcp.md`。
