@@ -452,6 +452,30 @@ const migrations: readonly (readonly string[])[] = [
     `ALTER TABLE pa_actions ADD COLUMN catalog_generation INTEGER`,
     `CREATE INDEX pa_actions_plugin_idx ON pa_actions (plugin_id, status)`,
   ],
+  [
+    // Owner-scoped GitHub project bindings. `repository_id` is immutable;
+    // full_name is display data. Only one active binding per key/repo.
+    `CREATE TABLE pa_projects (
+      id TEXT PRIMARY KEY,
+      owner_id TEXT NOT NULL REFERENCES pa_identities(id),
+      project_key TEXT NOT NULL,
+      repository_id INTEGER NOT NULL CHECK (repository_id > 0),
+      repository_full_name TEXT NOT NULL,
+      default_branch TEXT NOT NULL,
+      credential_ref TEXT NOT NULL,
+      allowed_plan_paths_json TEXT NOT NULL DEFAULT '[]',
+      status TEXT NOT NULL CHECK (status IN ('active', 'revoked')),
+      version INTEGER NOT NULL CHECK (version >= 1),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    ) STRICT`,
+    `CREATE UNIQUE INDEX pa_projects_owner_key_active_idx
+       ON pa_projects (owner_id, project_key) WHERE status = 'active'`,
+    `CREATE UNIQUE INDEX pa_projects_owner_repo_active_idx
+       ON pa_projects (owner_id, repository_id) WHERE status = 'active'`,
+    `CREATE INDEX pa_projects_owner_idx
+       ON pa_projects (owner_id, status, project_key)`,
+  ],
 ];
 
 /** Highest schema version this build can read/migrate. */

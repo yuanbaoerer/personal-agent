@@ -30,8 +30,10 @@ import { PreauthorizationRepository } from "../src/storage/preauthorizations.ts"
 import { SchedulePolicyRepository } from "../src/storage/schedule-policies.ts";
 import { EffectRepository } from "../src/storage/effects.ts";
 import { MemoryRepository, ScheduleRepository } from "../src/storage/personal.ts";
+import { ProjectRepository } from "../src/storage/projects.ts";
 import { TaskRepository } from "../src/storage/tasks.ts";
 import type { Store } from "../src/storage/store.ts";
+import { ProjectService } from "../src/personal/projects.ts";
 import { APP_ID, CONVERSATION_ID, OWNER_OPEN_ID, createStore, inbound } from "./helpers.ts";
 
 export interface TestServices {
@@ -46,6 +48,7 @@ export interface TestServices {
   confirmations: ConfirmationRepository;
   preauthorizations: PreauthorizationRepository;
   schedulePolicies: SchedulePolicyRepository;
+  projects: ProjectRepository;
   runtime: FakeRuntime;
   lamp: MockLampTool;
   tools: ToolRegistry;
@@ -56,6 +59,7 @@ export interface TestServices {
   confirmation: ConfirmationService;
   preauthorization: PreauthorizationService;
   schedulePolicy: SchedulePolicyService;
+  projectService: ProjectService;
   state: StateReadService;
   budget?: BudgetService;
   catalog: PluginCatalog;
@@ -116,6 +120,8 @@ export function createServices(options: {
   const confirmations = new ConfirmationRepository(db);
   const preauthorizations = new PreauthorizationRepository(db);
   const schedulePolicies = new SchedulePolicyRepository(db);
+  const projects = new ProjectRepository(db);
+  const projectService = new ProjectService({ projects, store, now });
   const state = new StateReadService({
     tasks,
     schedules,
@@ -240,6 +246,7 @@ export function createServices(options: {
     confirmations,
     preauthorizations,
     schedulePolicies,
+    projects,
     runtime,
     lamp,
     tools: registry,
@@ -250,6 +257,7 @@ export function createServices(options: {
     confirmation,
     preauthorization,
     schedulePolicy,
+    projectService,
     state,
     budget,
     catalog,
