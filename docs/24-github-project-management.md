@@ -16,7 +16,7 @@
 | L3 Development Orchestrator Pilot | Issue→Coding Agent→测试→Draft PR→独立 Review | GH-05/06 实际闭环及恢复 |
 | L4 Autonomous Maintainer（后续） | 有界的持续监控、需求识别、返工与主人决策 | 先有连续使用证据；自动写/合并不在本阶段 |
 
-当前：github.read GET-only、单 owner PAT/OAuth E1、repo 白名单及 24h 只读预授权；状态/结构化 Intent、Action audit、claims 与本地预算已有实现；真实 GitHub 只读 G1 与 Feishu 出站已有证据，真实 E3/Issue 写仍未完成。2026-11-21 跨平台 CI 已恢复，main run `44860766068` 通过（当前 427 tests）；此前账单期间的合并仅以本地测试为依据。没有证据表明当前已经支持真实 Issue 写、完整源码读取或 Coding Agent 调度。不可把 ChatGPT 的 GitHub 插件能力算进项目自身实现。
+当前：github.read GET-only、单 owner PAT/OAuth E1、repo 白名单及 24h 只读预授权；状态/结构化 Intent、Action audit、claims 与本地预算已有实现；真实 GitHub 只读 G1 与 Feishu 出站已有证据，真实 E3/Issue 写仍未完成。ProjectBinding（`pa_projects`、owner-scoped projectKey、不可变 repoId、branch/credentialRef、plan paths、API/CLI、revoked 历史）已落地；固定 SHA 源码/PR diff/CI、Issue 写和管理工作流仍未实现。2026-11-21 跨平台 CI 已恢复，main run `44860766068` 通过（当前 434 tests）；此前账单期间的合并仅以本地测试为依据。没有证据表明当前已经支持真实 Issue 写、完整源码读取或 Coding Agent 调度。不可把 ChatGPT 的 GitHub 插件能力算进项目自身实现。
 
 ## 2. 工程主线与依赖
 
@@ -53,6 +53,8 @@ SchedulePolicy -> read-only project observation (guarded)
 ### ProjectBinding（GH-02）
 
 候选契约：ownerId、projectId、repoId（GitHub immutable ID）、owner/name、defaultBranch、credentialRef（不含 token）、policyVersion、planPaths、projectMemoryRef、status。首版单 project 单 repo，可绑定多个；多 repo 聚合、组织级发现后置。项目绑定不自动授予 GitHub 权限；操作目标必须同时匹配 owner、project、repo ID、授权、工具能力与当前 Mandate；名称歧义先澄清，repo 转移/重命名核对 ID，撤销后立即失权。全局/项目记忆复用现有隔离。
+
+2026-11-21 首批实现：`pa_projects` 持久化 owner-scoped projectKey、不可变 repositoryId、repositoryFullName、defaultBranch、credentialRef、allowedPlanPaths、status/version；`ProjectService` 拒绝跨 owner/重复 key/重复 repo，同一 immutable ID 下可按 bind 更新 display name/branch/credentialRef/plan paths（递增版本），revoke 保留历史并递增版本。`/api/v1/projects`（list/get/bind/unbind）与 `pa projects` 已接入，audit 记录 project.bound/updated/unbound。尚未把绑定强制接入 GitHub read tool、Task/Mandate 或待执行 Action；这是 B2/C1 的下一条，不能只因数据表存在就宣称 GH02 完成。
 
 ### GitHub 读取（GH-01/02）
 

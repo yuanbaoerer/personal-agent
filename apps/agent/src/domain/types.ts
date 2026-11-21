@@ -135,6 +135,28 @@ export type TaskStatus =
   | "cancelling"
   | "cancelled";
 
+export type ProjectStatus = "active" | "revoked";
+
+/**
+ * Owner-scoped mapping between a stable local project key and one GitHub
+ * repository. `repositoryId` is GitHub's immutable numeric id; the full name
+ * is display/validation data and may change on rename.
+ */
+export interface ProjectBinding {
+  id: string;
+  ownerId: string;
+  projectKey: string;
+  repositoryId: number;
+  repositoryFullName: string;
+  defaultBranch: string;
+  credentialRef: string;
+  allowedPlanPaths: string[];
+  status: ProjectStatus;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface Mandate {
   /** Resources the task may read, such as "chat" or "weather". */
   resources: string[];

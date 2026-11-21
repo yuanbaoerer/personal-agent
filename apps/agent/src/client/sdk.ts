@@ -3,6 +3,7 @@ import type {
   AssignmentRecord,
   ExtensionPolicy,
   MemoryRecord,
+  ProjectBinding,
   ScheduleRecord,
   TaskInputRecord,
   TaskRecord,
@@ -123,6 +124,40 @@ export class ClientApiClient {
 
   async listSkills(): Promise<{ available: boolean; skills: SkillMetadata[] }> {
     return this.#request("/skills");
+  }
+
+  async listProjects(status?: "active" | "revoked"): Promise<ProjectBinding[]> {
+    const result = await this.#request<{ projects: ProjectBinding[] }>("/projects", {
+      query: { status },
+    });
+    return result.projects;
+  }
+
+  async getProject(id: string): Promise<ProjectBinding> {
+    const result = await this.#request<{ project: ProjectBinding }>(
+      `/projects/${encodeURIComponent(id)}`,
+    );
+    return result.project;
+  }
+
+  async bindProject(input: {
+    projectKey: string;
+    repositoryId: number;
+    repositoryFullName: string;
+    defaultBranch?: string;
+    credentialRef?: string;
+    allowedPlanPaths?: string[];
+  }): Promise<{ project: ProjectBinding; created: boolean }> {
+    return this.#request("/projects", { method: "POST", body: input });
+  }
+
+  async unbindProject(id: string): Promise<{
+    project: ProjectBinding;
+    changed: boolean;
+  }> {
+    return this.#request(`/projects/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
   }
 
   async listTasks(options: { status?: TaskStatus; limit?: number } = {}): Promise<TaskRecord[]> {

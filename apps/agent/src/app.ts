@@ -31,8 +31,10 @@ import { PreauthorizationRepository } from "./storage/preauthorizations.ts";
 import { SchedulePolicyRepository } from "./storage/schedule-policies.ts";
 import { EffectRepository } from "./storage/effects.ts";
 import { MemoryRepository, ScheduleRepository } from "./storage/personal.ts";
+import { ProjectRepository } from "./storage/projects.ts";
 import type { Store } from "./storage/store.ts";
 import { TaskRepository } from "./storage/tasks.ts";
+import { ProjectService } from "./personal/projects.ts";
 
 /**
  * Everything the business logic needs that only a host can supply. Node and
@@ -77,6 +79,7 @@ export interface AppServices {
   confirmations: ConfirmationRepository;
   preauthorizations: PreauthorizationRepository;
   schedulePolicies: SchedulePolicyRepository;
+  projects: ProjectRepository;
   taskService: TaskService;
   actionService: ActionService;
   reminders: ReminderService;
@@ -84,6 +87,7 @@ export interface AppServices {
   confirmation: ConfirmationService;
   preauthorization: PreauthorizationService;
   schedulePolicy: SchedulePolicyService;
+  projectService: ProjectService;
   state: StateReadService;
   budget?: BudgetService;
   catalog: PluginCatalog;
@@ -121,6 +125,12 @@ export function createApp(deps: AppDeps): AppServices {
   const confirmations = new ConfirmationRepository(db);
   const preauthorizations = new PreauthorizationRepository(db);
   const schedulePolicies = new SchedulePolicyRepository(db);
+  const projects = new ProjectRepository(db);
+  const projectService = new ProjectService({
+    projects,
+    store,
+    now: deps.now,
+  });
   const state = new StateReadService({
     tasks,
     schedules,
@@ -238,6 +248,7 @@ export function createApp(deps: AppDeps): AppServices {
     confirmations,
     preauthorizations,
     schedulePolicies,
+    projects,
     taskService,
     actionService,
     reminders,
@@ -245,6 +256,7 @@ export function createApp(deps: AppDeps): AppServices {
     confirmation,
     preauthorization,
     schedulePolicy,
+    projectService,
     state,
     budget,
     catalog,

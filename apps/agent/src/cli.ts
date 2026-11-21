@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
 
 import { ClientApiClient, ClientApiError } from "./client/sdk.ts";
-import type { ActionRecord, ScheduleRecord, TaskRecord } from "./domain/types.ts";
+import type { ActionRecord, ProjectBinding, ScheduleRecord, TaskRecord } from "./domain/types.ts";
 import type { PluginView } from "./plugins/types.ts";
 import { runTui } from "./tui.ts";
 
@@ -50,6 +50,12 @@ Usage:
   pa plugins status <id> [--json]
   pa plugins enable <id> --yes [--json]
   pa plugins disable <id> --yes [--json]
+  pa projects list [--status active|revoked] [--json]
+  pa projects show <id> [--json]
+  pa projects bind <project-key> <owner/name> --repo-id N
+                   [--branch main] [--credential-ref REF]
+                   [--plan-paths a,b] [--json]
+  pa projects unbind <id> --yes [--json]
   pa skills list [--json]
 
 Environment:
@@ -138,6 +144,13 @@ function formatPlugin(plugin: PluginView): string {
     `${plugin.id}  ${plugin.lifecycle.padEnd(8)}  v${plugin.version}  connection=${plugin.connection.status}`,
     `  tools ${tools}  permissions ${plugin.permissions.join(",") || "-"}`,
     ...(plugin.lastError === undefined ? [] : [`  error ${safeText(plugin.lastError)}`]),
+  ].join("\n");
+}
+
+function formatProject(project: ProjectBinding): string {
+  return [
+    `${shortId(project.id)}  ${project.projectKey}  ${project.status.padEnd(7)}  ${project.repositoryFullName}  branch=${project.defaultBranch}  v${project.version}`,
+    `  repoId=${project.repositoryId} credential=${project.credentialRef} plans=${project.allowedPlanPaths.join(",") || "-"}`,
   ].join("\n");
 }
 
@@ -535,6 +548,64 @@ export async function runCli(
           return 0;
         }
         throw new Error("plugins subcommand must be list, status, enable or disable");
+      }
+      case "projects": {
+        const sub = requirePositional(args, 0, "projects subcommand");
+        if (sub === "list") {
+          const status = flagString(args.flags, "status");
+          if (status !== undefined && status !== "active" && status !== "revoked") {
+            throw new Error("--status must be active or revoked");
+          }
+          const projects = await client.listProjects(status);
+          if (json) printJson(io, { projects });
+          else if (projects.length === 0) io.out("No projects.");
+          else for (const project of projects) io.out(formatProject(project));
+          return 0;
+        }
+        if (sub === "show") {
+          const id = requirePositional(args, 1, "project id");
+          const project = await client.getProject(id);
+          if (json) printJson(io, { project });
+          else io.out(formatProject(project));
+          return 0;
+        }
+        if (sub === "bind") {
+          const projectKey = requirePositional(args, 1, "project key");
+          const repositoryFullName = requirePositional(args, 2, "repository owner/name");
+          const repositoryId = flagNumber(args.flags, "repo-id");
+          if (repositoryId === undefined) {
+            throw new Error("--repo-id is required");
+          }
+          const result = await client.bindProject({
+            projectKey,
+            repositoryId,
+            repositoryFullName,
+            defaultBranch: flagString(args.flags, "branch"),
+            credentialRef: flagString(args.flags, "credential-ref"),
+            allowedPlanPaths: listValue(flagString(args.flags, "plan-paths")),
+          });
+          if (json) printJson(io, result);
+          else {
+            io.out(formatProject(result.project));
+            io.out(result.created ? "bound" : "already bound");
+          }
+          return 0;
+        }
+        if (sub === "unbind") {
+          const id = requirePositional(args, 1, "project id");
+          if (args.flags.yes !== true) {
+            io.out(`Refusing to unbind ${id} without --yes.`);
+            return 2;
+          }
+          const result = await client.unbindProject(id);
+          if (json) printJson(io, result);
+          else {
+            io.out(formatProject(result.project));
+            io.out(result.changed ? "unbound" : "already unbound");
+          }
+          return 0;
+        }
+        throw new Error("projects subcommand must be list, show, bind or unbind");
       }
       case "skills": {
         const sub = requirePositional(args, 0, "skills subcommand");

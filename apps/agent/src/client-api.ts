@@ -20,6 +20,10 @@ import type {
   TaskStatus,
 } from "./domain/types.ts";
 import { ExtensionPolicyError } from "./domain/errors.ts";
+import {
+  ProjectConflictError,
+} from "./storage/projects.ts";
+import { ProjectValidationError } from "./personal/projects.ts";
 
 export const CLIENT_API_VERSION = 1;
 const API_PREFIX = "/api/v1";
@@ -73,6 +77,7 @@ export interface ClientApiDeps {
     | "confirmation"
     | "plugins"
     | "skills"
+    | "projectService"
   >;
   ownerId: string;
   /** Local bootstrap credential; device token hashes are also accepted. */
@@ -653,6 +658,54 @@ export class ClientApiService {
       }
     }
 
+    if (resource === "projects") {
+      if (id === undefined && method === "GET") {
+        this.#require(auth, "read");
+        const status = request.query.get("status");
+        if (status !== null && status !== "active" && status !== "revoked") {
+          throw new ApiError(400, "invalid_status", "status must be active or revoked");
+        }
+        return {
+          status: 200,
+          body: {
+            projects: this.#services.projectService.list(
+              this.#ownerId,
+              status ?? undefined,
+            ),
+          },
+        };
+      }
+      if (id === undefined && method === "POST") {
+        this.#require(auth, "write");
+        return this.#bindProject(request, auth);
+      }
+      if (id !== undefined && action === undefined && method === "GET") {
+        this.#require(auth, "read");
+        const project = this.#services.projectService.get(this.#ownerId, id);
+        if (project === undefined) {
+          throw new ApiError(404, "project_not_found");
+        }
+        return { status: 200, body: { project } };
+      }
+      if (id !== undefined && action === undefined && method === "DELETE") {
+        this.#require(auth, "write");
+        const actorId =
+          auth.kind === "admin" ? "admin" : `token:${auth.record.id}`;
+        const result = this.#services.projectService.unbind(
+          this.#ownerId,
+          id,
+          actorId,
+        );
+        if (result === undefined) {
+          throw new ApiError(404, "project_not_found");
+        }
+        return {
+          status: 200,
+          body: { project: result.project, changed: result.changed },
+        };
+      }
+    }
+
     if (resource === "skills" && id === undefined && method === "GET") {
       this.#require(auth, "read");
       return {
@@ -771,6 +824,64 @@ export class ClientApiService {
       throw error;
     }
     return { status: 201, body: { task } };
+  }
+
+  #bindProject(
+    request: ClientApiRequest,
+    auth: Auth,
+  ): ClientApiResponse {
+    const body = parseJsonBody(request);
+    const projectKey = parseString(body.projectKey, "projectKey", 64);
+    const repositoryId = this.#parseInteger(
+      body.repositoryId,
+      "repositoryId",
+      1,
+      Number.MAX_SAFE_INTEGER,
+    );
+    const repositoryFullName = parseString(
+      body.repositoryFullName,
+      "repositoryFullName",
+      200,
+    );
+    const defaultBranch =
+      body.defaultBranch === undefined
+        ? undefined
+        : parseString(body.defaultBranch, "defaultBranch", 255);
+    const credentialRef =
+      body.credentialRef === undefined
+        ? undefined
+        : parseString(body.credentialRef, "credentialRef", 128);
+    const allowedPlanPaths =
+      body.allowedPlanPaths === undefined
+        ? undefined
+        : parseStringArray(body.allowedPlanPaths, "allowedPlanPaths");
+    const actorId = auth.kind === "admin" ? "admin" : `token:${auth.record.id}`;
+    try {
+      const result = this.#services.projectService.bind(
+        this.#ownerId,
+        {
+          projectKey,
+          repositoryId,
+          repositoryFullName,
+          defaultBranch,
+          credentialRef,
+          allowedPlanPaths,
+        },
+        actorId,
+      );
+      return {
+        status: result.created ? 201 : 200,
+        body: { project: result.project, created: result.created },
+      };
+    } catch (error) {
+      if (error instanceof ProjectValidationError) {
+        throw new ApiError(400, "invalid_project", error.message);
+      }
+      if (error instanceof ProjectConflictError) {
+        throw new ApiError(409, "project_conflict", error.message);
+      }
+      throw error;
+    }
   }
 
   #cancelTask(taskId: string): ClientApiResponse {
