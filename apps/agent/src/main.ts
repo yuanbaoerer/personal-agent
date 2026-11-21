@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
 import { createApp } from "./app.ts";
+import { CredentialBroker } from "./actions/credentials.ts";
 import { createGithubPlugin } from "./plugins/github.ts";
 import { connectMcpPlugins, parseMcpServers } from "./plugins/mcp.ts";
 import { FileSkillRuntime } from "./plugins/skills.ts";
@@ -188,10 +189,24 @@ async function main(): Promise<void> {
       ? undefined
       : (projectKey: string) =>
           projectBindings.findActiveByKey(owner.id, projectKey);
+  const githubCredentialProvider =
+    githubOAuth === undefined
+      ? config.github.token === undefined
+        ? undefined
+        : () => config.github.token
+      : () => githubOAuth.accessToken();
+  const credentials = new CredentialBroker();
+  if (githubCredentialProvider !== undefined) {
+    credentials.register("github:default", {
+      provider: githubCredentialProvider,
+      scopes: ["repository.read"],
+    });
+  }
   const github = {
     token: config.github.token,
     allowedRepos: config.github.allowedRepos,
     resolveProject,
+    credentials,
     tokenProvider:
       githubOAuth === undefined ? undefined : () => githubOAuth.accessToken(),
   };
@@ -266,10 +281,17 @@ async function main(): Promise<void> {
     logger,
     adminToken: config.adminToken,
     clientApi,
-    onCredentialChange: () =>
-      app.plugins
-        .credentialChanged("github", "oauth")
-        .then(() => undefined),
+    onCredentialChange: async () => {
+      if (githubCredentialProvider === undefined) {
+        credentials.revoke("github:default");
+      } else {
+        credentials.rotate("github:default", {
+          provider: githubCredentialProvider,
+          scopes: ["repository.read"],
+        });
+      }
+      await app.plugins.credentialChanged("github", "oauth");
+    },
     oauth:
       githubOAuth === undefined
         ? undefined
