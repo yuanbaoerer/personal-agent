@@ -40,6 +40,9 @@ const GITHUB_MANIFEST = parsePluginManifest({
         "For every issue/PR/commit field you state, add a githubClaim: " +
         '{"githubClaims":[{"kind":"github_item","repo":"owner/name","operation":"issues",' +
         '"item":"123","field":"state","value":"open"}]}. ' +
+        "For typed file/tree/pull_files/checks facts, add kind=github_typed with " +
+        "projectKey, operation, revision (commit or observed PR head SHA), target " +
+        "(path, filename or check name), field and value. " +
         "Claims are checked against the matching receipt; omit unverifiable free text. " +
         "Typed ref/tree/file/issue/pull_files/checks require projectKey; the active owner ProjectBinding resolves the repository and must agree with any repo supplied.",
       description: "Read-only GitHub repository, issue, pull request and commit metadata.",

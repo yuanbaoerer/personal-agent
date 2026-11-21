@@ -334,7 +334,7 @@ export type StateClaim =
       dueAt: string;
     };
 
-export type GithubClaim = {
+export type GithubItemClaim = {
   kind: "github_item";
   repo: string;
   operation: "issues" | "pulls" | "commits";
@@ -343,6 +343,73 @@ export type GithubClaim = {
   field: "state" | "title" | "message" | "author" | "url" | "merged" | "draft" | "date";
   value: string | number | boolean;
 };
+
+/**
+ * A fact from a typed read. `revision` is the commit SHA for file/tree/checks
+ * and the observed head SHA for pull_files; stale receipts cannot satisfy it.
+ */
+export type GithubTypedClaim = {
+  kind: "github_typed";
+  repo: string;
+  projectKey: string;
+  operation: "file" | "tree" | "pull_files" | "checks";
+  revision: string;
+  /** Repository path, PR filename or check-run name. */
+  target: string;
+  field:
+    | "exists"
+    | "sha"
+    | "type"
+    | "status"
+    | "conclusion"
+    | "changes"
+    | "contentIncludes";
+  value: string | number | boolean;
+};
+
+export type GithubClaim = GithubItemClaim | GithubTypedClaim;
+
+export type ProjectFindingClassification = "observed" | "inferred" | "unknown";
+export type ProjectFindingSeverity = "critical" | "high" | "medium" | "low";
+
+/**
+ * A project-review finding. `observed` facts must resolve to a receipt at the
+ * same repository/revision; `unknown` findings must explain the evidence gap.
+ */
+export interface ProjectFinding {
+  id?: string;
+  requirementRef: string;
+  classification: ProjectFindingClassification;
+  severity: ProjectFindingSeverity;
+  repositoryId: number;
+  commitSha: string;
+  evidenceRefs: string[];
+  expected: string;
+  actual: string;
+  impact: string;
+  existingIssueMatches: number[];
+  suggestedAction: string;
+  evidenceGap?: string;
+  path?: string;
+  line?: number;
+  sourceUrl?: string;
+  coverage?: "complete" | "partial" | "unknown";
+  truncated?: boolean;
+  requiresOwnerApproval?: boolean;
+}
+
+/** A proposed issue write. Drafts never execute in the read-only phase. */
+export interface IssueDraft {
+  action: "create" | "update" | "comment";
+  targetIssue?: number;
+  title: string;
+  body: string;
+  findingIds: string[];
+  /** Derived by the host from verified repo/revision/requirements. */
+  idempotencyKey?: string;
+  requiresOwnerApproval: true;
+  beforeHash?: string;
+}
 
 export interface WorkerReport {
   status: ReportStatus;
@@ -358,6 +425,9 @@ export interface WorkerReport {
   /** Structured facts the program can compare with executor receipts. */
   stateClaims?: StateClaim[];
   githubClaims?: GithubClaim[];
+  /** Read-only project-review output, verified against GitHub receipts. */
+  findings?: ProjectFinding[];
+  issueDrafts?: IssueDraft[];
 }
 
 export type ActionStatus =

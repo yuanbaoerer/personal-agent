@@ -5,6 +5,8 @@ import type {
   ProposedAction,
   TaskInputRecord,
   GithubClaim,
+  GithubItemClaim,
+  GithubTypedClaim,
   MemoryRecord,
   StateClaim,
   SkillRejection,
@@ -1716,10 +1718,20 @@ function parseStateClaims(value: unknown): StateClaim[] | undefined {
   return claims.length > 0 ? claims : undefined;
 }
 
-const GITHUB_CLAIM_FIELDS: Record<GithubClaim["operation"], readonly string[]> = {
+const GITHUB_CLAIM_FIELDS: Record<GithubItemClaim["operation"], readonly string[]> = {
   issues: ["state", "title", "author", "url"],
   pulls: ["state", "title", "author", "url", "merged", "draft"],
   commits: ["date", "message", "author", "url"],
+};
+
+const GITHUB_TYPED_CLAIM_FIELDS: Record<
+  GithubTypedClaim["operation"],
+  readonly string[]
+> = {
+  file: ["exists", "sha", "type", "contentIncludes"],
+  tree: ["exists", "sha", "type"],
+  pull_files: ["status", "changes"],
+  checks: ["status", "conclusion"],
 };
 
 function parseGithubClaims(value: unknown): GithubClaim[] | undefined {
@@ -1732,6 +1744,47 @@ function parseGithubClaims(value: unknown): GithubClaim[] | undefined {
       continue;
     }
     const record = item as Record<string, unknown>;
+    if (record.kind === "github_typed") {
+      const repo = record.repo;
+      const projectKey = record.projectKey;
+      const operation = record.operation;
+      const revision = record.revision;
+      const target = record.target;
+      const field = record.field;
+      const claimValue = record.value;
+      if (
+        typeof repo !== "string" ||
+        !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo) ||
+        typeof projectKey !== "string" ||
+        !/^[a-z][a-z0-9._-]{0,63}$/.test(projectKey) ||
+        (operation !== "file" &&
+          operation !== "tree" &&
+          operation !== "pull_files" &&
+          operation !== "checks") ||
+        typeof revision !== "string" ||
+        !/^[0-9a-f]{40}$/i.test(revision) ||
+        typeof target !== "string" ||
+        target.length === 0 ||
+        target.length > 500 ||
+        typeof field !== "string" ||
+        !GITHUB_TYPED_CLAIM_FIELDS[operation].includes(field) ||
+        !["string", "number", "boolean"].includes(typeof claimValue) ||
+        (typeof claimValue === "string" && claimValue.length > 4_000)
+      ) {
+        continue;
+      }
+      claims.push({
+        kind: "github_typed",
+        repo: repo.toLowerCase(),
+        projectKey,
+        operation,
+        revision: revision.toLowerCase(),
+        target,
+        field: field as GithubTypedClaim["field"],
+        value: claimValue as string | number | boolean,
+      });
+      continue;
+    }
     if (record.kind !== "github_item") {
       continue;
     }
@@ -1760,7 +1813,7 @@ function parseGithubClaims(value: unknown): GithubClaim[] | undefined {
       repo: repo.toLowerCase(),
       operation,
       item: String(key),
-      field: field as GithubClaim["field"],
+      field: field as GithubItemClaim["field"],
       value: claimValue as string | number | boolean,
     });
   }

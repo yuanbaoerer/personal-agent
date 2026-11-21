@@ -1,12 +1,14 @@
 import type {
   ActionRecord,
   GithubClaim,
+  GithubTypedClaim,
   StateClaim,
   TaskRecord,
   TaskVerification,
   WorkerReport,
 } from "../domain/types.ts";
 import { hashArgs } from "../actions/tooling.ts";
+import { assignDraftKeys, validateProjectReview } from "./project-review.ts";
 import {
   hashSnapshot,
   isListStateTool,
@@ -316,6 +318,9 @@ function validateGithubClaim(
   claim: GithubClaim,
   actions: readonly ActionRecord[],
 ): string | undefined {
+  if (claim.kind === "github_typed") {
+    return validateGithubTypedClaim(claim, actions);
+  }
   const candidates = actions.filter(
     (candidate) =>
       typeof candidate.args.repo === "string" &&
@@ -372,6 +377,158 @@ function validateGithubClaim(
   return fieldSeen
     ? `github_field_mismatch:${claim.operation}:${claim.item}:${claim.field}`
     : `github_field_missing:${claim.operation}:${claim.field}`;
+}
+
+function validateGithubTypedClaim(
+  claim: GithubTypedClaim,
+  actions: readonly ActionRecord[],
+): string | undefined {
+  const candidates = actions.filter(
+    (action) =>
+      action.args.operation === claim.operation &&
+      typeof action.args.repo === "string" &&
+      action.args.repo.toLowerCase() === claim.repo &&
+      action.args.projectKey === claim.projectKey,
+  );
+  if (candidates.length === 0) {
+    return `github_typed_action_missing:${claim.operation}`;
+  }
+  for (const action of candidates) {
+    const evidence = action.evidence;
+    if (
+      evidence === undefined ||
+      evidence.projectKey !== claim.projectKey ||
+      typeof evidence.repositoryId !== "number"
+    ) {
+      continue;
+    }
+    if (claim.operation === "pull_files") {
+      if (evidence.stale === true) {
+        return `github_typed_stale:${claim.operation}`;
+      }
+      if (
+        typeof evidence.headSha !== "string" ||
+        evidence.headSha.toLowerCase() !== claim.revision
+      ) {
+        continue;
+      }
+    } else {
+      if (
+        typeof action.args.sha !== "string" ||
+        action.args.sha.toLowerCase() !== claim.revision ||
+        typeof evidence.commitSha !== "string" ||
+        evidence.commitSha.toLowerCase() !== claim.revision
+      ) {
+        continue;
+      }
+    }
+    return matchTypedClaim(claim, evidence);
+  }
+  return `github_typed_revision_missing:${claim.operation}:${claim.revision}`;
+}
+
+function matchTypedClaim(
+  claim: GithubTypedClaim,
+  evidence: Record<string, unknown>,
+): string | undefined {
+  if (claim.operation === "file") {
+    const item =
+      typeof evidence.item === "object" &&
+      evidence.item !== null &&
+      !Array.isArray(evidence.item)
+        ? (evidence.item as Record<string, unknown>)
+        : undefined;
+    if (item === undefined || item.path !== claim.target) {
+      return `github_typed_item_missing:file:${claim.target}`;
+    }
+    if (claim.field === "exists") {
+      const exists = item.type === "file" || item.type === "symlink";
+      return exists === claim.value
+        ? undefined
+        : `github_typed_field_mismatch:file:${claim.target}:exists`;
+    }
+    if (claim.field === "contentIncludes") {
+      if (typeof item.content !== "string") {
+        return `github_typed_field_missing:file:${claim.target}:content`;
+      }
+      if (item.content.includes(String(claim.value))) {
+        return undefined;
+      }
+      return item.contentTruncated === true
+        ? `github_typed_content_truncated:file:${claim.target}`
+        : `github_typed_field_mismatch:file:${claim.target}:contentIncludes`;
+    }
+    const actual = item[claim.field];
+    if (actual === undefined) {
+      return `github_typed_field_missing:file:${claim.target}:${claim.field}`;
+    }
+    return actual === claim.value
+      ? undefined
+      : `github_typed_field_mismatch:file:${claim.target}:${claim.field}`;
+  }
+
+  const items = Array.isArray(evidence.items) ? evidence.items : [];
+  const records = items.filter(
+    (item): item is Record<string, unknown> =>
+      typeof item === "object" && item !== null && !Array.isArray(item),
+  );
+  if (claim.operation === "tree") {
+    const item = records.find((entry) => entry.path === claim.target);
+    if (claim.field === "exists") {
+      if (claim.value === true && item !== undefined) {
+        return undefined;
+      }
+      if (claim.value === false && item === undefined) {
+        return evidence.truncated === true
+          ? "github_typed_tree_truncated"
+          : undefined;
+      }
+      return `github_typed_field_mismatch:tree:${claim.target}:exists`;
+    }
+    if (item === undefined) {
+      return `github_typed_item_missing:tree:${claim.target}`;
+    }
+    const actual = item[claim.field];
+    if (actual === undefined) {
+      return `github_typed_field_missing:tree:${claim.target}:${claim.field}`;
+    }
+    return actual === claim.value
+      ? undefined
+      : `github_typed_field_mismatch:tree:${claim.target}:${claim.field}`;
+  }
+  if (claim.operation === "pull_files") {
+    const item = records.find((entry) => entry.filename === claim.target);
+    if (item === undefined) {
+      return `github_typed_item_missing:pull_files:${claim.target}`;
+    }
+    const actual = item[claim.field];
+    if (actual === undefined) {
+      return `github_typed_field_missing:pull_files:${claim.target}:${claim.field}`;
+    }
+    return actual === claim.value
+      ? undefined
+      : `github_typed_field_mismatch:pull_files:${claim.target}:${claim.field}`;
+  }
+  const item = records.find((entry) => entry.name === claim.target);
+  if (item === undefined) {
+    return `github_typed_item_missing:checks:${claim.target}`;
+  }
+  if (
+    typeof item.headSha === "string" &&
+    item.headSha.toLowerCase() !== claim.revision
+  ) {
+    return `github_typed_field_mismatch:checks:${claim.target}:headSha`;
+  }
+  if (claim.field !== "status" && claim.field !== "conclusion") {
+    return `github_typed_field_missing:checks:${claim.target}:${claim.field}`;
+  }
+  const actual = item[claim.field];
+  if (actual === undefined) {
+    return `github_typed_field_missing:checks:${claim.target}:${claim.field}`;
+  }
+  return actual === claim.value
+    ? undefined
+    : `github_typed_field_mismatch:checks:${claim.target}:${claim.field}`;
 }
 
 const COUNT_CLAIM_PATH =
@@ -459,6 +616,11 @@ export class TaskCompletionVerifier {
         ),
     );
     this.register(
+      "project-review",
+      ({ task, report, actions, structural, at }) =>
+        this.#verifyProjectReview(task, report, actions, structural, at),
+    );
+    this.register(
       "state-read",
       ({ task, report, actions, structural, at, latestInputAt }) =>
         this.#verifyState(
@@ -538,18 +700,23 @@ export class TaskCompletionVerifier {
       .filter((action) => action.taskRevision === task.revision);
     const requested = structural.criteria.verifier;
     const hasGithub = task.mandate.tools.includes("github.read");
+    const wantsProjectReview =
+      task.mandate.skills?.includes("github.project-review") === true;
     const hasState = task.mandate.tools.some(isStateToolName);
     const hasExecutorTool = task.mandate.tools.length > 0;
     // A model-supplied completion criteria string must never downgrade a
     // tool-backed task to structural-only success. The mandate is the
     // minimum verifier strength, not the report text.
-    const verifier = hasGithub
-      ? "github-read"
-      : hasState
-        ? "state-read"
-        : hasExecutorTool
-          ? "action-receipt"
-          : requested ?? "structural";
+    const verifier =
+      hasGithub && wantsProjectReview
+        ? "project-review"
+        : hasGithub
+          ? "github-read"
+          : hasState
+            ? "state-read"
+            : hasExecutorTool
+              ? "action-receipt"
+              : requested ?? "structural";
 
     const registered = this.#verifiers.get(verifier);
     if (registered === undefined) {
@@ -1070,6 +1237,123 @@ export class TaskCompletionVerifier {
           .map((action) => action.externalRef ?? `action:${action.id}`)
           .filter((value): value is string => typeof value === "string"),
         externalFactsVerified: false,
+      },
+      at,
+    );
+  }
+
+  /**
+   * A project review is not trusted because the Skill was selected. Every
+   * structured finding must resolve to a GitHub receipt at the same
+   * repository and revision, and every drafted issue write must point at a
+   * verified finding and (for updates) an existing issue receipt.
+   */
+  #verifyProjectReview(
+    task: TaskRecord,
+    report: WorkerReport,
+    actions: readonly ActionRecord[],
+    structural: { checked: string[]; criteria: Criteria },
+    at: string,
+  ): CompletionVerdict {
+    if (structural.criteria.repo === undefined) {
+      return this.#verdict(
+        "project-review",
+        "needs_review",
+        "project review completion criteria has no explicit repository",
+        {
+          checked: [...structural.checked, "github_action_receipt"],
+          missing: ["explicit repository completion criterion"],
+          externalFactsVerified: false,
+        },
+        at,
+      );
+    }
+    const succeeded = actions.filter((action) => action.status === "succeeded");
+    const githubActions = succeeded.filter(
+      (action) => action.tool === "github.read",
+    );
+    const evidenceRefs = githubActions
+      .map((action) => action.externalRef ?? `action:${action.id}`)
+      .filter((value): value is string => typeof value === "string");
+    if (githubActions.length === 0) {
+      return this.#verdict(
+        "project-review",
+        "needs_review",
+        "project review has no succeeded GitHub read receipt",
+        {
+          checked: [...structural.checked, "github_action_receipt"],
+          missing: ["succeeded github.read action"],
+          externalFactsVerified: false,
+        },
+        at,
+      );
+    }
+    const findings = report.findings ?? [];
+    const drafts = assignDraftKeys(findings, report.issueDrafts ?? []);
+    if (findings.length === 0) {
+      return this.#verdict(
+        "project-review",
+        "needs_review",
+        "project review report has no structured findings",
+        {
+          checked: [...structural.checked, "github_action_receipt"],
+          missing: ["structured finding"],
+          evidenceRefs,
+          externalFactsVerified: false,
+        },
+        at,
+      );
+    }
+    const validation = validateProjectReview({
+      findings,
+      drafts,
+      actions,
+      repo: structural.criteria.repo,
+      projectKey: task.mandate.project,
+    });
+    const checked = [
+      ...structural.checked,
+      "github_action_receipt",
+      "project_review:findings",
+      ...validation.checked.slice(0, 80),
+      "claim:free_text_unverified",
+    ];
+    if (validation.missing.length > 0) {
+      return this.#verdict(
+        "project-review",
+        "needs_review",
+        "project review findings do not match the GitHub receipts",
+        {
+          checked,
+          missing: validation.missing.slice(0, 40),
+          evidenceRefs,
+          externalFactsVerified: false,
+        },
+        at,
+      );
+    }
+    if (validation.observed === 0) {
+      return this.#verdict(
+        "project-review",
+        "needs_review",
+        "project review has no observed finding backed by a receipt",
+        {
+          checked,
+          missing: ["observed finding with verified evidence"],
+          evidenceRefs,
+          externalFactsVerified: false,
+        },
+        at,
+      );
+    }
+    return this.#verdict(
+      "project-review",
+      "succeeded",
+      `project review verified ${validation.observed} observed, ${validation.inferred} inferred and ${validation.unknown} unknown finding(s); ${validation.drafts} issue draft(s) await owner approval`,
+      {
+        checked,
+        evidenceRefs,
+        externalFactsVerified: true,
       },
       at,
     );
