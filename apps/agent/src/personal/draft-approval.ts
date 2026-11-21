@@ -199,12 +199,17 @@ export class IssueDraftApprovalBridge {
         project: draft.projectKey,
       },
     });
-    const proposed = this.#actionService.proposeApprovedWrite({
-      task,
-      tool,
-      args: actionArgs(draft),
-      sourceKey: `draft:${draft.id}:action:${draft.payloadHash}`,
-    });
+    let proposed;
+    try {
+      proposed = this.#actionService.proposeApprovedWrite({
+        task,
+        tool,
+        args: actionArgs(draft),
+        sourceKey: `draft:${draft.id}:action:${draft.payloadHash}`,
+      });
+    } catch {
+      proposed = undefined;
+    }
     if (proposed === undefined) {
       this.#taskService.finishExternalAction(task.id, {
         status: "failed",

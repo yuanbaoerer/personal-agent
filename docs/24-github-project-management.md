@@ -166,7 +166,7 @@ L2 需 GH01–06 与相关 GH09；L3 pilot 需 GH07–10 与相应 #41 原验收
 - 写前：update/comment 先 GET issue，拒绝 PR-as-issue；update 比较 `beforeHash = sha256(title + "\n" + body)`，标题或正文被人工修改都立即失败并要求重新批准；不声称 GitHub 提供原子 CAS。
 - 幂等：create/comment 使用持久 idempotency marker；comment reconcile 按 `since` + 分页扫描，避免翻页盲区重复 POST；update 在写前发现已是目标状态则 no-op。title-only update 必须实际 PATCH，不允许假成功。
 - 写后：GET 资源核对 issue/comment id、URL、正文/marker；失败或超时标记 unknown 并先 reconcile，绝不盲目重试 POST；ActionService 的 lease/revision/plugin/credential fence 继续生效。结算只允许从 `executing` 迁移，写入期间被 binding/credential/task 失效的草稿不会被“复活”为 approved，write task 进入 needs_review。
-- E1：`github-issue.test.ts` 覆盖 create/update/comment、重复、scope/owner/repoId/allowlist/epoch、lost POST、conflict、429；`draft-approval.test.ts` 覆盖 approve/replay/reject/binding revoke/credential rotation/unknown reconcile/update conflict/comment/429/重启后 reconcile。全量 502 tests passed。
+- E1：`github-issue.test.ts` 覆盖 create/update/comment、重复、scope/owner/repoId/allowlist/epoch、lost POST、conflict、429；`draft-approval.test.ts` 覆盖 approve/replay/reject/binding revoke/credential rotation/unknown reconcile/update conflict/comment/429/重启后 reconcile。全量 506 tests passed。
 - 真实写验收未执行：没有 owner 指定的隔离测试仓库与 Issues-write 凭据；不得在业务仓库试故障或写入。具体 owner 操作与预期证据见 [docs/acceptance/2026-11-22-l2-blocked.md](acceptance/2026-11-22-l2-blocked.md)。
 
 
@@ -180,6 +180,8 @@ L2 需 GH01–06 与相关 GH09；L3 pilot 需 GH07–10 与相应 #41 原验收
 
 ## 12. 2026-11-22 L2W-04：Feishu 全链路 E1
 
+- 写路径 Feishu E1：`/draft approve` → 受控写入 → 写后核对 → 审批 Task 结算 → Outbox → Feishu send（fake HTTP，断言 issue URL 与 platform message id）。
 - 新增确定性全链路回归：构造 Feishu 2.0 原始事件（`im.message.receive_v1`，owner p2p），经 `FeishuAdapter.parseRequest` 校验 token/app_id → Ingress → Router → ProjectBinding → Task → GitHub typed reads → findings/drafts → `project-review` Verifier → OutboxDispatcher → `FeishuAdapter.send`。
 - Fake Feishu HTTP 返回 tenant token 与 `data.message_id`；断言 Outbox 行 `accepted`、platform message id 存在、实际发送文本包含“项目评估（结构化证据已核对）”和“待办草稿”。
+- 取消 write task、write task revision 变化、approval 后禁用插件均不会产生 GitHub 写请求；草稿进入 superseded。
 - 这不是 E3：没有真实 Feishu 客户端入站/收件；真实 E3 仍按 [blocked record](acceptance/2026-11-22-l2-blocked.md) 由 owner 执行。

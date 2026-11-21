@@ -4,6 +4,8 @@ import { describe, it } from "node:test";
 
 import { CredentialBroker } from "../src/actions/credentials.ts";
 import { createGithubPlugin } from "../src/plugins/github.ts";
+import { FeishuAdapter } from "../src/channels/feishu/adapter.ts";
+import { OutboxDispatcher } from "../src/delivery/outbox.ts";
 import type { GitHubIssueWriteConfig } from "../src/actions/github-issue.ts";
 import type { AssignmentRecord, IssueDraft } from "../src/domain/types.ts";
 import { createServices, sendText, type TestServices } from "./services.ts";
@@ -628,6 +630,137 @@ describe("issue draft approval: revision drift", () => {
     assert.equal(
       fake.requests.filter((request) => request.method === "POST").length,
       0,
+    );
+  });
+});
+
+
+describe("approval bridge failure fences", () => {
+  it("does not write after the owner cancels the write task", async () => {
+    const { services, fake } = setup();
+    const { draft, payloadHash } = seedDraft(services, { key: "2" });
+    const approved = await services.issueDraftApproval?.approve({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      draftId: draft.id,
+      payloadHash,
+      actorId: services.owner.id,
+    });
+    assert.equal(approved?.ok, true);
+    assert.ok(approved?.taskId);
+    services.taskService.cancel(approved.taskId);
+    await services.effectDispatcher.drain(10);
+    assert.equal(
+      fake.requests.filter((request) => request.method === "POST").length,
+      0,
+    );
+    assert.equal(
+      services.issueDrafts.get(services.owner.id, draft.id)?.status,
+      "superseded",
+    );
+  });
+
+  it("does not write after a task revision changes", async () => {
+    const { services, fake } = setup();
+    const { draft, payloadHash } = seedDraft(services, { key: "1" });
+    const approved = await services.issueDraftApproval?.approve({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      draftId: draft.id,
+      payloadHash,
+      actorId: services.owner.id,
+    });
+    assert.equal(approved?.ok, true);
+    assert.ok(approved?.taskId);
+    services.taskService.revise(approved.taskId, { goal: "revised write task" });
+    await services.effectDispatcher.drain(10);
+    assert.equal(
+      fake.requests.filter((request) => request.method === "POST").length,
+      0,
+    );
+    assert.equal(
+      services.issueDrafts.get(services.owner.id, draft.id)?.status,
+      "superseded",
+    );
+  });
+
+  it("does not write after the plugin is disabled post-approval", async () => {
+    const { services, fake } = setup();
+    const { draft, payloadHash } = seedDraft(services, { key: "0" });
+    const approved = await services.issueDraftApproval?.approve({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      draftId: draft.id,
+      payloadHash,
+      actorId: services.owner.id,
+    });
+    assert.equal(approved?.ok, true);
+    await services.plugins.disable("github", services.owner.id);
+    await services.effectDispatcher.drain(10);
+    assert.equal(
+      fake.requests.filter((request) => request.method === "POST").length,
+      0,
+    );
+    assert.equal(
+      services.issueDrafts.get(services.owner.id, draft.id)?.status,
+      "superseded",
+    );
+  });
+});
+
+describe("approval bridge Feishu delivery", () => {
+  it("delivers the write result to Feishu with a platform message id", async () => {
+    const { services } = setup();
+    const { draft, payloadHash } = seedDraft(services, { key: "f" });
+    await sendText(
+      services,
+      `/draft approve ${draft.id} ${payloadHash}`,
+      "evt_draft_feishu",
+    );
+    const sent: string[] = [];
+    let message = 0;
+    const adapter = new FeishuAdapter(
+      {
+        appId: "app_1",
+        appSecret: "secret",
+        verificationToken: "token",
+        apiBase: "https://feishu.test",
+      },
+      {
+        now: () => NOW,
+        fetch: (async (input: string | URL | Request, init?: RequestInit) => {
+          const url = new URL(String(input));
+          if (url.pathname.endsWith("/tenant_access_token/internal")) {
+            return json({
+              code: 0,
+              tenant_access_token: "tenant-token",
+              expire: 7200,
+            });
+          }
+          const body = JSON.parse(String(init?.body ?? "{}")) as {
+            content?: string;
+          };
+          const content = JSON.parse(body.content ?? "{}") as { text?: string };
+          if (typeof content.text === "string") {
+            sent.push(content.text);
+          }
+          message += 1;
+          return json({ code: 0, data: { message_id: `om_write_${message}` } });
+        }) as typeof fetch,
+      },
+    );
+    const dispatcher = new OutboxDispatcher({
+      store: services.store,
+      channel: adapter,
+      now: () => NOW,
+      leaseMs: 1_000,
+      maxAttempts: 3,
+    });
+    const result = await dispatcher.drain(100);
+    assert.ok(result.accepted > 0);
+    assert.ok(sent.some((text) => text.includes("外部动作已完成并核对")));
+    assert.ok(
+      sent.some((text) => text.includes(`https://github.com/${REPO}/issues/500`)),
     );
   });
 });

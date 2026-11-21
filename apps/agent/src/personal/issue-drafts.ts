@@ -355,6 +355,18 @@ export class IssueDraftService {
     ) {
       return supersede("source_task_changed");
     }
+    if (draft.writeTaskId !== undefined) {
+      const writeTask = this.#tasks.get(draft.writeTaskId);
+      if (
+        writeTask === undefined ||
+        writeTask.revision !== draft.sourceTaskRevision ||
+        writeTask.status === "cancelled" ||
+        writeTask.status === "cancelling" ||
+        writeTask.status === "failed"
+      ) {
+        return supersede("write_task_changed");
+      }
+    }
     const binding = this.#projects.findActiveByKey(ownerId, draft.projectKey);
     if (
       binding === undefined ||
