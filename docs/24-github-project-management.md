@@ -16,7 +16,7 @@
 | L3 Development Orchestrator Pilot | Issue→Coding Agent→测试→Draft PR→独立 Review | GH-05/06 实际闭环及恢复 |
 | L4 Autonomous Maintainer（后续） | 有界的持续监控、需求识别、返工与主人决策 | 先有连续使用证据；自动写/合并不在本阶段 |
 
-当前：github.read GET-only、单 owner PAT/OAuth E1、repo 白名单及 24h 只读预授权；状态/结构化 Intent、Action audit、claims 与本地预算已有实现；真实 G1/E3 未完成，账单导致最新跨平台 CI 未启动（仓库记录本地 385 tests）。没有证据表明当前已经支持真实 Issue 写、完整源码读取或 Coding Agent 调度。不可把 ChatGPT 的 GitHub 插件能力算进项目自身实现。
+当前：github.read GET-only、单 owner PAT/OAuth E1、repo 白名单及 24h 只读预授权；状态/结构化 Intent、Action audit、claims 与本地预算已有实现；真实 GitHub 只读 G1 与 Feishu 出站已有证据，真实 E3/Issue 写仍未完成。2026-11-21 跨平台 CI 已恢复，main run `44860766068` 通过（当前 427 tests）；此前账单期间的合并仅以本地测试为依据。没有证据表明当前已经支持真实 Issue 写、完整源码读取或 Coding Agent 调度。不可把 ChatGPT 的 GitHub 插件能力算进项目自身实现。
 
 ## 2. 工程主线与依赖
 
@@ -30,7 +30,7 @@
 | GH-05 | P1（L2后） | 一个 Coding Agent adapter 与隔离 Draft PR | #63 |
 | GH-06 | P1（L2后） | 独立 Review、CI 跟踪、主动汇报 | #64 |
 
-GH-00/01 可并行；GH-02 依赖真实只读授权，GH-03 依赖 #4/#7/#10/#28 的写安全及 GH-02；GH-04 可先做只读评估和草稿，不在写安全未通过时执行。GH-05/06 在 L2 验收后推进，Review 只读可提前验证。私有 MVP 的 #41 不因本篇被降级或替换；可并行开发但未过相关真实门禁不得开启相应外部副作用。先恢复 GitHub Actions，若仍受 billing 阻断，标 blocked 并保留本地验证，不能宣称 CI 通过。
+GH-00/01 可并行；GH-02 依赖真实只读授权，GH-03 依赖 #4/#7/#10/#28 的写安全及 GH-02；GH-04 可先做只读评估和草稿，不在写安全未通过时执行。GH-05/06 在 L2 验收后推进，Review 只读可提前验证。私有 MVP 的 #41 不因本篇被降级或替换；可并行开发但未过相关真实门禁不得开启相应外部副作用。GitHub Actions 已于 2026-11-21 恢复；若再次 billing 阻断，标 blocked 并保留本地验证，不能宣称 CI 通过。
 
 GH-00 具体待办：服务层无人值守 guard（confirm/resume/fire/后台模型发起，预算未知 fail-closed）；序号任务绑定实际用户所见列表快照及过滤条件，或者对不稳定目标强制确认；SQL 前缀/目标全量验证；统一 Router/Client API/Schedule 创建入口的 claims 规范；单报告提案上限与实际执行次数/任务总时长等预算语义；真实飞书、真实 GitHub、常驻与重启恢复，现有 #41 场景留证。不以新垂直功能掩盖这些问题。
 

@@ -122,7 +122,7 @@ GH-00/01 与 EXT-01 并行：现有安全/真实验收阻断不延期。EXT-02 �
 
 ## 11. 验收与运营
 
-EXT01–10 见 #73：manifest/冲突、无 GitHub Core 正常、Node 不重启启停、真实登录与撤销、旧审批/在途动作/重启、MCP 实证对照、Skill 版本/注入、GH 项目管理闭环、Coding Runtime/Draft PR、第三方独立开发、安全分发和跨平台。每项记录 SHA、E1/E3/E4、plugin/version/generation、授权版本、trace、测试命令及实际回执、已知成本、PASS/FAIL/PARTIAL/BLOCKED；未知明确标记。插件调用观测记录 latency/error/capability/version，但不存凭据/原始私聊；复用 #7 的预算/audit 与 #28 安全负例，正式 K/SEC 和 M01–M14 不降低。当前 GitHub Actions 账单阻断仍待恢复，不能用本地测试替代跨平台 CI。
+EXT01–10 见 #73：manifest/冲突、无 GitHub Core 正常、Node 不重启启停、真实登录与撤销、旧审批/在途动作/重启、MCP 实证对照、Skill 版本/注入、GH 项目管理闭环、Coding Runtime/Draft PR、第三方独立开发、安全分发和跨平台。每项记录 SHA、E1/E3/E4、plugin/version/generation、授权版本、trace、测试命令及实际回执、已知成本、PASS/FAIL/PARTIAL/BLOCKED；未知明确标记。插件调用观测记录 latency/error/capability/version，但不存凭据/原始私聊；复用 #7 的预算/audit 与 #28 安全负例，正式 K/SEC 和 M01–M14 不降低。2026-11-21 GitHub Actions 已恢复，main run `44860766068` 全部通过；此前 #74–#78 的 CI run 因账单未启动，合并依据是本地测试，不能追认为 CI 通过。
 
 ## 12. 开发顺序与约束
 
