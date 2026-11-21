@@ -346,7 +346,9 @@ export function validateProjectReview(input: {
           fail("before_hash_missing");
         } else if (
           draft.beforeHash !==
-          createHash("sha256").update(issue.body).digest("hex")
+          createHash("sha256")
+            .update(`${issue.title}\n${issue.body}`)
+            .digest("hex")
         ) {
           fail("before_hash_mismatch");
         }

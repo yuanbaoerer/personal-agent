@@ -380,7 +380,9 @@ describe("issue draft approval bridge", () => {
 describe("issue draft approval: update and failure paths", () => {
   it("pauses an update when a human changed the issue after the review", async () => {
     const { services, fake } = setup();
-    const beforeHash = createHash("sha256").update("old body").digest("hex");
+    const beforeHash = createHash("sha256")
+      .update("Existing issue\nold body")
+      .digest("hex");
     const { draft, payloadHash } = seedDraft(services, {
       key: "9",
       action: "update",
@@ -516,5 +518,28 @@ describe("issue draft restart reconciliation", () => {
       "failed",
     );
     assert.equal(services.tasks.get(task.id)?.status, "needs_review");
+  });
+});
+
+describe("issue draft approval: plugin lifecycle", () => {
+  it("refuses approval when the GitHub plugin is disabled", async () => {
+    const { services, fake } = setup();
+    const { draft, payloadHash } = seedDraft(services, { key: "4" });
+    await services.plugins.disable("github", services.owner.id);
+    await sendText(
+      services,
+      `/draft approve ${draft.id} ${payloadHash}`,
+      "evt_draft_plugin_disabled",
+    );
+    assert.equal(
+      services.issueDrafts.get(services.owner.id, draft.id)?.status,
+      "pending_approval",
+    );
+    assert.equal(
+      fake.requests.filter((request) => request.method === "POST").length,
+      0,
+    );
+    const outbox = services.store.listRecentOutbox(10).map((row) => row.text);
+    assert.ok(outbox.some((text) => /issue_write_capability_unavailable|无法批准/.test(text)));
   });
 });

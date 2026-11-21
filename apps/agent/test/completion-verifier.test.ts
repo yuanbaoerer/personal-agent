@@ -1080,7 +1080,7 @@ describe("TaskCompletionVerifier", () => {
             body: "Verify head SHA before and after listing files.",
             findingIds: ["f1"],
             beforeHash:
-              "5bf3e85a6ed5c27d8b0b56ebd63b6a4dcd51833cd07a5328003197f5c1a1eab9",
+              "64a995f6c8b6555f51cb8876f1e367274ca2dd39d37d1fe9d6506f4074c85f7a",
             requiresOwnerApproval: true,
           },
         ],

@@ -350,6 +350,14 @@ async function main(): Promise<void> {
           provider: githubCredentialProvider,
         });
       }
+      if (owner !== undefined) {
+        // Credential epoch changes invalidate stored approvals for that ref.
+        app.issueDrafts.supersedeForCredential(owner.id, "github:default");
+        app.issueDrafts.supersedeForCredential(
+          owner.id,
+          config.github.issueWriteCredentialRef,
+        );
+      }
       await app.plugins.credentialChanged("github", "oauth");
     },
     oauth:

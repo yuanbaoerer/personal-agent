@@ -26,5 +26,5 @@ Structured output required by the host verifier:
 Rules enforced in code:
 - Every observed finding must cite a receipt from the same repositoryId and commitSha; a stale PR file receipt or truncated tree cannot prove absence or completion.
 - Existing issue numbers must appear in an actual issue receipt; a create draft is refused when a matching issue already exists.
-- Update drafts must target an issue already listed in the finding's existingIssueMatches and carry the SHA-256 of the receipt's issue body as beforeHash.
+- Update drafts must target an issue already listed in the finding's existingIssueMatches and carry sha256(`title + "\n" + body`) from the receipt as beforeHash.
 - Drafts are proposals only; this task has no GitHub write permission.

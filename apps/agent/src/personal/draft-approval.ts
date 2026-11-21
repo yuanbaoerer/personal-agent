@@ -216,6 +216,7 @@ export class IssueDraftApprovalBridge {
       "executing",
       this.#now().toISOString(),
       { writeTaskId: task.id, writeActionId: proposed.action.id },
+      ["pending_approval"],
     );
     this.#store.recordAudit({
       actorId: input.actorId,
@@ -262,7 +263,28 @@ export class IssueDraftApprovalBridge {
       action.externalRef ??
       (typeof evidence.issueUrl === "string" ? evidence.issueUrl : undefined);
     if (action.status === "succeeded") {
-      this.#drafts.updateStatus(draft.id, "approved", at);
+      const settledDraft = this.#drafts.updateStatus(
+        draft.id,
+        "approved",
+        at,
+        {},
+        ["executing"],
+      );
+      if (settledDraft === undefined) {
+        // The write landed but the draft was invalidated mid-flight. Never
+        // resurrect an approval; require manual reconciliation.
+        if (draft.writeTaskId !== undefined) {
+          this.#taskService.finishExternalAction(draft.writeTaskId, {
+            status: "needs_review",
+            summary:
+              "GitHub 写入已发生，但草稿在写入期间失效；需要人工核对后重新评估。",
+            verification: verification("needs_review", ["action_succeeded"], [
+              "draft_invalidated_during_write",
+            ], externalRef, at),
+          });
+        }
+        return;
+      }
       if (draft.writeTaskId !== undefined) {
         this.#taskService.finishExternalAction(draft.writeTaskId, {
           status: "succeeded",
@@ -300,7 +322,7 @@ export class IssueDraftApprovalBridge {
       denied: "rejected",
     };
     const next = mapping[action.status] ?? "failed";
-    this.#drafts.updateStatus(draft.id, next, at);
+    this.#drafts.updateStatus(draft.id, next, at, {}, ["executing"]);
     if (draft.writeTaskId !== undefined) {
       const needsReview = action.status === "needs_manual";
       this.#taskService.finishExternalAction(draft.writeTaskId, {
@@ -314,6 +336,7 @@ export class IssueDraftApprovalBridge {
           ["action_settled"],
           [action.status],
           externalRef,
+          at,
         ),
       });
     }
@@ -334,7 +357,12 @@ function actionArgs(draft: IssueDraftSnapshot): Record<string, unknown> {
     return { ...base, title: draft.title, body: draft.body };
   }
   if (draft.action === "comment") {
-    return { ...base, targetIssue: draft.targetIssue, body: draft.body };
+    return {
+      ...base,
+      targetIssue: draft.targetIssue,
+      body: draft.body,
+      notBefore: draft.createdAt,
+    };
   }
   return {
     ...base,
@@ -350,6 +378,7 @@ function verification(
   checked: string[],
   missing: string[],
   externalRef?: string,
+  at: string = new Date().toISOString(),
 ): {
   verifier: string;
   verifierVersion: string;
@@ -373,6 +402,6 @@ function verification(
     missing,
     evidenceRefs: externalRef === undefined ? [] : [externalRef],
     externalFactsVerified: verdict === "succeeded",
-    verifiedAt: new Date().toISOString(),
+    verifiedAt: at,
   };
 }

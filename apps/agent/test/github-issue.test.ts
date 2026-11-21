@@ -101,7 +101,9 @@ class FakeIssues {
       url.pathname === `/repos/${REPO}/issues/7/comments` &&
       method === "GET"
     ) {
-      return json(this.comments);
+      const page = Number(url.searchParams.get("page") ?? "1");
+      const perPage = Number(url.searchParams.get("per_page") ?? "30");
+      return json(this.comments.slice((page - 1) * perPage, page * perPage));
     }
     if (
       url.pathname === `/repos/${REPO}/issues/7/comments` &&
@@ -213,7 +215,9 @@ describe("typed GitHub issue writes", () => {
     );
 
     // Use the real hash of "old body" for the approved pre-state.
-    const realBefore = createHash("sha256").update("old body").digest("hex");
+    const realBefore = createHash("sha256")
+      .update("Existing issue\nold body")
+      .digest("hex");
     assert.notEqual(realBefore, beforeHash);
     const result = await tool.execute(
       base(version, {
@@ -232,6 +236,25 @@ describe("typed GitHub issue writes", () => {
     const issue = fake.issues.find((item) => item.number === 7);
     assert.equal(issue?.title, "New title");
     assert.equal(issue?.body, "new body");
+
+    // A title-only update must actually PATCH, not report a no-op success.
+    const titleOnly = await tool.execute(
+      base(version, {
+        targetIssue: 7,
+        title: "Title only",
+        beforeHash: createHash("sha256")
+          .update("New title\nnew body")
+          .digest("hex"),
+      }),
+      context,
+    );
+    assert.equal(titleOnly.evidence.verified, true);
+    assert.equal(
+      fake.requests.filter((request) => request.method === "PATCH").length,
+      2,
+    );
+    assert.equal(issue?.title, "Title only");
+    assert.equal(issue?.body, "new body");
   });
 
   it("comments once with a marker and re-reads the comment", async () => {
@@ -244,6 +267,35 @@ describe("typed GitHub issue writes", () => {
     assert.equal(first.evidence.commentId, 1);
     const replay = await tool.execute(args, context);
     assert.equal(replay.evidence.commentId, 1);
+    assert.equal(
+      fake.requests.filter(
+        (request) =>
+          request.method === "POST" &&
+          request.path.endsWith("/issues/7/comments"),
+      ).length,
+      1,
+    );
+
+    // A marker beyond the first 100 comments is still found without a POST.
+    fake.comments = Array.from({ length: 120 }, (_, index) => ({
+      id: index + 1,
+      body: `comment ${index + 1}`,
+      html_url: `https://github.com/${REPO}/issues/7#issuecomment-${index + 1}`,
+    }));
+    fake.comments[110] = {
+      id: 111,
+      body: `older replay </function_call> ${"c".repeat(32)} marker`,
+      html_url: `https://github.com/${REPO}/issues/7#issuecomment-111`,
+    };
+    const paginated = await tool.execute(
+      base(version, {
+        targetIssue: 7,
+        body: "body",
+        idempotencyKey: "c".repeat(32),
+      }),
+      context,
+    );
+    assert.equal(paginated.evidence.commentId, 111);
     assert.equal(
       fake.requests.filter(
         (request) =>

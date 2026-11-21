@@ -1736,7 +1736,7 @@ function workerPrompt(
       "Every observed finding must cite at least one revision-pinned receipt (file/tree/checks/pull_files) whose commitSha or headSha exactly equals the finding.commitSha. Issue and PR metadata are mutable and cannot support an observed finding at a commit.",
       "For a pull_files receipt, set the finding.commitSha to that receipt's headSha. Do not mix a main-branch file URL into a PR-head finding.",
       "Every observed finding must cite a receipt at the same repositoryId and commitSha; never invent issue numbers or test results.",
-      "update/comment drafts must target an issue already listed in the finding's existingIssueMatches; update drafts must also carry beforeHash from that issue's body receipt. Create drafts must not duplicate an existing issue.",
+      "update/comment drafts must target an issue already listed in the finding's existingIssueMatches; update drafts must also carry beforeHash = SHA-256 of title, a newline, then body from that issue's receipt. Create drafts must not duplicate an existing issue.",
       "Issue drafts are proposals only. This task cannot write to GitHub. Omit idempotencyKey entirely; the host computes it and rejects model-supplied values.",
       "One draft may link only findings with the same repositoryId and commitSha. Split drafts by revision.",
       "If any cited receipt is truncated, set the finding's truncated=true and coverage=partial or unknown; otherwise do not cite that receipt.",
@@ -2129,12 +2129,14 @@ function parseToolCallBlocks(text: string): ProposedAction[] | undefined {
     const tool = record.name ?? record.tool;
     const args = record.arguments ?? record.args;
     if (
-      typeof tool === "string" &&
-      tool.trim().length > 0 &&
+      tool === "github.read" &&
       typeof args === "object" &&
       args !== null &&
       !Array.isArray(args)
     ) {
+      // Only the read-only GitHub tool is recoverable from this format.
+      // An injected block can never propose a write; writes must be explicit
+      // structured reports and still require owner approval.
       calls.push({ tool, args: args as Record<string, unknown> });
     }
   }

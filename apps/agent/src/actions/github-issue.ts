@@ -24,6 +24,15 @@ const PAYLOAD_HASH = /^[0-9a-f]{64}$/;
 const IDEMPOTENCY_KEY = /^[0-9a-f]{32}$/;
 const MARKER = "personal-agent";
 
+class GitHubHttpError extends ToolRejectedError {
+  readonly status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "GitHubHttpError";
+    this.status = status;
+  }
+}
+
 export type GitHubIssueOperation = "create" | "update" | "comment";
 
 export interface GitHubIssueWriteConfig {
@@ -221,6 +230,8 @@ class GitHubIssueWriteTool implements ActionTool {
     ) {
       throw new ToolRejectedError("comment requires body and no title");
     }
+    const notBefore =
+      this.#operation === "comment" ? optionalNotBefore(args.notBefore) : undefined;
     if (
       this.#operation === "update" &&
       body === undefined &&
@@ -246,6 +257,7 @@ class GitHubIssueWriteTool implements ActionTool {
       ...(targetIssue === undefined ? {} : { targetIssue }),
       ...(title === undefined ? {} : { title }),
       ...(body === undefined ? {} : { body }),
+      ...(notBefore === undefined ? {} : { notBefore }),
     };
   }
 
@@ -296,6 +308,7 @@ class GitHubIssueWriteTool implements ActionTool {
         targetIssue as number,
         credential,
         key,
+        typeof args.notBefore === "string" ? args.notBefore : undefined,
       );
       if (existing !== undefined) {
         return this.#successComment(existing, canonical);
@@ -347,10 +360,7 @@ class GitHubIssueWriteTool implements ActionTool {
     ) {
       return this.#success(before, canonical);
     }
-    if (body !== undefined && hash(before.body) === hash(desiredBody)) {
-      return this.#success(before, canonical);
-    }
-    if (hash(before.body) !== canonical.beforeHash) {
+    if (hash(`${before.title}\n${before.body}`) !== canonical.beforeHash) {
       throw new ToolRejectedError(
         "issue changed since approval; re-read and approve the new diff",
       );
@@ -546,20 +556,38 @@ class GitHubIssueWriteTool implements ActionTool {
     issueNumber: number,
     credential: ResolvedCredential,
     idempotencyKey: string,
+    notBefore?: string,
   ): Promise<CommentRecord | undefined> {
-    const response = await this.#request(
-      "GET",
-      `/repos/${repo}/issues/${issueNumber}/comments?per_page=50`,
-      credential,
-    );
-    const items = Array.isArray(response.body) ? response.body : [];
-    for (const item of items) {
-      const comment = parseComment(item);
-      if (comment.body.includes(idempotencyKey)) {
-        return comment;
+    // GitHub returns comments in ascending id order. Scan bounded pages,
+    // optionally starting after the draft creation time, so a lost POST on a
+    // busy issue is still found instead of being repeated.
+    for (let page = 1; page <= 5; page += 1) {
+      const params = new URLSearchParams({
+        per_page: "100",
+        page: String(page),
+      });
+      if (notBefore !== undefined) {
+        params.set("since", notBefore);
+      }
+      const response = await this.#request(
+        "GET",
+        `/repos/${repo}/issues/${issueNumber}/comments?${params.toString()}`,
+        credential,
+      );
+      const items = Array.isArray(response.body) ? response.body : [];
+      for (const item of items) {
+        const comment = parseComment(item);
+        if (comment.body.includes(idempotencyKey)) {
+          return comment;
+        }
+      }
+      if (items.length < 100) {
+        return undefined;
       }
     }
-    return undefined;
+    throw new ToolUnknownError(
+      "too many issue comments to prove idempotency; reconcile manually",
+    );
   }
 
   async #readIssue(
@@ -575,7 +603,7 @@ class GitHubIssueWriteTool implements ActionTool {
       );
       return parseIssue(response.body);
     } catch (error) {
-      if (error instanceof ToolRejectedError) {
+      if (error instanceof GitHubHttpError && error.status === 404) {
         return undefined;
       }
       throw error;
@@ -735,7 +763,7 @@ class GitHubIssueWriteTool implements ActionTool {
       ) {
         throw new ToolUnknownError(message);
       }
-      throw new ToolRejectedError(message);
+      throw new GitHubHttpError(message, response.status);
     }
     return { status: response.status, body: parsed };
   }
@@ -769,6 +797,16 @@ function optionalBody(value: unknown): string | undefined {
     throw new ToolRejectedError("body must be 1-20000 characters");
   }
   return value;
+}
+
+function optionalNotBefore(value: unknown): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) {
+    throw new ToolRejectedError("notBefore must be an ISO timestamp");
+  }
+  return new Date(value).toISOString();
 }
 
 function optionalTitle(value: unknown): string | undefined {

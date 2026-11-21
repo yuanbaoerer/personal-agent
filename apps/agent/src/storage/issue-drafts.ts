@@ -159,19 +159,25 @@ export class IssueDraftRepository {
     status: IssueDraftStatus,
     at: string,
     extra: { writeTaskId?: string; writeActionId?: string } = {},
+    fromStatuses?: readonly IssueDraftStatus[],
   ): IssueDraftSnapshot | undefined {
+    const allowed =
+      fromStatuses === undefined || fromStatuses.length === 0
+        ? ""
+        : ` AND status IN (${fromStatuses.map(() => "?").join(", ")})`;
     const row = this.#db.all<IssueDraftRow>(
       `UPDATE pa_issue_drafts
        SET status = ?, updated_at = ?,
            write_task_id = COALESCE(?, write_task_id),
            write_action_id = COALESCE(?, write_action_id)
-       WHERE id = ?
+       WHERE id = ?${allowed}
        RETURNING *`,
       status,
       at,
       extra.writeTaskId ?? null,
       extra.writeActionId ?? null,
       id,
+      ...(fromStatuses ?? []),
     )[0];
     return row === undefined ? undefined : mapDraft(row);
   }

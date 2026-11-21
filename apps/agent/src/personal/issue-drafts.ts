@@ -131,7 +131,7 @@ export class IssueDraftService {
       const beforeHash =
         before === undefined
           ? draft.beforeHash
-          : createHash("sha256").update(before).digest("hex");
+          : issueBeforeHash(before.title, before.body);
       if (draft.action === "update" && beforeHash === undefined) {
         continue;
       }
@@ -186,7 +186,7 @@ export class IssueDraftService {
         ...(beforeHash === undefined ? {} : { beforeHash }),
         ...(before === undefined
           ? {}
-          : { beforeSummary: truncate(before, MAX_BEFORE_SUMMARY) }),
+          : { beforeSummary: truncate(before.body, MAX_BEFORE_SUMMARY) }),
         title: draft.title,
         body: draft.body,
         payloadHash,
@@ -249,7 +249,13 @@ export class IssueDraftService {
       return { ok: false, reason: `draft_${draft.status}`, draft };
     }
     const at = this.#now().toISOString();
-    const updated = this.#drafts.updateStatus(draft.id, "rejected", at);
+    const updated = this.#drafts.updateStatus(
+      draft.id,
+      "rejected",
+      at,
+      {},
+      ["draft", "pending_approval"],
+    );
     if (updated === undefined) {
       return { ok: false, reason: "draft_not_found" };
     }
@@ -392,6 +398,12 @@ export class IssueDraftService {
   }
 }
 
+/** The approved pre-image of an issue update. Title is included so a title
+ * edit after review also invalidates the approval. */
+export function issueBeforeHash(title: string, body: string): string {
+  return createHash("sha256").update(`${title}\n${body}`).digest("hex");
+}
+
 /** Deterministic payload identity shown to the owner and bound on approval. */
 export function issueDraftPayloadHash(input: {
   repositoryId: number;
@@ -425,8 +437,10 @@ function stableJson(value: Record<string, unknown>): string {
   );
 }
 
-function issueBodies(actions: readonly ActionRecord[]): Map<number, string> {
-  const bodies = new Map<number, string>();
+function issueBodies(
+  actions: readonly ActionRecord[],
+): Map<number, { title: string; body: string }> {
+  const bodies = new Map<number, { title: string; body: string }>();
   for (const action of actions) {
     if (action.status !== "succeeded" || action.tool !== "github.read") {
       continue;
@@ -452,9 +466,10 @@ function issueBodies(actions: readonly ActionRecord[]): Map<number, string> {
         typeof record.number === "number" &&
         Number.isSafeInteger(record.number) &&
         typeof record.body === "string" &&
+        typeof record.title === "string" &&
         !bodies.has(record.number)
       ) {
-        bodies.set(record.number, record.body);
+        bodies.set(record.number, { title: record.title, body: record.body });
       }
     }
   }

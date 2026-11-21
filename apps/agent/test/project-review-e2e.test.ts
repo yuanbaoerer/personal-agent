@@ -374,7 +374,9 @@ function reviewReport(services: TestServices, task: TaskRecord) {
         title: "GH-02 evidence",
         body: "补充固定 SHA 与凭据 epoch 的只读评估证据。",
         findingIds: ["f1"],
-        beforeHash: createHash("sha256").update(ISSUE_BODY).digest("hex"),
+        beforeHash: createHash("sha256")
+          .update(`GH-02 evidence\n${ISSUE_BODY}`)
+          .digest("hex"),
         requiresOwnerApproval: true as const,
       },
       {
@@ -435,7 +437,7 @@ describe("read-only project review E2E (fake GitHub API)", () => {
     assert.equal(updateDraft.targetIssue, 60);
     assert.equal(
       updateDraft.beforeHash,
-      createHash("sha256").update(ISSUE_BODY).digest("hex"),
+      createHash("sha256").update(`GH-02 evidence\n${ISSUE_BODY}`).digest("hex"),
     );
     assert.match(updateDraft.beforeSummary ?? "", /Existing GH-02 evidence body/);
     const createDraft = persisted.find((draft) => draft.action === "create");
@@ -554,6 +556,18 @@ describe("read-only project review E2E (fake GitHub API)", () => {
     assert.ok(
       credential.services.issueDrafts
         .list(credential.services.owner.id)
+        .every((draft) => draft.status === "superseded"),
+    );
+
+    const explicit = await completeReview();
+    const count = explicit.services.issueDrafts.supersedeForCredential(
+      explicit.services.owner.id,
+      "github:default",
+    );
+    assert.equal(count, 2);
+    assert.ok(
+      explicit.services.issueDrafts
+        .list(explicit.services.owner.id)
         .every((draft) => draft.status === "superseded"),
     );
   });
