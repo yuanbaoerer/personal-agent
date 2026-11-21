@@ -359,7 +359,9 @@ export class IssueDraftService {
       const writeTask = this.#tasks.get(draft.writeTaskId);
       if (
         writeTask === undefined ||
-        writeTask.revision !== draft.sourceTaskRevision ||
+        // The bridge creates the write task at revision 1; any revise means
+        // it no longer authorizes the approved action.
+        writeTask.revision !== 1 ||
         writeTask.status === "cancelled" ||
         writeTask.status === "cancelling" ||
         writeTask.status === "failed"
