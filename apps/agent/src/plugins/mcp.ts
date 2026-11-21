@@ -68,6 +68,8 @@ export interface McpConnectOptions {
   fetch?: typeof fetch;
   /** Test seam; production uses node:dns lookup. */
   dnsLookup?: DnsLookup;
+  /** Test seam for asserting that the pinned resolver was used. */
+  onPinnedLookup?: (hostname: string, all: boolean) => void;
   timeoutMs?: number;
 }
 
@@ -110,7 +112,7 @@ export async function connectMcpPlugin(
     if (options.fetch === undefined) {
       agent = new Agent({
         connect: {
-          lookup: pinnedLookup(pinned),
+          lookup: pinnedLookup(pinned, options.onPinnedLookup),
         },
       });
     }
@@ -732,8 +734,12 @@ function normalizedHostname(hostname: string): string {
     : hostname.toLowerCase();
 }
 
-function pinnedLookup(pinned: Map<string, SafeAddress>): LookupFunction {
+function pinnedLookup(
+  pinned: Map<string, SafeAddress>,
+  onLookup?: (hostname: string, all: boolean) => void,
+): LookupFunction {
   return (hostname, options, callback) => {
+    onLookup?.(hostname, options.all === true);
     const entry = pinned.get(hostname.toLowerCase());
     if (entry === undefined) {
       callback(new Error(`MCP host was not validated: ${hostname}`), "", 4);
