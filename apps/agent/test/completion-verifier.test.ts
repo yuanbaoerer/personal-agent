@@ -31,6 +31,7 @@ function createTask(
   options: {
     criteria?: string;
     mandateTools?: string[];
+    mandateSkills?: string[];
     key?: string;
   } = {},
 ) {
@@ -45,6 +46,9 @@ function createTask(
     mandate: {
       resources: ["chat", "github"],
       tools: options.mandateTools ?? ["github.read"],
+      ...(options.mandateSkills === undefined
+        ? {}
+        : { skills: options.mandateSkills }),
     },
   });
 }
@@ -122,6 +126,39 @@ function insertSucceededGithubList(
       items,
     }),
     `https://github.com/${repo}`,
+    START.toISOString(),
+    action.id,
+  );
+  return action;
+}
+
+function insertSucceededGithubCustom(
+  services: TestServices,
+  taskId: string,
+  assignment: ReturnType<typeof claim>,
+  args: Record<string, unknown>,
+  evidence: Record<string, unknown>,
+) {
+  const { action } = services.actions.insert({
+    ownerId: services.owner.id,
+    conversationId: services.conversation.id,
+    taskId,
+    taskRevision: assignment.assignment.taskRevision,
+    fencingToken: assignment.assignment.fencingToken,
+    tool: "github.read",
+    args,
+    argsHash: `hash-${String(args.operation)}-${Math.random()}`,
+    expiresAt: "2026-01-01T00:10:00.000Z",
+    nonce: `nonce-${Math.random()}`,
+    createdAt: START.toISOString(),
+  });
+  services.store.db.run(
+    `UPDATE pa_actions SET status = 'succeeded', evidence_json = ?,
+       external_ref = ?, updated_at = ? WHERE id = ?`,
+    JSON.stringify(evidence),
+    typeof evidence.source === "string"
+      ? evidence.source
+      : "https://github.com/owner/repo",
     START.toISOString(),
     action.id,
   );
@@ -740,5 +777,563 @@ describe("TaskCompletionVerifier", () => {
       services.store.listRecentOutbox(5).map((row) => row.text).join("\n"),
       /只有 needs_review 可以 \/ack/,
     );
+  });
+
+  it("accepts typed file and check claims at the pinned revision", () => {
+    const services = setup();
+    const task = createTask(services);
+    const assignment = claim(services);
+    const sha = "a".repeat(40);
+    const source = `https://github.com/owner/repo/blob/${sha}/docs/24.md`;
+    insertSucceededGithubCustom(
+      services,
+      task.id,
+      assignment,
+      {
+        operation: "file",
+        projectKey: "personal-agent",
+        repo: "owner/repo",
+        sha,
+        path: "docs/24.md",
+      },
+      {
+        operation: "file",
+        repo: "owner/repo",
+        projectKey: "personal-agent",
+        repositoryId: 101,
+        commitSha: sha,
+        requestedSha: sha,
+        path: "docs/24.md",
+        source,
+        permanentUrl: source,
+        item: {
+          type: "file",
+          path: "docs/24.md",
+          sha: "b".repeat(40),
+          content: "# Plan\nGH-02\n",
+        },
+      },
+    );
+    insertSucceededGithubCustom(
+      services,
+      task.id,
+      assignment,
+      {
+        operation: "checks",
+        projectKey: "personal-agent",
+        repo: "owner/repo",
+        sha,
+      },
+      {
+        operation: "checks",
+        repo: "owner/repo",
+        projectKey: "personal-agent",
+        repositoryId: 101,
+        commitSha: sha,
+        requestedSha: sha,
+        source: `https://github.com/owner/repo/commit/${sha}/checks`,
+        items: [
+          {
+            id: 1,
+            name: "ci",
+            status: "completed",
+            conclusion: "success",
+            headSha: sha,
+          },
+        ],
+        coverage: { checkRuns: "complete", commitStatuses: "included" },
+      },
+    );
+    services.taskService.report(
+      assignment.assignment.id,
+      assignment.assignment.fencingToken,
+      assignment.assignment.taskRevision,
+      {
+        ...ready("typed read", [{ kind: "github", value: source }]),
+        githubClaims: [
+          {
+            kind: "github_typed",
+            repo: "owner/repo",
+            projectKey: "personal-agent",
+            operation: "file",
+            revision: sha,
+            target: "docs/24.md",
+            field: "contentIncludes",
+            value: "GH-02",
+          },
+          {
+            kind: "github_typed",
+            repo: "owner/repo",
+            projectKey: "personal-agent",
+            operation: "checks",
+            revision: sha,
+            target: "ci",
+            field: "conclusion",
+            value: "success",
+          },
+        ],
+      },
+    );
+    const current = services.tasks.get(task.id);
+    assert.equal(current?.status, "succeeded");
+    assert.ok(
+      current?.verification?.checked.includes("claim:github:file:contentIncludes"),
+    );
+    assert.ok(
+      current?.verification?.checked.includes("claim:github:checks:conclusion"),
+    );
+  });
+
+  it("rejects typed claims from a stale PR or a truncated tree", () => {
+    const stale = setup();
+    const staleTask = createTask(stale);
+    const staleAssignment = claim(stale);
+    const sha = "c".repeat(40);
+    insertSucceededGithubCustom(
+      stale,
+      staleTask.id,
+      staleAssignment,
+      {
+        operation: "pull_files",
+        projectKey: "personal-agent",
+        repo: "owner/repo",
+        number: 7,
+      },
+      {
+        operation: "pull_files",
+        repo: "owner/repo",
+        projectKey: "personal-agent",
+        repositoryId: 101,
+        number: 7,
+        headSha: sha,
+        baseSha: "d".repeat(40),
+        stale: true,
+        source: "https://github.com/owner/repo/pull/7/files",
+        items: [{ filename: "src/a.ts", status: "modified", changes: 2 }],
+      },
+    );
+    stale.taskService.report(
+      staleAssignment.assignment.id,
+      staleAssignment.assignment.fencingToken,
+      staleAssignment.assignment.taskRevision,
+      {
+        ...ready("stale", [
+          { kind: "github", value: "https://github.com/owner/repo/pull/7/files" },
+        ]),
+        githubClaims: [
+          {
+            kind: "github_typed",
+            repo: "owner/repo",
+            projectKey: "personal-agent",
+            operation: "pull_files",
+            revision: sha,
+            target: "src/a.ts",
+            field: "status",
+            value: "modified",
+          },
+        ],
+      },
+    );
+    assert.equal(stale.tasks.get(staleTask.id)?.status, "needs_review");
+    assert.match(
+      stale.tasks.get(staleTask.id)?.verification?.missing.join(",") ?? "",
+      /github_typed_stale/,
+    );
+
+    const tree = setup();
+    const treeTask = createTask(tree);
+    const treeAssignment = claim(tree);
+    insertSucceededGithubCustom(
+      tree,
+      treeTask.id,
+      treeAssignment,
+      {
+        operation: "tree",
+        projectKey: "personal-agent",
+        repo: "owner/repo",
+        sha,
+      },
+      {
+        operation: "tree",
+        repo: "owner/repo",
+        projectKey: "personal-agent",
+        repositoryId: 101,
+        commitSha: sha,
+        source: `https://github.com/owner/repo/tree/${sha}`,
+        truncated: true,
+        items: [{ path: "docs/24.md", type: "blob", sha: "e".repeat(40) }],
+      },
+    );
+    tree.taskService.report(
+      treeAssignment.assignment.id,
+      treeAssignment.assignment.fencingToken,
+      treeAssignment.assignment.taskRevision,
+      {
+        ...ready("tree", [
+          { kind: "github", value: `https://github.com/owner/repo/tree/${sha}` },
+        ]),
+        githubClaims: [
+          {
+            kind: "github_typed",
+            repo: "owner/repo",
+            projectKey: "personal-agent",
+            operation: "tree",
+            revision: sha,
+            target: "docs/25.md",
+            field: "exists",
+            value: false,
+          },
+        ],
+      },
+    );
+    assert.equal(tree.tasks.get(treeTask.id)?.status, "needs_review");
+    assert.match(
+      tree.tasks.get(treeTask.id)?.verification?.missing.join(",") ?? "",
+      /github_typed_tree_truncated/,
+    );
+  });
+
+  it("verifies project-review findings and issue drafts against receipts", () => {
+    const services = setup();
+    const task = createTask(services, {
+      mandateSkills: ["github.project-review"],
+      key: "review",
+    });
+    const assignment = claim(services);
+    const sha = "a".repeat(40);
+    const source = `https://github.com/owner/repo/blob/${sha}/docs/24.md`;
+    insertSucceededGithubCustom(
+      services,
+      task.id,
+      assignment,
+      {
+        operation: "file",
+        projectKey: "personal-agent",
+        repo: "owner/repo",
+        sha,
+        path: "docs/24.md",
+      },
+      {
+        operation: "file",
+        repo: "owner/repo",
+        projectKey: "personal-agent",
+        repositoryId: 101,
+        commitSha: sha,
+        path: "docs/24.md",
+        source,
+        permanentUrl: source,
+        item: { type: "file", path: "docs/24.md", sha: "b".repeat(40) },
+      },
+    );
+    insertSucceededGithubCustom(
+      services,
+      task.id,
+      assignment,
+      { operation: "issues", repo: "owner/repo" },
+      {
+        operation: "issues",
+        repo: "owner/repo",
+        source: "https://github.com/owner/repo",
+        items: [
+          {
+            number: 60,
+            title: "GH-02 evidence",
+            state: "open",
+            body: "Existing GH-02 body",
+            url: "https://github.com/owner/repo/issues/60",
+          },
+        ],
+      },
+    );
+    services.taskService.report(
+      assignment.assignment.id,
+      assignment.assignment.fencingToken,
+      assignment.assignment.taskRevision,
+      {
+        ...ready("review", [{ kind: "github", value: source }]),
+        findings: [
+          {
+            id: "f1",
+            requirementRef: "docs/24 GH-02 B4",
+            classification: "observed",
+            severity: "high",
+            repositoryId: 101,
+            commitSha: sha,
+            evidenceRefs: [source],
+            expected: "PR files pinned to a head SHA",
+            actual: "file receipt exists but PR files are not pinned",
+            impact: "stale conclusions possible",
+            existingIssueMatches: [60],
+            suggestedAction: "pin pull_files and mark stale receipts",
+            coverage: "complete",
+          },
+        ],
+        issueDrafts: [
+          {
+            action: "update",
+            targetIssue: 60,
+            title: "Pin PR file evidence",
+            body: "Verify head SHA before and after listing files.",
+            findingIds: ["f1"],
+            beforeHash:
+              "5bf3e85a6ed5c27d8b0b56ebd63b6a4dcd51833cd07a5328003197f5c1a1eab9",
+            requiresOwnerApproval: true,
+          },
+        ],
+      },
+    );
+    const current = services.tasks.get(task.id);
+    assert.equal(current?.status, "succeeded");
+    assert.equal(current?.verification?.verifier, "project-review");
+    assert.equal(current?.verification?.externalFactsVerified, true);
+    assert.match(current?.verification?.reason ?? "", /1 observed/);
+  });
+
+  it("refuses project-review findings with invented evidence or issue numbers", () => {
+    const services = setup();
+    const task = createTask(services, {
+      mandateSkills: ["github.project-review"],
+      key: "review-invalid",
+    });
+    const assignment = claim(services);
+    const sha = "a".repeat(40);
+    insertSucceededGithubCustom(
+      services,
+      task.id,
+      assignment,
+      {
+        operation: "file",
+        projectKey: "personal-agent",
+        repo: "owner/repo",
+        sha,
+        path: "docs/24.md",
+      },
+      {
+        operation: "file",
+        repo: "owner/repo",
+        projectKey: "personal-agent",
+        repositoryId: 101,
+        commitSha: sha,
+        source: `https://github.com/owner/repo/blob/${sha}/docs/24.md`,
+        item: { type: "file", path: "docs/24.md" },
+      },
+    );
+    services.taskService.report(
+      assignment.assignment.id,
+      assignment.assignment.fencingToken,
+      assignment.assignment.taskRevision,
+      {
+        ...ready("review", [
+          {
+            kind: "github",
+            value: `https://github.com/owner/repo/blob/${sha}/docs/24.md`,
+          },
+        ]),
+        findings: [
+          {
+            id: "f1",
+            requirementRef: "docs/24 GH-02",
+            classification: "observed",
+            severity: "high",
+            repositoryId: 101,
+            commitSha: sha,
+            evidenceRefs: ["https://github.com/owner/repo/blob/deadbeef/docs/24.md"],
+            expected: "pinned",
+            actual: "unpinned",
+            impact: "stale",
+            existingIssueMatches: [999],
+            suggestedAction: "fix it",
+          },
+        ],
+        issueDrafts: [
+          {
+            action: "update",
+            targetIssue: 999,
+            title: "Fix",
+            body: "Body",
+            findingIds: ["f1"],
+            requiresOwnerApproval: true,
+          },
+        ],
+      },
+    );
+    const current = services.tasks.get(task.id);
+    assert.equal(current?.status, "needs_review");
+    const missing = current?.verification?.missing.join(",") ?? "";
+    assert.match(missing, /evidence_ref_unverified/);
+    assert.match(missing, /issue_match_unverified:999/);
+    assert.match(missing, /target_issue_unverified/);
+  });
+
+  it("refuses a create draft when an existing issue already matches", () => {
+    const services = setup();
+    const task = createTask(services, {
+      mandateSkills: ["github.project-review"],
+      key: "review-duplicate",
+    });
+    const assignment = claim(services);
+    const sha = "a".repeat(40);
+    const source = `https://github.com/owner/repo/blob/${sha}/docs/24.md`;
+    insertSucceededGithubCustom(
+      services,
+      task.id,
+      assignment,
+      {
+        operation: "file",
+        projectKey: "personal-agent",
+        repo: "owner/repo",
+        sha,
+        path: "docs/24.md",
+      },
+      {
+        operation: "file",
+        repo: "owner/repo",
+        projectKey: "personal-agent",
+        repositoryId: 101,
+        commitSha: sha,
+        source,
+        item: { type: "file", path: "docs/24.md" },
+      },
+    );
+    insertSucceededGithubCustom(
+      services,
+      task.id,
+      assignment,
+      { operation: "issues", repo: "owner/repo" },
+      {
+        operation: "issues",
+        repo: "owner/repo",
+        source: "https://github.com/owner/repo",
+        items: [
+          {
+            number: 60,
+            title: "Pin pull files to head SHA",
+            state: "open",
+            url: "https://github.com/owner/repo/issues/60",
+          },
+        ],
+      },
+    );
+    services.taskService.report(
+      assignment.assignment.id,
+      assignment.assignment.fencingToken,
+      assignment.assignment.taskRevision,
+      {
+        ...ready("review", [{ kind: "github", value: source }]),
+        findings: [
+          {
+            id: "f1",
+            requirementRef: "docs/24 GH-02 B4",
+            classification: "observed",
+            severity: "high",
+            repositoryId: 101,
+            commitSha: sha,
+            evidenceRefs: [source],
+            expected: "pinned",
+            actual: "unpinned",
+            impact: "stale evidence",
+            existingIssueMatches: [],
+            suggestedAction: "pin files",
+          },
+        ],
+        issueDrafts: [
+          {
+            action: "create",
+            title: "Pin pull files to head SHA",
+            body: "Pin the PR file listing to the observed head.",
+            findingIds: ["f1"],
+            requiresOwnerApproval: true,
+          },
+        ],
+      },
+    );
+    const current = services.tasks.get(task.id);
+    assert.equal(current?.status, "needs_review");
+    assert.match(
+      current?.verification?.missing.join(",") ?? "",
+      /create_matches_existing_issue:60/,
+    );
+  });
+
+  it("does not treat a pull request number as an existing issue", () => {
+    const services = setup();
+    const task = createTask(services, {
+      mandateSkills: ["github.project-review"],
+      key: "review-pr-as-issue",
+    });
+    const assignment = claim(services);
+    const sha = "a".repeat(40);
+    const source = `https://github.com/owner/repo/blob/${sha}/docs/24.md`;
+    insertSucceededGithubCustom(
+      services,
+      task.id,
+      assignment,
+      {
+        operation: "file",
+        projectKey: "personal-agent",
+        repo: "owner/repo",
+        sha,
+        path: "docs/24.md",
+      },
+      {
+        operation: "file",
+        repo: "owner/repo",
+        projectKey: "personal-agent",
+        repositoryId: 101,
+        commitSha: sha,
+        source,
+        item: { type: "file", path: "docs/24.md" },
+      },
+    );
+    insertSucceededGithubCustom(
+      services,
+      task.id,
+      assignment,
+      { operation: "pull", repo: "owner/repo", number: 60 },
+      {
+        operation: "pull",
+        repo: "owner/repo",
+        source: "https://github.com/owner/repo/pull/60",
+        item: { number: 60, title: "PR not issue", state: "open" },
+      },
+    );
+    services.taskService.report(
+      assignment.assignment.id,
+      assignment.assignment.fencingToken,
+      assignment.assignment.taskRevision,
+      {
+        ...ready("review", [{ kind: "github", value: source }]),
+        findings: [
+          {
+            id: "f1",
+            requirementRef: "docs/24 GH-02",
+            classification: "observed",
+            severity: "high",
+            repositoryId: 101,
+            commitSha: sha,
+            evidenceRefs: [source],
+            expected: "pinned",
+            actual: "unpinned",
+            impact: "stale",
+            existingIssueMatches: [60],
+            suggestedAction: "fix",
+          },
+        ],
+        issueDrafts: [
+          {
+            action: "update",
+            targetIssue: 60,
+            title: "Fix",
+            body: "Body",
+            findingIds: ["f1"],
+            requiresOwnerApproval: true,
+          },
+        ],
+      },
+    );
+    const missing =
+      services.tasks.get(task.id)?.verification?.missing.join(",") ?? "";
+    assert.match(missing, /issue_match_unverified:60/);
+    assert.match(missing, /target_issue_unverified/);
   });
 });
