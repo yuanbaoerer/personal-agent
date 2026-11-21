@@ -36,6 +36,88 @@ describe("legacy schema migration", () => {
         INSERT INTO pa_identities
           (id, channel, account_id, actor_id, verified_at)
           VALUES ('legacy-owner', 'feishu', 'app', 'owner', '2026-01-01T00:00:00.000Z');
+        CREATE TABLE pa_conversations (
+          id TEXT PRIMARY KEY,
+          owner_id TEXT NOT NULL REFERENCES pa_identities(id),
+          channel TEXT NOT NULL,
+          account_id TEXT NOT NULL,
+          platform_conversation_id TEXT NOT NULL,
+          kind TEXT NOT NULL CHECK (kind IN ('p2p', 'group', 'unknown')),
+          created_at TEXT NOT NULL,
+          UNIQUE (channel, account_id, platform_conversation_id)
+        ) STRICT;
+        INSERT INTO pa_conversations
+          (id, owner_id, channel, account_id, platform_conversation_id, kind, created_at)
+          VALUES ('legacy-conversation', 'legacy-owner', 'feishu', 'app', 'chat', 'p2p',
+                  '2026-01-01T00:00:00.000Z');
+        CREATE TABLE pa_tasks (
+          id TEXT PRIMARY KEY,
+          owner_id TEXT NOT NULL REFERENCES pa_identities(id),
+          conversation_id TEXT NOT NULL REFERENCES pa_conversations(id),
+          source_key TEXT NOT NULL UNIQUE,
+          goal TEXT NOT NULL,
+          completion_criteria TEXT NOT NULL,
+          mandate_json TEXT NOT NULL,
+          revision INTEGER NOT NULL DEFAULT 1,
+          status TEXT NOT NULL,
+          priority INTEGER NOT NULL DEFAULT 0,
+          attempts INTEGER NOT NULL DEFAULT 0,
+          deadline TEXT,
+          budget_json TEXT,
+          result_ref TEXT,
+          last_error TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          verification_json TEXT,
+          extension_json TEXT
+        ) STRICT;
+        INSERT INTO pa_tasks
+          (id, owner_id, conversation_id, source_key, goal, completion_criteria,
+           mandate_json, revision, status, attempts, created_at, updated_at)
+          VALUES ('legacy-task', 'legacy-owner', 'legacy-conversation',
+                  'legacy:source', 'legacy goal', 'legacy criteria',
+                  '{"resources":["chat"],"tools":[]}', 1, 'succeeded', 1,
+                  '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+        CREATE TABLE pa_actions (
+          id TEXT PRIMARY KEY,
+          owner_id TEXT NOT NULL,
+          conversation_id TEXT NOT NULL,
+          task_id TEXT NOT NULL,
+          task_revision INTEGER NOT NULL,
+          fencing_token INTEGER NOT NULL,
+          tool TEXT NOT NULL,
+          args_json TEXT NOT NULL,
+          args_hash TEXT NOT NULL,
+          status TEXT NOT NULL,
+          expires_at TEXT NOT NULL,
+          nonce TEXT NOT NULL UNIQUE,
+          approved_at TEXT,
+          approved_by TEXT,
+          execution_attempts INTEGER NOT NULL DEFAULT 0,
+          lease_until TEXT,
+          external_ref TEXT,
+          evidence_json TEXT,
+          last_error TEXT,
+          preauthorization_id TEXT,
+          schedule_policy_id TEXT,
+          schedule_policy_version INTEGER,
+          plugin_id TEXT,
+          plugin_version TEXT,
+          plugin_digest TEXT,
+          catalog_generation INTEGER,
+          source_key TEXT NOT NULL UNIQUE,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        ) STRICT;
+        INSERT INTO pa_actions
+          (id, owner_id, conversation_id, task_id, task_revision, fencing_token,
+           tool, args_json, args_hash, status, expires_at, nonce, source_key,
+           created_at, updated_at)
+          VALUES ('legacy-action', 'legacy-owner', 'legacy-conversation',
+                  'legacy-task', 1, 1, 'github.read', '{}', 'hash', 'succeeded',
+                  '2026-01-01T00:10:00.000Z', 'legacy-nonce',
+                  'legacy:action', '2026-01-01T00:00:00.000Z',
+                  '2026-01-01T00:00:00.000Z');
         CREATE TABLE pa_projects (
           id TEXT PRIMARY KEY,
           owner_id TEXT NOT NULL REFERENCES pa_identities(id),
@@ -84,6 +166,17 @@ describe("legacy schema migration", () => {
           "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'pa_issue_drafts'",
         );
         assert.equal(draftTables.length, 1);
+
+        const task = store.db.all<{ status: string; goal: string }>(
+          "SELECT status, goal FROM pa_tasks WHERE id = 'legacy-task'",
+        )[0];
+        assert.equal(task?.status, "succeeded");
+        assert.equal(task?.goal, "legacy goal");
+        const action = store.db.all<{ status: string; source_key: string }>(
+          "SELECT status, source_key FROM pa_actions WHERE id = 'legacy-action'",
+        )[0];
+        assert.equal(action?.status, "succeeded");
+        assert.equal(action?.source_key, "legacy:action");
       } finally {
         store.close();
       }

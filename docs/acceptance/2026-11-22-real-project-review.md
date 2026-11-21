@@ -85,3 +85,21 @@ Not proved:
 - The owner received the message in Feishu (E3 delivery).
 - Any real GitHub Issue write (requires an owner-designated isolation repository and separate Issues-write credential).
 - Stability across repeated runs; this is one successful run after several rejected reports. The rejected runs exposed real prompt/orchestration issues (ref form, typed arg names, unstructured tool calls, non-revision-pinned evidence, mixed draft revisions, model-supplied idempotency keys), which were fixed in code/prompt rather than weakening the Verifier.
+
+## Final-code repeat (2026-11-22)
+
+After the review fixes (title+body beforeHash, read/write credential separation, revision-bound approval, truncation-specific prompt), the same real-model path was run again on the final branch.
+
+- Code tree: `feat/l2w-02-approved-issue-writes` at `3a225df` plus the pending prompt hardening now committed with this record.
+- Task: `0492edb3-1260-4b49-a158-f4c51dea5583` → `succeeded`
+- repositoryId `1445007789`; `heads/main` → `345faacf803fe3d230ab1843295b18d353e5da66`
+- Verifier: `project-review`, 3 observed / 0 inferred / 0 unknown, `missing=[]`, `externalFactsVerified=true`
+- Drafts (all `pending_approval`, credentialVersion 1):
+  - `7e8013af-7651-46fa-bf2c-a41313a7bfe5` comment #65, payload `315df090…`
+  - `75bdd7cd-5bc5-426d-aac3-c7f105003d19` comment #64, payload `bb9a7366…`
+  - `8957f86c-c61d-4ee6-b525-5079e8d6450d` comment #92, payload `4e424ee6…`
+- Action receipts: repo `9ea8c19d…`, ref `8ca0926e…`, issues `76197b2f…`, files `fa872033…` / `932fee77…` / `bd33b548…`, tree `8befbbe4…`, checks `9c9b56b4…`
+- Outbox result `e6547171-94bd-473b-a0b4-09bcdb2307e2`.
+- Still no Feishu delivery and no GitHub write.
+
+A preceding run on the same branch (`DKYGOt`) was correctly rejected by the Verifier because an observed finding cited a truncated PR-files receipt with `coverage=complete` and `truncated=false`. The Verifier was not relaxed; the prompt now requires checking the receipt truncation flag and using `limit=100` for PR files.

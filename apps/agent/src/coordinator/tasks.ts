@@ -1752,6 +1752,7 @@ function workerPrompt(
       "Issue drafts are proposals only. This task cannot write to GitHub. Omit idempotencyKey entirely; the host computes it and rejects model-supplied values.",
       "One draft may link only findings with the same repositoryId and commitSha. Split drafts by revision.",
       "If any cited receipt is truncated, set the finding's truncated=true and coverage=partial or unknown; otherwise do not cite that receipt.",
+      "A pull_files receipt is truncated whenever `truncated:true` or fewer files were returned than the PR changed. Use limit=100 for PR files and check the receipt flag before claiming complete coverage; never pair a truncated PR-files receipt with coverage=complete.",
       "For typed reads, add githubClaim entries with kind=github_typed:",
       '{"githubClaims":[{"kind":"github_typed","repo":"owner/name","projectKey":"key","operation":"file","revision":"<40-hex>","target":"docs/plan.md","field":"exists","value":true},',
       '{"kind":"github_typed","repo":"owner/name","projectKey":"key","operation":"checks","revision":"<40-hex>","target":"ci","field":"conclusion","value":"success"}]}',
