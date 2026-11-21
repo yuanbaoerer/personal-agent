@@ -230,7 +230,7 @@ export class TaskService {
       if (input.dispatch !== false) {
         this.#enqueueDispatch(task, now);
       }
-    } else if (task.status === "queued") {
+    } else if (task.status === "queued" && input.dispatch !== false) {
       // A crash can land between the task INSERT and the dispatch enqueue.
       // Replaying the same decision must repair the missing effect; the
       // business key keeps this idempotent when the effect already exists.
