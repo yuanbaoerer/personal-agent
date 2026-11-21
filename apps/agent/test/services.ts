@@ -219,6 +219,7 @@ export function createServices(options: {
     confirmation,
     preauthorization,
     schedulePolicy,
+    projects,
     state,
     budget,
     model,

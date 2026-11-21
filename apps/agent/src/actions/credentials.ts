@@ -20,7 +20,7 @@ export interface CredentialInput {
   token?: string;
   /** Resolves the current token at call time. */
   provider?: () => string | undefined | Promise<string | undefined>;
-  /** Declared scopes; an empty list means the host did not declare any. */
+  /** Declared scopes. An empty list grants no scopes. */
   scopes?: string[];
   account?: string;
   expiresAt?: string;
@@ -116,13 +116,11 @@ export class CredentialBroker {
     if (entry === undefined || entry.status !== "active") {
       return undefined;
     }
-    if (entry.expiresAt !== undefined) {
-      const expiresAt = Date.parse(entry.expiresAt);
-      if (!Number.isFinite(expiresAt) || expiresAt <= this.#now().getTime()) {
-        return undefined;
-      }
+    const expiresAt = entry.expiresAt === undefined ? Infinity : Date.parse(entry.expiresAt);
+    if (!(expiresAt > this.#now().getTime())) {
+      return undefined;
     }
-    if (requiredScopes.length > 0 && entry.scopes.length > 0) {
+    if (requiredScopes.length > 0) {
       const missing = requiredScopes.filter(
         (scope) => !entry.scopes.includes(scope),
       );
@@ -140,6 +138,13 @@ export class CredentialBroker {
       throw new CredentialUnavailableError(
         `credential ${ref} provider failed`,
       );
+    }
+    if (
+      this.#entries.get(ref) !== entry ||
+      entry.status !== "active" ||
+      !(expiresAt > this.#now().getTime())
+    ) {
+      return undefined;
     }
     if (token === undefined || token.trim().length === 0) {
       return undefined;
