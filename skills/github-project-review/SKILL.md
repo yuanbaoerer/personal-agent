@@ -18,3 +18,13 @@ Workflow:
 6. If a receipt is truncated, missing, or from a different SHA, say so explicitly and do not infer completion.
 
 Never claim that tests, CI, or a merge happened unless a receipt proves it. Never propose a write action as already completed. Free text without a matching receipt must be labelled unverified.
+
+Structured output required by the host verifier:
+- `findings`: id, requirementRef, severity, classification (observed/inferred/unknown), repositoryId, commitSha (or the literal `unknown` only for an evidence-gap finding), evidenceRefs, expected, actual, impact, existingIssueMatches, suggestedAction, and evidenceGap for unknown.
+- `issueDrafts`: action (create/update/comment), targetIssue, title, body, findingIds, beforeHash for updates, requiresOwnerApproval=true. The host derives the idempotency key.
+
+Rules enforced in code:
+- Every observed finding must cite a receipt from the same repositoryId and commitSha; a stale PR file receipt or truncated tree cannot prove absence or completion.
+- Existing issue numbers must appear in an actual issue receipt; a create draft is refused when a matching issue already exists.
+- Update drafts must target an issue already listed in the finding's existingIssueMatches and carry the SHA-256 of the receipt's issue body as beforeHash.
+- Drafts are proposals only; this task has no GitHub write permission.

@@ -187,6 +187,7 @@ export function routerPrompt(
       ? [
           "- For read-only GitHub requests, set mandate.resources to include \"github\" and mandate.tools to [\"github.read\"]; do not promise write access.",
           "- For github.read tasks, completionCriteria must be JSON with repo set to the exact owner/name requested (for example {\"repo\":\"owner/name\",\"requiredEvidenceKinds\":[\"github\"]}); never omit repo.",
+          "- For 项目评估/审查/对照规划 requests, set mandate.project to the exact ProjectBinding projectKey when the owner names it, keep github.read, and state that only evidence-backed findings and drafts will be produced. Never claim tests or CI passed without a receipt.",
         ]
       : [
           "- The GitHub plugin is not enabled in this generation; do not promise GitHub reads or create a GitHub task.",

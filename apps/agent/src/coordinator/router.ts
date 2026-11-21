@@ -142,6 +142,14 @@ function extractGithubRepo(text: string): string | undefined {
     : undefined;
 }
 
+const PROJECT_REVIEW_PATTERN =
+  /(?:项目(?:评估|审查|复盘|检查)|(?:评估|检查|审查).{0,10}(?:项目|开发进展|完成度)|对照(?:规划|计划).{0,10}(?:实现|完成|差距)|实施评估)/;
+
+/** Deterministic Skill binding for an explicit project-review request. */
+export function wantsProjectReview(text: string): boolean {
+  return PROJECT_REVIEW_PATTERN.test(text);
+}
+
 const STATE_QUERY_PATTERNS = [
   /当前(?:的)?任务/,
   /任务(?:和|与|及)提醒/,
@@ -173,6 +181,7 @@ export function normalizeGithubCriteria(
   goal: string,
   ownerText: string,
   mandateTools: readonly string[],
+  skills: readonly string[] = [],
 ): string {
   if (!mandateTools.includes("github.read")) {
     return criteria;
@@ -205,7 +214,9 @@ export function normalizeGithubCriteria(
   required.add("github");
   return JSON.stringify({
     ...parsed,
-    verifier: "github-read",
+    verifier: skills.includes("github.project-review")
+      ? "project-review"
+      : "github-read",
     repo,
     requiredEvidenceKinds: [...required],
     requireStructuredClaims: true,
@@ -609,6 +620,17 @@ export class Router implements InboundHandler {
           this.#capabilities,
         );
         const mandate = this.#constrainMandate(requestedMandate);
+        if (
+          mandate.tools.includes("github.read") &&
+          wantsProjectReview(context.text)
+        ) {
+          mandate.skills = [
+            ...new Set([
+              ...(mandate.skills ?? []),
+              "github.project-review",
+            ]),
+          ];
+        }
         if (requested.tools.length > 0 && mandate.tools.length === 0) {
           this.#reply(
             context,
@@ -628,6 +650,7 @@ export class Router implements InboundHandler {
               decision.task.goal,
               context.text,
               mandate.tools,
+              mandate.skills ?? [],
             ),
             mandate.tools,
           ),
