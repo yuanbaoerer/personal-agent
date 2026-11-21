@@ -9,7 +9,8 @@ import type { Store } from "../storage/store.ts";
 const PROJECT_KEY = /^[a-z][a-z0-9._-]{0,63}$/;
 const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const BRANCH = /^[A-Za-z0-9._/-]{1,255}$/;
-const CREDENTIAL_REF = /^[A-Za-z0-9._:-]{1,128}$/;
+const CREDENTIAL_REF = /^[a-z][a-z0-9._:-]{0,127}$/;
+const CREDENTIAL_VALUE = /^(?:gh[pousr]_|github_pat_|sk-|xox[abp]-)/i;
 
 export class ProjectValidationError extends Error {
   constructor(message: string) {
@@ -73,43 +74,50 @@ export class ProjectService {
     const normalized = normalizeInput(input);
     const byKey = this.#projects.findActiveByKey(ownerId, normalized.projectKey);
     if (byKey !== undefined) {
-      if (!sameBinding(byKey, normalized, false)) {
+      if (byKey.repositoryId !== normalized.repositoryId) {
         throw new ProjectConflictError(
-          `project key ${normalized.projectKey} is already bound to another repository`,
+          `project key ${normalized.projectKey} is already bound to repository ${byKey.repositoryId}`,
         );
       }
-      if (byKey.repositoryFullName === normalized.repositoryFullName) {
+      if (sameBinding(byKey, normalized)) {
         return { project: byKey, created: false };
       }
-      const renamed = this.#projects.updateRepositoryName(
+      const updated = this.#projects.updateDetails(
         ownerId,
         byKey.id,
-        normalized.repositoryFullName,
+        normalized,
         this.#now().toISOString(),
       );
-      if (renamed === undefined) {
+      if (updated === undefined) {
         throw new ProjectConflictError(
           `project key ${normalized.projectKey} changed concurrently`,
         );
       }
       this.#store.recordAudit({
         actorId,
-        event: "project.renamed",
+        event: "project.updated",
         subjectType: "project",
-        subjectId: renamed.id,
+        subjectId: updated.id,
         before: {
           repositoryId: byKey.repositoryId,
           repositoryFullName: byKey.repositoryFullName,
+          defaultBranch: byKey.defaultBranch,
+          credentialRef: byKey.credentialRef,
+          allowedPlanPaths: byKey.allowedPlanPaths,
+          version: byKey.version,
         },
         after: {
-          repositoryId: renamed.repositoryId,
-          repositoryFullName: renamed.repositoryFullName,
-          version: renamed.version,
+          repositoryId: updated.repositoryId,
+          repositoryFullName: updated.repositoryFullName,
+          defaultBranch: updated.defaultBranch,
+          credentialRef: updated.credentialRef,
+          allowedPlanPaths: updated.allowedPlanPaths,
+          version: updated.version,
         },
-        traceId: `project:${renamed.id}`,
-        occurredAt: renamed.updatedAt,
+        traceId: `project:${updated.id}`,
+        occurredAt: updated.updatedAt,
       });
-      return { project: renamed, created: false };
+      return { project: updated, created: false };
     }
     const byRepository = this.#projects.findActiveByRepository(
       ownerId,
@@ -233,9 +241,14 @@ function normalizeBranch(value: unknown): string {
     branch.length === 0 ||
     branch.length > 255 ||
     !BRANCH.test(branch) ||
+    branch.startsWith("-") ||
     branch.startsWith("/") ||
     branch.endsWith("/") ||
+    branch.endsWith(".lock") ||
     branch.includes("//") ||
+    branch.includes("..") ||
+    branch.includes("@{") ||
+    branch === "@" ||
     branch.split("/").some((part) => part === "." || part === "..")
   ) {
     throw new ProjectValidationError("defaultBranch is invalid");
@@ -245,8 +258,10 @@ function normalizeBranch(value: unknown): string {
 
 function normalizeCredentialRef(value: unknown): string {
   const ref = typeof value === "string" ? value.trim() : "";
-  if (!CREDENTIAL_REF.test(ref)) {
-    throw new ProjectValidationError("credentialRef is invalid");
+  if (!CREDENTIAL_REF.test(ref) || CREDENTIAL_VALUE.test(ref)) {
+    throw new ProjectValidationError(
+      "credentialRef must be a lowercase reference such as github:default, not a token",
+    );
   }
   return ref;
 }
@@ -284,12 +299,10 @@ function normalizePlanPaths(value: unknown): string[] {
 function sameBinding(
   existing: ProjectBinding,
   input: Omit<NewProjectBinding, "ownerId" | "createdAt">,
-  compareFullName = true,
 ): boolean {
   return (
     existing.repositoryId === input.repositoryId &&
-    (!compareFullName ||
-      existing.repositoryFullName === input.repositoryFullName) &&
+    existing.repositoryFullName === input.repositoryFullName &&
     existing.defaultBranch === input.defaultBranch &&
     existing.credentialRef === input.credentialRef &&
     existing.allowedPlanPaths.join("\u0000") === input.allowedPlanPaths.join("\u0000")

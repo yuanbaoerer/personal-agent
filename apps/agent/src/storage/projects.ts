@@ -171,18 +171,22 @@ export class ProjectRepository {
     return { project: mapProject(row), changed: true };
   }
 
-  updateRepositoryName(
+  updateDetails(
     ownerId: string,
     id: string,
-    repositoryFullName: string,
+    details: Omit<NewProjectBinding, "ownerId" | "createdAt">,
     at: string,
   ): ProjectBinding | undefined {
     const row = this.#db.all<ProjectRow>(
       `UPDATE pa_projects
-       SET repository_full_name = ?, version = version + 1, updated_at = ?
+       SET repository_full_name = ?, default_branch = ?, credential_ref = ?,
+           allowed_plan_paths_json = ?, version = version + 1, updated_at = ?
        WHERE owner_id = ? AND id = ? AND status = 'active'
        RETURNING *`,
-      repositoryFullName,
+      details.repositoryFullName,
+      details.defaultBranch,
+      details.credentialRef,
+      JSON.stringify(details.allowedPlanPaths),
       at,
       ownerId,
       id,

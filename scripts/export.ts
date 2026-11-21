@@ -21,6 +21,7 @@ const AGENT_TABLES = [
   "pa_preauthorizations",
   "pa_schedule_policies",
   "pa_schedule_policy_runs",
+  "pa_projects",
 ] as const;
 
 export interface AgentExport {

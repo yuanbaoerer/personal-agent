@@ -132,6 +132,23 @@ describe("project bindings", () => {
       "yuanbaoerer/personal-agent-renamed",
     );
 
+    const updated = services.projectService.bind(
+      owner,
+      input({
+        repositoryFullName: "yuanbaoerer/personal-agent-renamed",
+        defaultBranch: "develop",
+        allowedPlanPaths: ["docs/27-next-stage-delivery.md"],
+      }),
+      "admin",
+    );
+    assert.equal(updated.created, false);
+    assert.equal(updated.project.id, first.project.id);
+    assert.equal(updated.project.version, 3);
+    assert.equal(updated.project.defaultBranch, "develop");
+    assert.deepEqual(updated.project.allowedPlanPaths, [
+      "docs/27-next-stage-delivery.md",
+    ]);
+
     assert.throws(
       () =>
         services.projectService.bind(
@@ -151,6 +168,20 @@ describe("project bindings", () => {
           }),
           "admin",
         ),
+      ProjectConflictError,
+    );
+    assert.throws(
+      () =>
+        services.projects.create({
+          ownerId: owner,
+          projectKey: "direct-race",
+          repositoryId: 101,
+          repositoryFullName: "yuanbaoerer/personal-agent",
+          defaultBranch: "main",
+          credentialRef: "github:default",
+          allowedPlanPaths: [],
+          createdAt: NOW.toISOString(),
+        }),
       ProjectConflictError,
     );
     services.store.close();
@@ -189,7 +220,13 @@ describe("project bindings", () => {
       input({ repositoryFullName: "owner" }),
       input({ repositoryFullName: "owner/.." }),
       input({ defaultBranch: "main/../release" }),
+      input({ defaultBranch: "-release" }),
+      input({ defaultBranch: "release.lock" }),
+      input({ defaultBranch: "feature@{1}" }),
       input({ credentialRef: "" }),
+      input({ credentialRef: "ghp_1234567890abcdef" }),
+      input({ credentialRef: "github_pat_1234567890" }),
+      input({ credentialRef: "sk-live-123" }),
       input({ allowedPlanPaths: ["../secret"] }),
       input({ allowedPlanPaths: ["/etc/passwd"] }),
       input({ allowedPlanPaths: ["docs//x"] }),
@@ -256,6 +293,18 @@ describe("project bindings", () => {
     });
     assert.equal(missing.status, 404);
     assert.equal((await call(api, "GET", "/api/v1/projects")).status, 401);
+
+    const readToken = await call(api, "POST", "/api/v1/tokens", {
+      token: ADMIN,
+      body: { name: "project-reader", scopes: ["read"] },
+    });
+    const rawRead = readToken.body.token as string;
+    const denied = await call(api, "POST", "/api/v1/projects", {
+      token: rawRead,
+      body: input({ projectKey: "denied-project", repositoryId: 303 }),
+    });
+    assert.equal(denied.status, 403);
+    assert.equal(denied.body.error, "forbidden");
     services.store.close();
   });
 

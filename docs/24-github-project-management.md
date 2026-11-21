@@ -54,7 +54,7 @@ SchedulePolicy -> read-only project observation (guarded)
 
 候选契约：ownerId、projectId、repoId（GitHub immutable ID）、owner/name、defaultBranch、credentialRef（不含 token）、policyVersion、planPaths、projectMemoryRef、status。首版单 project 单 repo，可绑定多个；多 repo 聚合、组织级发现后置。项目绑定不自动授予 GitHub 权限；操作目标必须同时匹配 owner、project、repo ID、授权、工具能力与当前 Mandate；名称歧义先澄清，repo 转移/重命名核对 ID，撤销后立即失权。全局/项目记忆复用现有隔离。
 
-2026-11-21 首批实现：`pa_projects` 持久化 owner-scoped projectKey、不可变 repositoryId、repositoryFullName、defaultBranch、credentialRef、allowedPlanPaths、status/version；`ProjectService` 拒绝跨 owner/重复 key/重复 repo，支持按 immutable ID 的 repositoryFullName 更新、revoke 保留历史并递增版本。`/api/v1/projects`（list/get/bind/unbind）与 `pa projects` 已接入，audit 记录 project.bound/renamed/unbound。尚未把绑定强制接入 GitHub read tool、Task/Mandate 或待执行 Action；这是 B2/C1 的下一条，不能只因数据表存在就宣称 GH02 完成。
+2026-11-21 首批实现：`pa_projects` 持久化 owner-scoped projectKey、不可变 repositoryId、repositoryFullName、defaultBranch、credentialRef、allowedPlanPaths、status/version；`ProjectService` 拒绝跨 owner/重复 key/重复 repo，同一 immutable ID 下可按 bind 更新 display name/branch/credentialRef/plan paths（递增版本），revoke 保留历史并递增版本。`/api/v1/projects`（list/get/bind/unbind）与 `pa projects` 已接入，audit 记录 project.bound/updated/unbound。尚未把绑定强制接入 GitHub read tool、Task/Mandate 或待执行 Action；这是 B2/C1 的下一条，不能只因数据表存在就宣称 GH02 完成。
 
 ### GitHub 读取（GH-01/02）
 
