@@ -50,3 +50,12 @@
 - 项目读取同时校验 owner、immutable repositoryId 与 active ProjectBinding；撤销/重启不会复活 OAuth 凭据。
 - Router 不再让模型补猜仓库：projectKey 必须解析到 owner 的 active binding，歧义或未绑定直接拒绝并提示 owner。
 - 现有 E1 覆盖 `credentials.test.ts`、`projects.test.ts`、`github.test.ts`、`router.test.ts`、`completion-verifier.test.ts`；真实 OAuth/PAT 负例仍需 owner 环境。
+
+## 6. 2026-11-22 Issue 写入与审批边界
+
+- **写入口**：只有 `github.issue.create/update/comment` typed Action；无 merge/push/delete/settings/branch-protection/MCP 写。只读 PAT/OAuth 不会被复用为写 token；写入需要独立 ref、`repository.read + issues.write` scope、owner/repoId/write allowlist/plugin generation/revision fence。
+- **审批来源**：ActionService 拒绝 Worker 直接提出的 `github.issue.*`；执行 guard 要求 `sourceKey` 以 `draft:` 开头。即使伪造审批卡，非 DraftSnapshot 来源的写 Action 也无法执行。
+- **载荷绑定**：批准绑定 `payloadHash`、draft id、target、commit SHA、credential epoch；批准前重新读取 default branch ref，仓库已前进则旧草稿 superseded。`beforeHash` 覆盖 title+body。
+- **写前/写后**：update 写前 GET 并比较 beforeHash，人工修改立即暂停；拒绝 PR-as-issue；create/comment marker 幂等；写后 GET 核对 id/URL/正文；超时/未知先 reconcile，不重复 POST；重启后从 action 状态重新 settle。
+- **残余风险**：GitHub 不提供原子 CAS，写后核对只能缩小而非消除人类并发窗口；真实 OAuth 撤销/切账号、真实 Feishu E3、真实隔离仓库写入仍未执行；PAT provider 刷新不会自动 bump epoch（权限变化必须显式 rotate）。
+- **E1**：500 tests passed；包含 origin fence、plugin disable、credential revoke/rotate、revision drift、429、lost POST、人工并发修改、restart reconcile。
