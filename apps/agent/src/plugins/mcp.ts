@@ -282,10 +282,7 @@ export async function connectMcpPlugins(
   return { plugins, errors };
 }
 
-export function parseMcpServers(
-  value: unknown,
-  contracts: readonly McpReadOnlyContract[] = DEFAULT_MCP_READ_ONLY_CONTRACTS,
-): McpServerDefinition[] {
+export function parseMcpServers(value: unknown): McpServerDefinition[] {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("MCP config must be an object with servers[]");
   }
@@ -294,11 +291,7 @@ export function parseMcpServers(
   if (!Array.isArray(servers) || servers.length > 20) {
     throw new Error("MCP config.servers must be an array with at most 20 entries");
   }
-  return servers.map((item, index) => {
-    const definition = normalizeDefinition(parseServer(item, index));
-    resolveReadOnlyContract(definition, contracts);
-    return definition;
-  });
+  return servers.map((item, index) => normalizeDefinition(parseServer(item, index)));
 }
 
 function parseServer(value: unknown, index: number): McpServerDefinition {
@@ -593,12 +586,11 @@ function mcpManifest(
               provider: contract.provider,
               version: contract.version,
               tools: contractTools,
-              verification: Object.fromEntries(
-                tools.map((tool) => [
-                  tool.remoteName,
+              verification: tools.map((tool) => ({
+                name: tool.remoteName,
+                verification:
                   contract.tools[tool.remoteName]?.verification ?? "missing",
-                ]),
-              ),
+              })),
             },
           }
         : {}),

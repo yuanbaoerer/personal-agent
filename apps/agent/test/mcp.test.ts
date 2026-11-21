@@ -185,73 +185,59 @@ describe("MCP config", () => {
         },
       ],
     };
-    assert.equal(parseMcpServers(valid, [TEST_CONTRACT]).length, 1);
-    const emptyTrustedHosts = parseMcpServers(
-      {
-        servers: [{ ...valid.servers[0], trustedHosts: [] }],
-      },
-      [TEST_CONTRACT],
-    );
+    assert.equal(parseMcpServers(valid).length, 1);
+    const emptyTrustedHosts = parseMcpServers({
+      servers: [{ ...valid.servers[0], trustedHosts: [] }],
+    });
     assert.deepEqual(emptyTrustedHosts[0]?.trustedHosts, []);
-    const trusted = parseMcpServers(
-      {
-        servers: [
-          {
-            ...valid.servers[0],
-            trustedHosts: ["API.GitHubCopilot.com", "api.githubcopilot.com"],
-          },
-        ],
-      },
-      [TEST_CONTRACT],
-    );
+    const trusted = parseMcpServers({
+      servers: [
+        {
+          ...valid.servers[0],
+          trustedHosts: ["API.GitHubCopilot.com", "api.githubcopilot.com"],
+        },
+      ],
+    });
     assert.deepEqual(trusted[0]?.trustedHosts, ["api.githubcopilot.com"]);
     assert.throws(
       () =>
-        parseMcpServers(
-          {
-            servers: [{ ...valid.servers[0], trustedHosts: ["https://evil.example"] }],
-          },
-          [TEST_CONTRACT],
-        ),
+        parseMcpServers({
+          servers: [{ ...valid.servers[0], trustedHosts: ["https://evil.example"] }],
+        }),
       /invalid hostname/,
     );
     assert.throws(
       () =>
-        parseMcpServers(
-          { servers: [{ ...valid.servers[0], authEnv: "GITHUB_TOKEN" }] },
-          [TEST_CONTRACT],
-        ),
+        parseMcpServers({
+          servers: [{ ...valid.servers[0], authEnv: "GITHUB_TOKEN" }],
+        }),
       /PA_MCP_/,
     );
     assert.throws(
       () =>
-        parseMcpServers(
-          { servers: [{ ...valid.servers[0], id: "Bad Id" }] },
-          [TEST_CONTRACT],
-        ),
+        parseMcpServers({
+          servers: [{ ...valid.servers[0], id: "Bad Id" }],
+        }),
       /id is invalid/,
     );
     assert.throws(
       () =>
-        parseMcpServers(
-          {
-            servers: [
-              {
-                ...valid.servers[0],
-                tools: [
-                  { remoteName: "a", name: "same" },
-                  { remoteName: "b", name: "same" },
-                ],
-              },
-            ],
-          },
-          [TEST_CONTRACT],
-        ),
+        parseMcpServers({
+          servers: [
+            {
+              ...valid.servers[0],
+              tools: [
+                { remoteName: "a", name: "same" },
+                { remoteName: "b", name: "same" },
+              ],
+            },
+          ],
+        }),
       /duplicate MCP tool/,
     );
   });
 
-  it("rejects unverified providers, endpoints and remote tools", () => {
+  it("rejects unverified providers, endpoints and remote tools", async () => {
     const valid = {
       id: "github-mcp",
       name: "GitHub MCP",
@@ -261,41 +247,36 @@ describe("MCP config", () => {
       tools: [{ remoteName: "get_commit", name: "get_commit" }],
     };
     assert.equal(parseMcpServers({ servers: [valid] }).length, 1);
-    assert.throws(
-      () =>
-        parseMcpServers({
-          servers: [{ ...valid, provider: "unknown" }],
-        }),
-      /no compiled read-only contract/,
+
+    const provider = await connectMcpPlugin(
+      definition("https://example.com/mcp", { provider: "unknown" }),
+      TEST_OPTIONS,
     );
-    assert.throws(
-      () =>
-        parseMcpServers({
-          servers: [{ ...valid, contractVersion: "2" }],
-        }),
-      /no read-only contract version/,
+    assert.match(provider.error ?? "", /no compiled read-only contract/);
+    assert.equal(provider.plugin.configured, false);
+
+    const version = await connectMcpPlugin(
+      definition("https://example.com/mcp", { contractVersion: "2" }),
+      TEST_OPTIONS,
     );
-    assert.throws(
-      () =>
-        parseMcpServers({
-          servers: [{ ...valid, url: "https://evil.example/mcp" }],
-        }),
-      /not verified for github@1/,
+    assert.match(version.error ?? "", /no read-only contract version/);
+
+    const endpoint = await connectMcpPlugin(
+      definition("https://evil.example/mcp"),
+      TEST_OPTIONS,
     );
-    assert.throws(
-      () =>
-        parseMcpServers({
-          servers: [{ ...valid, tools: [{ remoteName: "create_issue", name: "create_issue" }] }],
+    assert.match(endpoint.error ?? "", /not verified for test@1/);
+
+    for (const remoteName of ["create_issue", "get_secret_write"]) {
+      const tool = await connectMcpPlugin(
+        definition("https://example.com/mcp", {
+          tools: [{ remoteName, name: remoteName }],
         }),
-      /not verified as read-only/,
-    );
-    assert.throws(
-      () =>
-        parseMcpServers({
-          servers: [{ ...valid, tools: [{ remoteName: "get_secret_write", name: "get_secret_write" }] }],
-        }),
-      /not verified as read-only/,
-    );
+        TEST_OPTIONS,
+      );
+      assert.match(tool.error ?? "", /not verified as read-only/);
+      assert.deepEqual(tool.plugin.manifest.exports.tools, []);
+    }
   });
 
   it("does not expose a remote write tool merely because it was configured", async () => {
@@ -318,6 +299,17 @@ describe("MCP config", () => {
       assert.deepEqual(result.plugin.manifest.capabilities, []);
       assert.match(result.plugin.manifest.description ?? "", /no verified read-only tools/);
       assert.throws(() => result.plugin.createTools(), /not verified as read-only/);
+      const store = createStore();
+      const registry = new ToolRegistry();
+      const catalog = new PluginCatalog({
+        store,
+        registry,
+        plugins: [result.plugin],
+        now: () => NOW,
+      });
+      assert.deepEqual(catalog.toolNamesFor("fake-mcp"), []);
+      assert.equal(registry.get("fake-mcp.create_issue"), undefined);
+      store.close();
 
       const disguised = await connectMcpPlugin(
         definition(fake.url, {
@@ -380,11 +372,16 @@ describe("MCP read-only plugin", () => {
         result.plugin.manifest.capabilities[0]?.description,
         "Echo a value.",
       );
+      const readOnlyContract = result.plugin.manifest.config.readOnlyContract as {
+        tools: string[];
+        verification: { name: string; verification: string }[];
+      };
+      assert.deepEqual(readOnlyContract.tools, ["echo", "missing"]);
       assert.deepEqual(
-        (result.plugin.manifest.config.readOnlyContract as Record<string, unknown>)
-          .tools,
-        ["echo", "missing"],
+        readOnlyContract.verification.map((item) => item.name),
+        ["echo"],
       );
+      assert.match(readOnlyContract.verification[0]?.verification ?? "", /Test-only/);
       const tool = result.plugin.createTools()[0];
       assert.ok(tool);
       assert.equal(tool.name, "fake-mcp.echo");
