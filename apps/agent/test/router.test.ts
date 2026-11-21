@@ -6,6 +6,7 @@ import {
   formatSchedules,
   normalizeGithubCriteria,
   resolveTaskId,
+  wantsProjectReview,
 } from "../src/coordinator/router.ts";
 import { parseRouterDecision, routerPrompt } from "../src/coordinator/pi-router.ts";
 import { evaluateCompletion, parseWorkerReport } from "../src/coordinator/tasks.ts";
@@ -241,6 +242,94 @@ describe("worker report validation", () => {
     assert.equal(parseWorkerReport('{"status":"done"}'), undefined);
     assert.equal(parseWorkerReport("no json"), undefined);
   });
+
+  it("parses review findings and derives draft idempotency keys", () => {
+    const sha = "a".repeat(40);
+    const report = parseWorkerReport(
+      JSON.stringify({
+        status: "ready",
+        summary: "review",
+        evidence: [{ kind: "github", value: "https://github.com/owner/repo" }],
+        findings: [
+          {
+            id: "f1",
+            requirementRef: "GH-02",
+            classification: "observed",
+            severity: "high",
+            repositoryId: 101,
+            commitSha: sha,
+            evidenceRefs: ["https://github.com/owner/repo/blob/" + sha + "/a.ts"],
+            expected: "pinned",
+            actual: "unpinned",
+            impact: "stale evidence",
+            existingIssueMatches: [60],
+            suggestedAction: "pin evidence",
+          },
+        ],
+        issueDrafts: [
+          {
+            action: "update",
+            targetIssue: 60,
+            title: "Pin evidence",
+            body: "Body",
+            findingIds: ["f1"],
+            requiresOwnerApproval: true,
+          },
+        ],
+      }),
+    );
+    assert.equal(report?.findings?.[0]?.commitSha, sha);
+    assert.match(report?.issueDrafts?.[0]?.idempotencyKey ?? "", /^[0-9a-f]{32}$/);
+
+    const malformed = parseWorkerReport(
+      JSON.stringify({
+        status: "ready",
+        summary: "review",
+        evidence: [{ kind: "github", value: "https://github.com/owner/repo" }],
+        findings: [
+          {
+            requirementRef: "GH-02",
+            classification: "observed",
+            severity: "high",
+            repositoryId: 101,
+            commitSha: "not-a-sha",
+            evidenceRefs: [],
+            expected: "pinned",
+            actual: "unpinned",
+            impact: "stale",
+            existingIssueMatches: [],
+            suggestedAction: "fix",
+          },
+        ],
+      }),
+    );
+    assert.equal(malformed?.findings, undefined);
+
+    const gap = parseWorkerReport(
+      JSON.stringify({
+        status: "ready",
+        summary: "review",
+        evidence: [{ kind: "github", value: "https://github.com/owner/repo" }],
+        findings: [
+          {
+            requirementRef: "GH-02",
+            classification: "unknown",
+            severity: "medium",
+            repositoryId: 101,
+            commitSha: "unknown",
+            evidenceRefs: [],
+            expected: "pinned",
+            actual: "unknown",
+            impact: "cannot verify",
+            existingIssueMatches: [],
+            suggestedAction: "read the PR head",
+            evidenceGap: "no PR receipt",
+          },
+        ],
+      }),
+    );
+    assert.equal(gap?.findings?.[0]?.commitSha, "unknown");
+  });
 });
 
 describe("GitHub completion criteria", () => {
@@ -265,6 +354,21 @@ describe("GitHub completion criteria", () => {
       ["github.read"],
     );
     assert.equal((JSON.parse(criteria) as Record<string, unknown>).repo, "other/repo");
+  });
+
+  it("binds the project-review verifier only when the skill is selected", () => {
+    const review = normalizeGithubCriteria(
+      "done",
+      "对照规划检查项目完成度",
+      "检查 owner/repo 的开发进展",
+      ["github.read"],
+      ["github.project-review"],
+    );
+    const parsed = JSON.parse(review) as Record<string, unknown>;
+    assert.equal(parsed.verifier, "project-review");
+    assert.equal(parsed.repo, "owner/repo");
+    assert.equal(wantsProjectReview("对照规划评估这个项目的实现差距"), true);
+    assert.equal(wantsProjectReview("查看 open issues"), false);
   });
 
   it("never invents a repo for a non-GitHub task", () => {

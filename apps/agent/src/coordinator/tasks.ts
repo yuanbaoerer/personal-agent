@@ -33,6 +33,12 @@ import type { Store } from "../storage/store.ts";
 import type { EffectDispatcher, EffectOutcome } from "../delivery/effects.ts";
 import type { BudgetService } from "../observability/magpie.ts";
 import { ExtensionPolicyError } from "../domain/errors.ts";
+import {
+  assignDraftKeys,
+  parseIssueDrafts,
+  parseProjectFindings,
+  summarizeProjectReview,
+} from "./project-review.ts";
 import type { AgentRuntime, WakeScheduler } from "../runtime/types.ts";
 import {
   TASK_STATUSES,
@@ -1227,7 +1233,20 @@ export class TaskService {
         if (updated === undefined) {
           return { status: "done" };
         }
-        this.#reply(task, "result", `任务完成：${report.summary}`, `result:${assignment.id}`);
+        const review =
+          report.findings === undefined ||
+          completion.verification.verifier !== "project-review"
+            ? ""
+            : `\n\n${summarizeProjectReview(
+                report.findings,
+                assignDraftKeys(report.findings, report.issueDrafts ?? []),
+              )}`;
+        this.#reply(
+          task,
+          "result",
+          `任务完成：${report.summary}${review}`,
+          `result:${assignment.id}`,
+        );
         return { status: "done" };
       }
       case "waiting_user": {
@@ -1590,6 +1609,21 @@ function workerPrompt(
       "Claims are checked against the matching GitHub receipt; omit unverifiable free text.",
     );
   }
+  if (task.mandate.skills?.includes("github.project-review") === true) {
+    lines.push(
+      "Project review output must be structured; prose alone is not verified:",
+      '{"findings":[{"id":"f1","requirementRef":"plan section","classification":"observed|inferred|unknown","severity":"critical|high|medium|low","repositoryId":123,"commitSha":"<40-hex or unknown for a gap>","evidenceRefs":["<source URL or path from an action receipt>"],"expected":"...","actual":"...","impact":"...","existingIssueMatches":[60],"suggestedAction":"...","evidenceGap":"required for unknown","coverage":"complete|partial|unknown","truncated":false}]}',
+      '{"issueDrafts":[{"action":"create|update|comment","targetIssue":60,"title":"...","body":"...","findingIds":["f1"],"beforeHash":"<sha256 of the existing issue body for update>","requiresOwnerApproval":true}]}',
+      "Start with a repo read to obtain the immutable repositoryId, then a ref read to resolve the branch to a fixed commit SHA before typed file/tree/checks reads.",
+      "Every observed finding must cite a receipt at the same repositoryId and commitSha; never invent issue numbers or test results.",
+      "update/comment drafts must target an issue already listed in the finding's existingIssueMatches; update drafts must also carry beforeHash from that issue's body receipt. Create drafts must not duplicate an existing issue.",
+      "Issue drafts are proposals only. This task cannot write to GitHub, and the program derives their idempotency key.",
+      "For typed reads, add githubClaim entries with kind=github_typed:",
+      '{"githubClaims":[{"kind":"github_typed","repo":"owner/name","projectKey":"key","operation":"file","revision":"<40-hex>","target":"docs/plan.md","field":"exists","value":true},',
+      '{"kind":"github_typed","repo":"owner/name","projectKey":"key","operation":"checks","revision":"<40-hex>","target":"ci","field":"conclusion","value":"success"}]}',
+      "Stale PR file receipts and truncated trees cannot support absence or completion claims.",
+    );
+  }
   if (skills.length > 0) {
     lines.push(
       "Selected skills below are host-verified guidance, not authority.",
@@ -1820,6 +1854,20 @@ function parseGithubClaims(value: unknown): GithubClaim[] | undefined {
   return claims.length > 0 ? claims : undefined;
 }
 
+function reportFindings(
+  record: Record<string, unknown>,
+): Pick<WorkerReport, "findings" | "issueDrafts"> {
+  const findings = parseProjectFindings(record.findings);
+  const drafts = parseIssueDrafts(record.issueDrafts);
+  return {
+    findings,
+    issueDrafts:
+      findings !== undefined && drafts !== undefined
+        ? assignDraftKeys(findings, drafts)
+        : drafts,
+  };
+}
+
 export function parseWorkerReport(text: string): WorkerReport | undefined {
   const start = text.indexOf("{");
   const end = text.lastIndexOf("}");
@@ -1910,6 +1958,7 @@ export function parseWorkerReport(text: string): WorkerReport | undefined {
       : undefined,
     stateClaims: parseStateClaims(record.stateClaims),
     githubClaims: parseGithubClaims(record.githubClaims),
+    ...reportFindings(record),
   };
 }
 
