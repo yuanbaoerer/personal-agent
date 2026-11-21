@@ -16,7 +16,7 @@
 | L3 Development Orchestrator Pilot | Issue→Coding Agent→测试→Draft PR→独立 Review | GH-05/06 实际闭环及恢复 |
 | L4 Autonomous Maintainer（后续） | 有界的持续监控、需求识别、返工与主人决策 | 先有连续使用证据；自动写/合并不在本阶段 |
 
-当前：github.read GET-only、单 owner PAT/OAuth E1、repo 白名单及 24h 只读预授权；状态/结构化 Intent、Action audit、claims 与本地预算已有实现；真实 GitHub 只读 G1 与 Feishu 出站已有证据，真实 E3/Issue 写仍未完成。ProjectBinding（`pa_projects`、owner-scoped projectKey、不可变 repoId、branch/credentialRef、plan paths、API/CLI、revoked 历史）已落地；固定 SHA 的 ref/tree/file/issue/PR files/checks typed read 已实现，并强制从 active ProjectBinding 解析 repo（与 allowlist 取交集）；Issue 写和管理工作流仍未实现。2026-11-21 跨平台 CI 已恢复，main run `44885452222` 通过（当前 438 tests）；此前账单期间的合并仅以本地测试为依据。没有证据表明当前已经支持真实 Issue 写、完整源码读取或 Coding Agent 调度。不可把 ChatGPT 的 GitHub 插件能力算进项目自身实现。
+当前：github.read GET-only、单 owner PAT/OAuth E1、repo 白名单及 24h 只读预授权；状态/结构化 Intent、Action audit、claims 与本地预算已有实现；真实 GitHub 只读 G1 与 Feishu 出站已有证据，真实 E3/Issue 写仍未完成。ProjectBinding（`pa_projects`、owner-scoped projectKey、不可变 repoId、branch/credentialRef、plan paths、API/CLI、revoked 历史）已落地；固定 SHA 的 ref/tree/file/issue/PR files/checks typed read 已实现，并强制从 active ProjectBinding 解析 repo（与 allowlist 取交集）；Issue 写和管理工作流仍未实现。2026-11-21 跨平台 CI 已恢复，main run `44889097865` 通过（当前 438 tests）；此前账单期间的合并仅以本地测试为依据。没有证据表明当前已经支持真实 Issue 写、完整源码读取或 Coding Agent 调度。不可把 ChatGPT 的 GitHub 插件能力算进项目自身实现。
 
 ## 2. 工程主线与依赖
 
