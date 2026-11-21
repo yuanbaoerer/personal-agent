@@ -225,6 +225,7 @@ export function createServices(options: {
     wake,
     now,
     capabilities: catalog,
+    projects,
   });
 
   const effectDispatcher = new EffectDispatcher({ effects, now, maxAttempts: 20 });

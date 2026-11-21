@@ -32,6 +32,7 @@ function createTask(
     criteria?: string;
     mandateTools?: string[];
     mandateSkills?: string[];
+    mandateProject?: string;
     key?: string;
   } = {},
 ) {
@@ -49,6 +50,9 @@ function createTask(
       ...(options.mandateSkills === undefined
         ? {}
         : { skills: options.mandateSkills }),
+      ...(options.mandateProject === undefined
+        ? {}
+        : { project: options.mandateProject }),
     },
   });
 }
@@ -1087,6 +1091,81 @@ describe("TaskCompletionVerifier", () => {
     assert.equal(current?.verification?.verifier, "project-review");
     assert.equal(current?.verification?.externalFactsVerified, true);
     assert.match(current?.verification?.reason ?? "", /1 observed/);
+  });
+
+  it("refuses project-review findings outside the criteria repository or project", async () => {
+    for (const scenario of [
+      {
+        key: "review-repo-mismatch",
+        criteria:
+          '{"verifier":"project-review","repo":"owner/repo","repositoryId":999,"projectKey":"personal-agent","requiredEvidenceKinds":["github"]}',
+        project: "personal-agent",
+        missing: /repository_id_mismatch/,
+      },
+      {
+        key: "review-project-mismatch",
+        criteria:
+          '{"verifier":"project-review","repo":"owner/repo","repositoryId":101,"projectKey":"personal-agent","requiredEvidenceKinds":["github"]}',
+        project: "other-project",
+        missing: /criteria_project_mismatch/,
+      },
+    ]) {
+      const services = setup();
+      const task = createTask(services, {
+        mandateSkills: ["github.project-review"],
+        mandateProject: scenario.project,
+        criteria: scenario.criteria,
+        key: scenario.key,
+      });
+      const assignment = claim(services);
+      const sha = "a".repeat(40);
+      const source = `https://github.com/owner/repo/blob/${sha}/docs/24.md`;
+      insertSucceededGithubCustom(
+        services,
+        task.id,
+        assignment,
+        { operation: "file", projectKey: "personal-agent", repo: "owner/repo", sha, path: "docs/24.md" },
+        {
+          operation: "file",
+          repo: "owner/repo",
+          projectKey: "personal-agent",
+          repositoryId: 101,
+          commitSha: sha,
+          path: "docs/24.md",
+          source,
+          permanentUrl: source,
+          item: { type: "file", path: "docs/24.md" },
+        },
+      );
+      services.taskService.report(
+        assignment.assignment.id,
+        assignment.assignment.fencingToken,
+        assignment.assignment.taskRevision,
+        {
+          ...ready("review", [{ kind: "github", value: source }]),
+          findings: [
+            {
+              id: "f1",
+              requirementRef: "docs/24 GH-02",
+              classification: "observed",
+              severity: "high",
+              repositoryId: 101,
+              commitSha: sha,
+              evidenceRefs: [source],
+              expected: "bound repository",
+              actual: "different repository",
+              impact: "cross-project evidence",
+              existingIssueMatches: [],
+              suggestedAction: "re-check the binding",
+              coverage: "complete",
+            },
+          ],
+        },
+      );
+      const current = services.tasks.get(task.id);
+      assert.equal(current?.status, "needs_review");
+      assert.match(current?.verification?.missing.join(",") ?? "", scenario.missing);
+    }
   });
 
   it("refuses project-review findings with invented evidence or issue numbers", () => {

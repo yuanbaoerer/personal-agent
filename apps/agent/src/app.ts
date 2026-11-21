@@ -230,6 +230,7 @@ export function createApp(deps: AppDeps): AppServices {
     wake: deps.wake,
     now: deps.now,
     capabilities: catalog,
+    projects,
   });
 
   const effectDispatcher = new EffectDispatcher({ effects });

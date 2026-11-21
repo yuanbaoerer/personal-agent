@@ -1541,6 +1541,11 @@ function workerPrompt(
     `Goal: ${task.goal}`,
     `Completion criteria: ${task.completionCriteria}`,
     `Mandate: ${JSON.stringify(task.mandate)}`,
+    ...(task.mandate.project === undefined
+      ? []
+      : [
+          `Project binding: the owner already bound projectKey ${task.mandate.project}; use typed reads with that projectKey and never infer a different repository. The authoritative repositoryId and repository name are in the completion criteria.`,
+        ]),
   ];
   const stateTools = task.mandate.tools.filter(isStateToolName);
   if (stateTools.length > 0) {

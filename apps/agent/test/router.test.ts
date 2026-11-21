@@ -5,12 +5,14 @@ import {
   describeReminderCancelFailure,
   formatSchedules,
   normalizeGithubCriteria,
+  resolveProjectMention,
   resolveTaskId,
   wantsProjectReview,
 } from "../src/coordinator/router.ts";
 import { parseRouterDecision, routerPrompt } from "../src/coordinator/pi-router.ts";
 import { evaluateCompletion, parseWorkerReport } from "../src/coordinator/tasks.ts";
-import type { ScheduleRecord, TaskRecord } from "../src/domain/types.ts";
+import type { ProjectBinding, ScheduleRecord, TaskRecord } from "../src/domain/types.ts";
+import { createServices, sendText } from "./services.ts";
 
 function taskRecord(id: string, ownerId = "owner"): TaskRecord {
   return {
@@ -376,5 +378,267 @@ describe("GitHub completion criteria", () => {
       normalizeGithubCriteria("done", "check owner/repo", "owner/repo", []),
       "done",
     );
+  });
+});
+
+function binding(overrides: Partial<ProjectBinding> = {}): ProjectBinding {
+  return {
+    id: "project-1",
+    ownerId: "owner-1",
+    projectKey: "personal-agent",
+    repositoryId: 101,
+    repositoryFullName: "yuanbaoerer/personal-agent",
+    defaultBranch: "main",
+    credentialRef: "github:default",
+    allowedPlanPaths: ["README.md", "docs/24-github-project-management.md"],
+    status: "active",
+    version: 1,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function catalog(items: ProjectBinding[]) {
+  return {
+    list: (ownerId: string, status?: "active") =>
+      items.filter(
+        (project) =>
+          project.ownerId === ownerId && (status === undefined || project.status === status),
+      ),
+    findActiveByKey: (ownerId: string, key: string) =>
+      items.find(
+        (project) =>
+          project.ownerId === ownerId &&
+          project.projectKey === key &&
+          project.status === "active",
+      ),
+  };
+}
+
+describe("project mention resolution", () => {
+  const project = binding();
+  const other = binding({
+    id: "project-2",
+    projectKey: "docs-site",
+    repositoryId: 102,
+    repositoryFullName: "yuanbaoerer/docs-site",
+  });
+
+  it("recognizes a projectKey without an owner/repository in the message", () => {
+    const result = resolveProjectMention({
+      text: "检查 personal-agent 项目的最新实施情况",
+      ownerId: "owner-1",
+      projects: catalog([project]),
+      requireProject: true,
+    });
+    assert.equal(result.status, "resolved");
+    assert.equal(result.status === "resolved" ? result.project.projectKey : "", "personal-agent");
+    assert.equal(wantsProjectReview("检查 personal-agent 项目的最新实施情况"), true);
+  });
+
+  it("resolves an exact repository full name and the explicit flag", () => {
+    const byRepo = resolveProjectMention({
+      text: "审查 https://github.com/yuanbaoerer/personal-agent 的进展",
+      ownerId: "owner-1",
+      projects: catalog([project]),
+      requireProject: true,
+    });
+    assert.equal(byRepo.status, "resolved");
+    const byFlag = resolveProjectMention({
+      text: "检查 --project=docs-site 的实施情况 personal-agent",
+      ownerId: "owner-1",
+      projects: catalog([project, other]),
+      requireProject: true,
+    });
+    assert.equal(byFlag.status, "resolved");
+    assert.equal(byFlag.status === "resolved" ? byFlag.project.projectKey : "", "docs-site");
+  });
+
+  it("refuses missing, ambiguous and unbound projects instead of guessing", () => {
+    const missing = resolveProjectMention({
+      text: "检查 unknown-project 项目的最新实施情况",
+      ownerId: "owner-1",
+      projects: catalog([project]),
+      requireProject: true,
+    });
+    assert.equal(missing.status, "missing");
+
+    const ambiguous = resolveProjectMention({
+      text: "检查 personal-agent 和 docs-site 项目的实施情况",
+      ownerId: "owner-1",
+      projects: catalog([project, other]),
+      requireProject: true,
+    });
+    assert.equal(ambiguous.status, "ambiguous");
+
+    const conflict = resolveProjectMention({
+      text: "检查 personal-agent 项目的最新实施情况",
+      ownerId: "owner-1",
+      requested: "docs-site",
+      projects: catalog([project, other]),
+      requireProject: true,
+    });
+    assert.equal(conflict.status, "ambiguous");
+
+    const unboundRepo = resolveProjectMention({
+      text: "检查 github.com/other/private 项目的实施情况",
+      ownerId: "owner-1",
+      projects: catalog([project]),
+      requireProject: true,
+    });
+    assert.equal(unboundRepo.status, "missing");
+
+    const unavailable = resolveProjectMention({
+      text: "检查 personal-agent 项目的最新实施情况",
+      ownerId: "owner-1",
+      projects: catalog([]),
+      requireProject: true,
+    });
+    assert.equal(unavailable.status, "unavailable");
+  });
+
+  it("binds criteria to the resolved repository identity", () => {
+    const criteria = normalizeGithubCriteria(
+      '{"repo":"attacker/repo","verifier":"github-read"}',
+      "check",
+      "检查 personal-agent 项目的最新实施情况",
+      ["github.read"],
+      ["github.project-review"],
+      project,
+    );
+    const parsed = JSON.parse(criteria) as Record<string, unknown>;
+    assert.equal(parsed.repo, "yuanbaoerer/personal-agent");
+    assert.equal(parsed.repositoryId, 101);
+    assert.equal(parsed.projectKey, "personal-agent");
+    assert.equal(parsed.defaultBranch, "main");
+    assert.deepEqual(parsed.allowedPlanPaths, [
+      "README.md",
+      "docs/24-github-project-management.md",
+    ]);
+    assert.equal(parsed.verifier, "project-review");
+  });
+});
+
+describe("project review task creation", () => {
+  function bindPersonalAgent(services: ReturnType<typeof createServices>) {
+    services.projectService.bind(
+      services.owner.id,
+      {
+        projectKey: "personal-agent",
+        repositoryId: 101,
+        repositoryFullName: "owner/repo",
+        defaultBranch: "main",
+        credentialRef: "github:default",
+        allowedPlanPaths: ["README.md", "docs/24-github-project-management.md"],
+      },
+      "admin",
+    );
+  }
+
+  it("creates a bound project-review task from a bare projectKey mention", async () => {
+    const services = createServices({
+      github: {
+        token: "secret",
+        allowedRepos: ["owner/repo"],
+        fetch: (async () =>
+          new Response("{}", {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          })) as typeof fetch,
+      },
+    });
+    bindPersonalAgent(services);
+    services.model.push({
+      action: "create_task",
+      text: "开始检查。",
+      task: {
+        goal: "检查 personal-agent 最新实施情况",
+        completionCriteria: "只读评估，给出有证据的 findings 和 issue drafts",
+        mandate: { resources: ["chat"], tools: ["github.read"] },
+      },
+    });
+    await sendText(services, "检查 personal-agent 项目的最新实施情况。", "evt_review");
+
+    const tasks = services.tasks.listByOwner(services.owner.id);
+    assert.equal(tasks.length, 1);
+    const task = tasks[0] as TaskRecord;
+    assert.equal(task.mandate.project, "personal-agent");
+    assert.ok(task.mandate.tools.includes("github.read"));
+    assert.deepEqual(task.mandate.skills, ["github.project-review"]);
+    const criteria = JSON.parse(task.completionCriteria) as Record<string, unknown>;
+    assert.equal(criteria.repo, "owner/repo");
+    assert.equal(criteria.repositoryId, 101);
+    assert.equal(criteria.projectKey, "personal-agent");
+    assert.equal(criteria.verifier, "project-review");
+    const outbox = services.store.listRecentOutbox(20).map((row) => row.text);
+    assert.ok(outbox.some((text) => text.includes("项目：personal-agent")));
+  });
+
+  it("refuses an unbound project before creating a task", async () => {
+    const services = createServices({
+      github: {
+        token: "secret",
+        allowedRepos: ["owner/repo"],
+        fetch: (async () => new Response("{}")) as typeof fetch,
+      },
+    });
+    bindPersonalAgent(services);
+    services.model.push({
+      action: "create_task",
+      text: "开始检查。",
+      task: {
+        goal: "检查 other-project 最新实施情况",
+        completionCriteria: "只读评估",
+        mandate: { resources: ["chat"], tools: ["github.read"] },
+      },
+    });
+    await sendText(services, "检查 other-project 项目的最新实施情况。", "evt_review_missing");
+
+    assert.equal(services.tasks.listByOwner(services.owner.id).length, 0);
+    const outbox = services.store.listRecentOutbox(20).map((row) => row.text);
+    assert.ok(outbox.some((text) => /找不到项目 other-project/.test(text)));
+    assert.equal(services.runtime.opened.length, 0);
+  });
+
+  it("does not let the model pick a different project than the owner named", async () => {
+    const services = createServices({
+      github: {
+        token: "secret",
+        allowedRepos: ["owner/repo", "owner/docs"],
+        fetch: (async () => new Response("{}")) as typeof fetch,
+      },
+    });
+    bindPersonalAgent(services);
+    services.projectService.bind(
+      services.owner.id,
+      {
+        projectKey: "docs-site",
+        repositoryId: 102,
+        repositoryFullName: "owner/docs",
+        defaultBranch: "main",
+        credentialRef: "github:default",
+        allowedPlanPaths: ["README.md"],
+      },
+      "admin",
+    );
+    services.model.push({
+      action: "create_task",
+      text: "开始检查。",
+      task: {
+        goal: "检查 docs-site 最新实施情况",
+        completionCriteria: "只读评估",
+        mandate: {
+          resources: ["chat"],
+          tools: ["github.read"],
+          project: "docs-site",
+        },
+      },
+    });
+    await sendText(services, "检查 personal-agent 项目的最新实施情况。", "evt_review_conflict");
+
+    assert.equal(services.tasks.listByOwner(services.owner.id).length, 0);
+    const outbox = services.store.listRecentOutbox(20).map((row) => row.text);
+    assert.ok(outbox.some((text) => /项目名称不唯一/.test(text)));
   });
 });

@@ -117,3 +117,15 @@ L2 需 GH01–06 与相关 GH09；L3 pilot 需 GH07–10 与相应 #41 原验收
 - D21 保留个人 OAuth 决策；新增写授权建议独立 fine-grained PAT，正式 GitHub App 评估后再迁移。测试 repo、实际可读/写 repo、允许 operation、审批范围由 owner 明确确认。
 - 首个 Coding Agent CLI、独立执行机器/隔离方式、允许命令、网络与支出上限，均需真实配置和确认。
 - 默认手动触发、只读优先，合并权始终主人保留。仓库规划编辑授权不等于允许运行 Agent 产生真实外部写、付费或授权扩大。
+
+## 7. 2026-11-22 L2R-01：Credential Scope 与确定性项目解析
+
+**状态：CODE_COMPLETE + E1_PASS；真实 OAuth/PAT 负例仍为 BLOCKED（需 owner 凭据）。**
+
+- `CredentialBroker` 现支持 owner、plugin、account、repositoryIds、scopes、expiry、version 元数据，并通过 `pa_credential_refs` 持久化非秘密元数据；secret 仍只来自 OAuth 加密库或进程环境。
+- 未声明 scopes 的旧凭据可继续执行 read scope（`repository.read`/`metadata.read`），但任何非 read scope（如 `issues.write`）必须显式声明，否则 `CredentialScopeError` fail closed；不会自动升级写权限。
+- owner/repository 绑定在 `resolve` 时校验；重启通过 `restore` 保留 epoch 与 revoked 状态，OAuth disconnect 后重启仍是 revoked，重新连接走 `rotate` 递增 epoch。
+- Router 只依据 owner 的 active ProjectBinding 解析 projectKey：支持 `--project=`、完整 `owner/name`、消息中的精确 projectKey；名称歧义、未绑定项目、模型选择与主人指定冲突均拒绝，不猜测仓库。
+- 解析后的 Task criteria 固定 `repo`、`repositoryId`、`projectKey`、`defaultBranch`、`allowedPlanPaths`、binding version；`project-review` Verifier 拒绝跨 repository/project 的 finding。
+- E1：466 tests passed（`npm test`）；覆盖 credential scope/owner/repo/restart、rounter 项目解析、绑定 criteria、verifier 越界拒绝。
+- 仍缺：真实 OAuth 登录/切账号/撤销、真实 Feishu 入站与真实模型 project review（E3）。
