@@ -645,6 +645,14 @@ export class Router implements InboundHandler {
           conversationId: task.conversationId,
           project: task.mandate.project,
         })),
+        projectContext: (this.#projects?.list(ownerId, "active") ?? [])
+          .slice(0, 20)
+          .map((project) => ({
+            projectKey: project.projectKey,
+            repositoryId: project.repositoryId,
+            repositoryFullName: project.repositoryFullName,
+            defaultBranch: project.defaultBranch,
+          })),
       }, this.#capabilities);
     } catch (error) {
       if (error instanceof RouterPendingError) {
