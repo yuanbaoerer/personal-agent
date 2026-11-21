@@ -246,6 +246,31 @@ describe("MCP read-only plugin", () => {
     }
   });
 
+  it("pins an untrusted hostname through the validated resolver", async () => {
+    const fake = await startFakeServer();
+    try {
+      const hostnameUrl = fake.url.replace("127.0.0.1", "localhost");
+      const result = await connectMcpPlugin(definition(hostnameUrl), {
+        dnsLookup: async () => [{ address: "127.0.0.1", family: 4 }],
+      });
+      assert.equal(result.error, undefined);
+      assert.equal(result.plugin.configured, true);
+      const tool = result.plugin.createTools()[0];
+      assert.ok(tool);
+      const execution = await tool.execute({ value: "pinned" });
+      assert.match(JSON.stringify(execution.evidence), /echo:pinned/);
+      assert.equal(fake.calls.length, 1);
+      result.plugin.close?.();
+
+      const unresolved = await connectMcpPlugin(definition(hostnameUrl), {
+        dnsLookup: async () => [],
+      });
+      assert.match(unresolved.error ?? "", /did not resolve/);
+    } finally {
+      await fake.close();
+    }
+  });
+
   it("marks the plugin unavailable when auth or a declared tool is missing", async () => {
     const fake = await startFakeServer({ requireAuth: "mcp-secret" });
     try {

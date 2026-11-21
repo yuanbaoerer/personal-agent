@@ -66,8 +66,15 @@ export interface McpServerDefinition {
 export interface McpConnectOptions {
   env?: NodeJS.ProcessEnv;
   fetch?: typeof fetch;
+  /** Test seam; production uses node:dns lookup. */
+  dnsLookup?: DnsLookup;
   timeoutMs?: number;
 }
+
+export type DnsLookup = (
+  hostname: string,
+  options: { all: true; verbatim: true },
+) => Promise<{ address: string; family: number }[]>;
 
 export interface McpPluginResult {
   plugin: BuiltinPlugin;
@@ -117,7 +124,12 @@ export async function connectMcpPlugin(
             : input.url;
       const target = new URL(url);
       const hostname = normalizedHostname(target.hostname);
-      const safe = await resolveSafeAddress(url, allowLocalhost, trustedHosts);
+      const safe = await resolveSafeAddress(
+        url,
+        allowLocalhost,
+        trustedHosts,
+        options.dnsLookup ?? lookup,
+      );
       let response: Response;
       if (agent !== undefined && !trustedHosts.includes(hostname)) {
         // Pin the connection to the address that passed validation instead of
@@ -667,6 +679,7 @@ async function resolveSafeAddress(
   raw: string,
   allowLocalhost: boolean,
   trustedHosts: readonly string[],
+  dnsLookup: DnsLookup,
 ): Promise<SafeAddress> {
   let url: URL;
   try {
@@ -692,7 +705,7 @@ async function resolveSafeAddress(
     }
     return { address: hostname, family: isIP(hostname) === 6 ? 6 : 4 };
   }
-  const addresses = await lookup(hostname, { all: true, verbatim: true });
+  const addresses = await dnsLookup(hostname, { all: true, verbatim: true });
   if (addresses.length === 0) {
     throw new Error("MCP url did not resolve");
   }
@@ -720,10 +733,14 @@ function normalizedHostname(hostname: string): string {
 }
 
 function pinnedLookup(pinned: Map<string, SafeAddress>): LookupFunction {
-  return (hostname, _options, callback) => {
+  return (hostname, options, callback) => {
     const entry = pinned.get(hostname.toLowerCase());
     if (entry === undefined) {
       callback(new Error(`MCP host was not validated: ${hostname}`), "", 4);
+      return;
+    }
+    if (options.all === true) {
+      callback(null, [{ address: entry.address, family: entry.family }]);
       return;
     }
     callback(null, entry.address, entry.family);
