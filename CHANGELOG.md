@@ -4,6 +4,7 @@ All notable changes are recorded here. This project does not yet have a stable r
 
 ## Unreleased
 
+- L2W-04 E1: added a raw Feishu event → adapter → ingress → project review → verifier → Outbox → Feishu send test with a fake platform message id; real Feishu E3 is still blocked.
 - Historical compatibility: added a schema-18 → latest migration test preserving ProjectBinding rows; `.env.example` documents the separate Issues-write credential.
 - Stage D budget gate: unattended schedule policies now fail closed unless `BUDGET_MAX_MODEL_CALLS_PER_DAY` is configured; each skipped occurrence is audited as `budget_unknown`.
 - L2W-02 review fixes 2: approval now checks the current default-branch SHA against the draft commit, read and write credentials are separate refs, and typed writes are rejected unless proposed by the draft bridge (sourceKey `draft:`).

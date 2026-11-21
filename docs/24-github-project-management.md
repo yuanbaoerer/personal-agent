@@ -138,7 +138,7 @@ L2 需 GH01–06 与相关 GH09；L3 pilot 需 GH07–10 与相应 #41 原验收
 - 修复复合请求守卫：显式 `只读`/`不要修改 GitHub` 的项目评估不再被误判为“状态查询 + 变更操作”。
 - receipt 截断检测下沉到嵌套字段（file content、issue body、patch、check output）；引用截断来源却声明 `coverage=complete` 会被 Verifier 拒绝。
 - 安全负例：错误 projectKey、task mandate 不符、跨 owner、绑定撤销、缺失/撤销凭据、repositoryId 不匹配、PR head 漂移、跨 revision finding、settled action 重放；均在任何 fetch 前或 Verifier 处失败。
-- E1：`project-review-e2e.test.ts` 5 场景；全量 471 tests passed。
+- E1：`project-review-e2e.test.ts` 覆盖 raw Feishu 事件 → FeishuAdapter.parseRequest → Ingress → Router → ProjectBinding → typed reads → findings/drafts → Verifier → Outbox → Feishu send API（fake HTTP，含 platform message id）；真实飞书 E3 仍 BLOCKED。
 - 真实模型 + 真实 GitHub 只读取证已通过（repoId 1445007789，main 345faacf...，最终代码运行 3 observed findings、3 pending drafts、Verifier succeeded；此前的截断误报被 Verifier 拒绝）；记录见 [docs/acceptance/2026-11-22-real-project-review.md](acceptance/2026-11-22-real-project-review.md)。真实飞书入站/收件仍是 BLOCKED，不能据此标记 A5/E3 完成。
 
 ## 9. 2026-11-22 L2W-01：DraftSnapshot 生命周期
@@ -176,3 +176,10 @@ L2 需 GH01–06 与相关 GH09；L3 pilot 需 GH07–10 与相应 #41 原验收
 - 配置每日模型请求上限后才允许无人值守周期任务；单任务请求上限仍由 CallBudget 持久计数。
 - 本轮不自动启用周期项目写入；L2W 写入只能由 owner `/draft approve` 触发。
 - 仍缺真实 token/费用采集与 owner 确认的成本阈值；不宣称 #7 完全关闭。
+
+
+## 12. 2026-11-22 L2W-04：Feishu 全链路 E1
+
+- 新增确定性全链路回归：构造 Feishu 2.0 原始事件（`im.message.receive_v1`，owner p2p），经 `FeishuAdapter.parseRequest` 校验 token/app_id → Ingress → Router → ProjectBinding → Task → GitHub typed reads → findings/drafts → `project-review` Verifier → OutboxDispatcher → `FeishuAdapter.send`。
+- Fake Feishu HTTP 返回 tenant token 与 `data.message_id`；断言 Outbox 行 `accepted`、platform message id 存在、实际发送文本包含“项目评估（结构化证据已核对）”和“待办草稿”。
+- 这不是 E3：没有真实 Feishu 客户端入站/收件；真实 E3 仍按 [blocked record](acceptance/2026-11-22-l2-blocked.md) 由 owner 执行。
