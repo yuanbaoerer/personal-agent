@@ -62,6 +62,19 @@ describe("discussion-only guard", () => {
     assert.equal(isDiscussionOnly("先讨论，然后开始执行"), false);
     assert.equal(isDiscussionOnly("如果没问题就开始执行这个方案"), false);
     assert.equal(isDiscussionOnly("帮我创建一个后台任务分析状态"), false);
+
+    // "讨论/考虑" as content, not as an action framing.
+    assert.equal(isDiscussionOnly("帮我整理今天讨论的会议纪要"), false);
+    assert.equal(isDiscussionOnly("分析一下刚才讨论的方案"), false);
+    assert.equal(isDiscussionOnly("把这个讨论整理成一份报告"), false);
+    assert.equal(isDiscussionOnly("看一下昨天讨论的文档并整理要点"), false);
+    assert.equal(isDiscussionOnly("帮我想想怎么修复这个 bug 并改掉"), false);
+    assert.equal(isDiscussionOnly("别讨论了，帮我写一份实现方案"), false);
+    assert.equal(isDiscussionOnly("考虑过之后，我决定执行这个方案"), false);
+
+    // A negated clause followed by a different requested action.
+    assert.equal(isDiscussionOnly("不执行旧的方案，执行新的方案"), false);
+    assert.equal(isDiscussionOnly("不要做只读检查，直接执行完整方案"), false);
   });
 });
 

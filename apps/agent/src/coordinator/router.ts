@@ -221,10 +221,15 @@ const HYPOTHETICAL_PATTERN =
   /(?:^|[，。！？；、\s])(?:如果|假如|假设|要是|万一|倘若)/;
 const CAPABILITY_QUESTION_PATTERN =
   /(?:能不能|可不可以|会不会|是否|要不要|该不该|值不值得|行不行|有没有必要)/;
+// Only a discussion verb used as an action ("讨论一下", "先讨论，") frames
+// the message; nouns such as "今天讨论的会议纪要" and "考虑过" do not.
 const DISCUSSION_PATTERN =
-  /(?:(?:先|我们|咱们)?(?:讨论|聊聊|商量|想想|考虑)(?:一下)?|头脑风暴)/;
+  /(?:(?:先|我们|咱们)?(?:讨论|聊聊|商量|想想|考虑)(?:一下|下|吧)|(?:^|[，。！？；、\s])(?:先|我们|咱们)?(?:讨论|聊聊|商量|想想|考虑)(?:[，。！？；、\s]|$)|头脑风暴)/;
 const NEGATED_ACTION_PATTERN =
   /(?:不要|别|不用|不必|不|先不|暂时不|先别|无需|勿)(?:帮我|给我|去|现在|马上|直接)?(?:执行|开始|创建|做|跑|启动|写|发)/;
+// "不执行旧方案，执行新方案" negates one clause but still asks for work.
+const NEGATED_THEN_REQUEST_PATTERN =
+  /(?:不要|别|不用|不必|不|先不|暂时不|先别|无需|勿)[^。！？\n]{0,20}[，,、][^。！？\n]{0,20}(?:执行|开始|做|跑|启动|创建|写|发)/;
 
 /**
  * True for a message that only explores, supposes or declines work. The
@@ -237,8 +242,12 @@ export function isDiscussionOnly(text: string): boolean {
   if (value.length === 0) {
     return false;
   }
-  // "不要创建任务" contains an execution word; negation must win first.
-  if (NEGATED_ACTION_PATTERN.test(value)) {
+  // "不要创建任务" contains an execution word; negation must win first,
+  // unless a later clause asks for a different action.
+  if (
+    NEGATED_ACTION_PATTERN.test(value) &&
+    !NEGATED_THEN_REQUEST_PATTERN.test(value)
+  ) {
     return true;
   }
   if (EXPLICIT_EXECUTION_PATTERN.test(value)) {
@@ -2007,7 +2016,7 @@ export class Router implements InboundHandler {
       mandate,
     });
     this.#rememberTaskFocus(context.conversationId, task.id);
-    this.#reply(context, `已接单：${task.goal}\n项目：${project.projectKey}`, "ack");
+    this.#reply(context, `已接单：${task.goal}\n项目：${project.projectKey}`, "status");
     void this.#wake.wake();
     return true;
   }
