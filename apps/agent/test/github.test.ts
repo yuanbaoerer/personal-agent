@@ -874,6 +874,7 @@ describe("read-only GitHub connector", () => {
     credentials.register("github:project", {
       token: "project-token",
       scopes: ["repository.read"],
+      ownerId: "owner-1",
     });
     const calls: string[] = [];
     const tool = new GitHubReadTool({
