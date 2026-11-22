@@ -244,14 +244,13 @@ export class IssueDraftRepository {
   }
 
   expireDue(now: string): number {
-    const placeholders = ACTIVE_STATUSES.map(() => "?").join(", ");
+    // Only drafts that have not already been approved/executed may expire.
     return this.#db.run(
       `UPDATE pa_issue_drafts
        SET status = 'expired', updated_at = ?
-       WHERE expires_at <= ? AND status IN (${placeholders})`,
+       WHERE expires_at <= ? AND status IN ('draft', 'pending_approval')`,
       now,
       now,
-      ...ACTIVE_STATUSES,
     );
   }
 }

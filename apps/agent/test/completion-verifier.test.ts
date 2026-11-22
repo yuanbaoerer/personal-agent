@@ -1533,3 +1533,78 @@ describe("typed claim selection", () => {
     assert.equal(current?.verification?.missing.length, 0);
   });
 });
+
+describe("tree absence claims", () => {
+  it("does not treat a non-recursive tree read as proof of nested absence", () => {
+    const services = setup();
+    const task = createTask(services, {
+      mandateSkills: ["github.project-review"],
+      key: "review-tree-absence",
+    });
+    const assignment = claim(services);
+    const sha = "f".repeat(40);
+    insertSucceededGithubCustom(
+      services,
+      task.id,
+      assignment,
+      { operation: "tree", projectKey: "personal-agent", repo: "owner/repo", sha, recursive: false },
+      {
+        operation: "tree",
+        repo: "owner/repo",
+        projectKey: "personal-agent",
+        repositoryId: 101,
+        commitSha: sha,
+        source: `https://github.com/owner/repo/tree/${sha}`,
+        permanentUrl: `https://github.com/owner/repo/tree/${sha}`,
+        truncated: false,
+        items: [{ type: "blob", path: "README.md", sha: "a".repeat(40) }],
+      },
+    );
+    services.taskService.report(
+      assignment.assignment.id,
+      assignment.assignment.fencingToken,
+      assignment.assignment.taskRevision,
+      {
+        ...ready("review", [{ kind: "github", value: `https://github.com/owner/repo` }]),
+        githubClaims: [{
+          kind: "github_typed",
+          repo: "owner/repo",
+          projectKey: "personal-agent",
+          operation: "tree",
+          revision: sha,
+          target: "docs/25-extension-platform.md",
+          field: "exists",
+          value: false,
+        }],
+        findings: [{
+          id: "f1",
+          requirementRef: "docs/24 GH-04",
+          classification: "observed",
+          severity: "medium",
+          repositoryId: 101,
+          commitSha: sha,
+          evidenceRefs: [`https://github.com/owner/repo/tree/${sha}`],
+          expected: "docs/25.md absent",
+          actual: "root tree",
+          impact: "cannot prove nested absence",
+          existingIssueMatches: [],
+          suggestedAction: "recursive read",
+          coverage: "partial",
+        }],
+        issueDrafts: [{
+          action: "create",
+          title: "Check nested tree absence",
+          body: "Use recursive tree reads.",
+          findingIds: ["f1"],
+          requiresOwnerApproval: true,
+        }],
+      },
+    );
+    const current = services.tasks.get(task.id);
+    assert.equal(current?.status, "needs_review");
+    assert.match(
+      current?.verification?.missing.join(",") ?? "",
+      /github_typed_item_missing:tree/,
+    );
+  });
+});

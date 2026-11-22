@@ -424,7 +424,9 @@ function validateGithubTypedClaim(
     }
     if (claim.operation === "pull_files") {
       if (evidence.stale === true) {
-        return `github_typed_stale:${claim.operation}`;
+        // A retry can leave a stale receipt and a fresh one in the task.
+        missing ??= `github_typed_stale:${claim.operation}`;
+        continue;
       }
       if (
         typeof evidence.headSha !== "string" ||
@@ -442,7 +444,7 @@ function validateGithubTypedClaim(
         continue;
       }
     }
-    const result = matchTypedClaim(claim, evidence);
+    const result = matchTypedClaim(claim, evidence, action);
     if (
       result === undefined ||
       !result.startsWith("github_typed_item_missing:")
@@ -459,6 +461,7 @@ function validateGithubTypedClaim(
 function matchTypedClaim(
   claim: GithubTypedClaim,
   evidence: Record<string, unknown>,
+  action: ActionRecord,
 ): string | undefined {
   if (claim.operation === "file") {
     const item =
@@ -508,9 +511,17 @@ function matchTypedClaim(
         return undefined;
       }
       if (claim.value === false && item === undefined) {
-        return evidence.truncated === true
-          ? "github_typed_tree_truncated"
-          : undefined;
+        if (evidence.truncated === true) {
+          return "github_typed_tree_truncated";
+        }
+        if (
+          claim.target.includes("/") &&
+          action.args.recursive !== true
+        ) {
+          // A non-recursive tree only proves the root level.
+          return `github_typed_item_missing:tree:${claim.target}`;
+        }
+        return undefined;
       }
       return `github_typed_field_mismatch:tree:${claim.target}:exists`;
     }
