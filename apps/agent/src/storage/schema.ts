@@ -556,6 +556,71 @@ const migrations: readonly (readonly string[])[] = [
     `CREATE INDEX IF NOT EXISTS pa_outbox_conversation_idx
        ON pa_outbox (owner_id, channel, account_id, conversation_id, created_at)`,
   ],
+  [
+    // A versioned, bounded workflow plan under one Parent Task. Plans are
+    // drafts until the owner activates them; at most one version of a task
+    // is active, and old versions stay queryable for diffs and audit.
+    `CREATE TABLE pa_plans (
+      id TEXT PRIMARY KEY,
+      owner_id TEXT NOT NULL REFERENCES pa_identities(id),
+      parent_task_id TEXT NOT NULL REFERENCES pa_tasks(id),
+      task_revision INTEGER NOT NULL,
+      input_seq INTEGER NOT NULL,
+      plan_version INTEGER NOT NULL,
+      status TEXT NOT NULL CHECK (
+        status IN ('draft', 'active', 'paused', 'completed', 'cancelled', 'superseded')
+      ),
+      project_key TEXT,
+      approved_scope_ref TEXT,
+      budget_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE (parent_task_id, plan_version)
+    ) STRICT`,
+    `CREATE UNIQUE INDEX pa_plans_active_idx
+       ON pa_plans (parent_task_id) WHERE status = 'active'`,
+    `CREATE INDEX pa_plans_owner_idx
+       ON pa_plans (owner_id, updated_at DESC)`,
+    `CREATE TABLE pa_plan_steps (
+      id TEXT PRIMARY KEY,
+      plan_id TEXT NOT NULL REFERENCES pa_plans(id),
+      step_key TEXT NOT NULL,
+      ordinal INTEGER NOT NULL,
+      goal TEXT NOT NULL,
+      depends_on_json TEXT NOT NULL,
+      tools_json TEXT NOT NULL,
+      resources_json TEXT NOT NULL,
+      verifier_id TEXT NOT NULL,
+      max_attempts INTEGER NOT NULL,
+      timeout_ms INTEGER NOT NULL,
+      status TEXT NOT NULL CHECK (
+        status IN ('blocked', 'ready', 'running', 'completed', 'failed',
+                   'needs_review', 'cancelled')
+      ),
+      assignment_id TEXT,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      evidence_refs_json TEXT NOT NULL DEFAULT '[]',
+      last_error TEXT,
+      started_at TEXT,
+      completed_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE (plan_id, step_key)
+    ) STRICT`,
+    `CREATE INDEX pa_plan_steps_plan_idx
+       ON pa_plan_steps (plan_id, ordinal)`,
+    `CREATE TABLE pa_plan_diffs (
+      id TEXT PRIMARY KEY,
+      plan_id TEXT NOT NULL REFERENCES pa_plans(id),
+      from_version INTEGER NOT NULL,
+      to_version INTEGER NOT NULL,
+      diff_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE (plan_id, from_version, to_version)
+    ) STRICT`,
+    `CREATE INDEX pa_plan_diffs_plan_idx
+       ON pa_plan_diffs (plan_id, to_version DESC)`,
+  ],
 ];
 
 /** Highest schema version this build can read/migrate. */

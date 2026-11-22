@@ -235,6 +235,105 @@ export interface TaskRecord {
   updatedAt: string;
 }
 
+/**
+ * Persistent, versioned workflow plan. A plan never grants authority: every
+ * step is limited by the parent task Mandate and the live capability catalog.
+ */
+export type PlanStatus =
+  | "draft"
+  | "active"
+  | "paused"
+  | "completed"
+  | "cancelled"
+  | "superseded";
+
+export type PlanStepStatus =
+  | "blocked"
+  | "ready"
+  | "running"
+  | "completed"
+  | "failed"
+  | "needs_review"
+  | "cancelled";
+
+export interface PlanBudget {
+  /** Bounded to 3–5 because the first plan runtime only supports small DAGs. */
+  maxSteps: number;
+  maxAttemptsPerStep: number;
+  maxToolCalls?: number;
+  maxCostUsd?: number;
+  timeoutMs: number;
+}
+
+export interface PlanStepSpec {
+  /** Stable model-facing key, for example "A" or "collect-evidence". */
+  key: string;
+  goal: string;
+  dependsOn: string[];
+  /** Subset of the parent task mandate tools. */
+  tools: string[];
+  /** Subset of the parent task mandate resources, including tool resources. */
+  resources: string[];
+  verifierId: string;
+  maxAttempts?: number;
+  timeoutMs?: number;
+}
+
+export interface PlanRecord {
+  id: string;
+  ownerId: string;
+  parentTaskId: string;
+  /** Parent task revision this plan was drafted against. */
+  taskRevision: number;
+  /** Highest parent task input seq covered by this plan. */
+  inputSeq: number;
+  planVersion: number;
+  status: PlanStatus;
+  projectKey?: string;
+  /** Deterministic reference stamped on activation; absent for drafts. */
+  approvedScopeRef?: string;
+  budget: PlanBudget;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PlanStepRecord extends PlanStepSpec {
+  id: string;
+  planId: string;
+  ordinal: number;
+  maxAttempts: number;
+  timeoutMs: number;
+  status: PlanStepStatus;
+  assignmentId?: string;
+  attempts: number;
+  evidenceRefs: string[];
+  lastError?: string;
+  startedAt?: string;
+  completedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PlanView {
+  plan: PlanRecord;
+  steps: PlanStepRecord[];
+}
+
+export interface PlanStepDiff {
+  key: string;
+  change: "added" | "removed" | "changed" | "unchanged";
+  /** Changed field names, for example ["dependsOn", "tools"]. */
+  fields: string[];
+}
+
+export interface PlanDiff {
+  parentTaskId: string;
+  fromVersion: number;
+  toVersion: number;
+  steps: PlanStepDiff[];
+  createdAt: string;
+}
+
 export type CompletionVerdict = "succeeded" | "needs_review" | "failed";
 
 export interface TaskVerification {
