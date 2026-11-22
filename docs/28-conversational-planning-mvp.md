@@ -104,7 +104,7 @@ Owner message
 | CX-02 | Discussion → Plan Draft / Clarification / PlanDiff UX | CX-01 可并行 PLAN-01 schema | 全自动后台 | ✅ 已合并 #112（E1） |
 | PL-01 | Plan/Step Store + validated DAG + API/CLI | TaskService + #7/#28 守卫 | Organization Mode | ✅ 已合并 #108（E1） |
 | PL-02 | Dependent Step dispatch + verifier + budget fence | PL-01 | 未经许可的写入 | ✅ 已合并 #109（E1） |
-| PL-03 | Replan / pause / resume / cancellation / recovery | PL-02 | 无界递归 | ✅ 随 PL-02/CX-02 交付（有界 replan、暂停/恢复/取消、重启/孤儿清理、局部重试；E1） |
+| PL-03 | Replan / pause / resume / cancellation / recovery | PL-02 | 无界递归 | ✅ 随 PL-02/CX-02 交付（有界 replan、暂停/恢复/取消、重启/孤儿清理、局部重试；E1）。C06/C07 后续补齐：运行中补充生成新 active 版本 + PlanDiff；429/5xx/timeout/head 漂移有一次自动恢复版本，权限失败转 `needs_review`（E1，真实 E3 待重跑） |
 | ACC-01 | E1/E3/E4 真实验收和修复，维护效果指标 | CX/PL 与 #60/#62 | 仅凭 CI 宣称发布 | 🔶 前置检查 PASS；E3/E4 BLOCKED（#92 open） |
 | 并行现有业务线 | #60/#62 L2-R 项目真实感知、#68 账号、#7/#28 安全 | 独立 Workstream | 为聊天重造 GH Plugin | 按各自 Issue 独立推进 |
 

@@ -296,6 +296,8 @@ export interface PlanRecord {
   /** Highest parent task input seq covered by this plan. */
   inputSeq: number;
   planVersion: number;
+  /** Bounded automatic recovery replans already consumed by this lineage. */
+  autoReplans: number;
   status: PlanStatus;
   projectKey?: string;
   /** Deterministic reference stamped on activation; absent for drafts. */

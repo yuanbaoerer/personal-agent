@@ -752,21 +752,92 @@ describe("plan progress queries", () => {
     assert.equal(services.tasks.get(parent.id)?.planId, plans[0]?.id);
   });
 
-  it("refuses to revise an active plan through chat", async () => {
+  it("revises an active plan through chat and stops its open step", async () => {
     const { services, parent, planId } = setup();
+    const child = services.tasks.insert({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "plan-chat-revise-child",
+      goal: "running child",
+      completionCriteria: "provide a checked result",
+      mandate: { resources: ["chat"], tools: [] },
+      planId,
+      planStepKey: "A",
+      createdAt: NOW.toISOString(),
+    }).task;
+    assert.ok(services.plans.bindStepTask(planId, "A", child.id, NOW.toISOString()));
+    const revisedSteps = steps();
+    revisedSteps[1] = { ...revisedSteps[1]!, goal: "analyze revised evidence" };
     services.model.push({
       action: "revise_plan",
       text: "",
       taskId: parent.id,
       planId,
-      plan: { steps: steps() },
+      plan: { steps: revisedSteps },
     });
     await sendText(services, "改一下刚才的计划", "evt_revise_active");
-    assert.match(lastOutbox(services), /暂停|replan/);
-    assert.equal(
-      services.planService.get(services.owner.id, planId)?.plan.status,
-      "active",
+
+    assert.match(lastOutbox(services), /计划已更新为 v2/);
+    assert.match(lastOutbox(services), /PlanDiff v1 -> v2/);
+    assert.match(lastOutbox(services), /~ B\s+changed: goal/);
+    const plans = services.planService.list(services.owner.id, {
+      parentTaskId: parent.id,
+    });
+    assert.deepEqual(
+      plans.map((plan) => [plan.planVersion, plan.status]),
+      [
+        [2, "active"],
+        [1, "superseded"],
+      ],
     );
+    assert.notEqual(services.tasks.get(child.id)?.status, "queued");
+    assert.equal(services.tasks.get(parent.id)?.planId, plans[0]?.id);
+  });
+
+  it("turns a chat supplement into a new plan version with a PlanDiff", async () => {
+    const { services, parent, planId } = setup();
+    const child = services.tasks.insert({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "plan-supplement-child",
+      goal: "running child",
+      completionCriteria: "provide a checked result",
+      mandate: { resources: ["chat"], tools: [] },
+      planId,
+      planStepKey: "A",
+      createdAt: NOW.toISOString(),
+    }).task;
+    assert.ok(services.plans.bindStepTask(planId, "A", child.id, NOW.toISOString()));
+    services.model.push({
+      action: "supplement_task",
+      text: "only cite evidence, ignore GUI",
+      taskId: parent.id,
+    });
+
+    await sendText(
+      services,
+      "补充：只引用证据，忽略 GUI",
+      "evt_supplement_active_plan",
+    );
+
+    assert.match(lastOutbox(services), /补充任务/);
+    assert.match(lastOutbox(services), /计划已更新为 v2/);
+    assert.match(lastOutbox(services), /PlanDiff v1 -> v2/);
+    const plans = services.planService.list(services.owner.id, {
+      parentTaskId: parent.id,
+    });
+    assert.deepEqual(
+      plans.map((plan) => [plan.planVersion, plan.status]),
+      [
+        [2, "active"],
+        [1, "superseded"],
+      ],
+    );
+    const revised = services.planService.get(services.owner.id, plans[0]!.id);
+    assert.equal(revised?.plan.inputSeq, 1);
+    assert.match(revised?.steps[0]?.goal ?? "", /only cite evidence, ignore GUI/);
+    assert.notEqual(services.tasks.get(child.id)?.status, "queued");
+    assert.equal(services.tasks.get(parent.id)?.planId, plans[0]?.id);
   });
 
   it("does not expose another conversation's plan", async () => {

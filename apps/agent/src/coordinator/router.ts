@@ -1232,38 +1232,69 @@ export class Router implements InboundHandler {
           );
           return { status: "done" };
         }
-        if (source.status !== "draft") {
+        if (
+          source.status === "completed" ||
+          source.status === "cancelled" ||
+          source.status === "superseded"
+        ) {
           const short = source.id.slice(0, 8);
           const guidance =
-            source.status === "active"
-              ? `计划 ${short} 正在执行；/plan replan ${short} confirm 会停止当前步骤并重新激活，改步骤用 pa plans replan --file。`
-              : source.status === "paused"
-                ? this.#pausedPlanGuidance(source)
-                : source.status === "completed"
-                  ? `计划 ${short} 已完成，不能再修改；请新建草稿。`
-                  : source.status === "cancelled"
-                    ? `计划 ${short} 已取消，不能再修改；请新建草稿。`
-                    : `计划 ${short} 已被新版本替代，不能再修改；请使用最新版本或新建草稿。`;
+            source.status === "completed"
+              ? `计划 ${short} 已完成，不能再修改；请新建草稿。`
+              : source.status === "cancelled"
+                ? `计划 ${short} 已取消，不能再修改；请新建草稿。`
+                : `计划 ${short} 已被新版本替代，不能再修改；请使用最新版本或新建草稿。`;
           this.#reply(context, guidance, "clarify");
           return { status: "done" };
         }
         try {
-          const revised = this.#plans.revise(context.ownerId, source.id, {
-            steps: decision.plan.steps,
-            // Never silently reset/widen the stored budget.
-            budget: source.budget,
-          });
-          const diff = this.#plans.diff(
-            context.ownerId,
-            revised.plan.id,
-            source.planVersion,
-            revised.plan.planVersion,
-          );
-          this.#reply(
-            context,
-            `计划草稿已更新为 v${revised.plan.planVersion}（未执行）。\n${this.#planDiffText(diff)}`,
-            "status",
-          );
+          if (source.status === "active") {
+            // The owner's explicit revision is the authorization for this
+            // version. Stop the superseded child, then continue the new
+            // version under the same mandate and budget.
+            const revised = this.#plans.replan(
+              context.ownerId,
+              source.id,
+              {
+                steps: decision.plan.steps,
+                budget: source.budget,
+              },
+              {
+                stopOpenSteps: true,
+                allowNewerInput: true,
+                reason: "chat_revision",
+              },
+            );
+            this.#cancelPlanChildren(context.ownerId, source.id);
+            const diff = this.#plans.diff(
+              context.ownerId,
+              revised.plan.id,
+              source.planVersion,
+              revised.plan.planVersion,
+            );
+            this.#reply(
+              context,
+              `计划已更新为 v${revised.plan.planVersion} 并继续执行。\n${this.#planDiffText(diff)}`,
+              "status",
+            );
+          } else {
+            const revised = this.#plans.revise(context.ownerId, source.id, {
+              steps: decision.plan.steps,
+              // Never silently reset/widen the stored budget.
+              budget: source.budget,
+            });
+            const diff = this.#plans.diff(
+              context.ownerId,
+              revised.plan.id,
+              source.planVersion,
+              revised.plan.planVersion,
+            );
+            this.#reply(
+              context,
+              `计划草稿已更新为 v${revised.plan.planVersion}（未执行）。\n${this.#planDiffText(diff)}`,
+              "status",
+            );
+          }
         } catch (error) {
           this.#reply(
             context,
@@ -1595,6 +1626,53 @@ export class Router implements InboundHandler {
         text: `该补充已受理（输入 #${added.input.seq}）。`,
       };
     }
+    const active = this.#plans?.activeForTask(ownerId, added.task.id);
+    if (active !== undefined) {
+      try {
+        const revised = this.#plans?.replanForSupplement(
+          ownerId,
+          active.plan.id,
+          text,
+        );
+        if (revised !== undefined) {
+          this.#cancelPlanChildren(ownerId, active.plan.id);
+          const diff = this.#plans?.diff(
+            ownerId,
+            revised.plan.id,
+            active.plan.planVersion,
+            revised.plan.planVersion,
+          );
+          return {
+            purpose: "status",
+            text:
+              `已补充任务 ${added.task.id.slice(0, 8)}（输入 #${added.input.seq}）。` +
+              `计划已更新为 v${revised.plan.planVersion} 并继续执行。` +
+              (diff === undefined ? "" : `\n${this.#planDiffText(diff)}`),
+          };
+        }
+      } catch (error) {
+        const current = this.#plans?.activeForTask(ownerId, added.task.id);
+        if (
+          current !== undefined &&
+          current.plan.id !== active.plan.id &&
+          current.plan.inputSeq >= added.input.seq
+        ) {
+          return {
+            purpose: "status",
+            text:
+              `已补充任务 ${added.task.id.slice(0, 8)}（输入 #${added.input.seq}）。` +
+              `计划已更新为 v${current.plan.planVersion} 并继续执行。`,
+          };
+        }
+        return {
+          purpose: "status",
+          text:
+            `已补充任务 ${added.task.id.slice(0, 8)}（输入 #${added.input.seq}），` +
+            `但计划未能立即更新：${error instanceof Error ? error.message : String(error)}。` +
+            "计划会在条件满足后重试，或请用 /plan 查看。",
+        };
+      }
+    }
     const timing =
       added.task.status === "running"
         ? "当前 Worker 的旧结果不会生效；结束后会按最新输入重新执行。"
@@ -1605,6 +1683,36 @@ export class Router implements InboundHandler {
       purpose: "status",
       text: `已补充任务 ${added.task.id.slice(0, 8)}（输入 #${added.input.seq}），${timing}`,
     };
+  }
+
+  #cancelPlanChildren(ownerId: string, planId: string): void {
+    const view = this.#plans?.get(ownerId, planId);
+    if (view === undefined) {
+      return;
+    }
+    for (const step of view.steps) {
+      if (step.taskId === undefined) {
+        continue;
+      }
+      const child = this.#tasks.get(step.taskId);
+      if (
+        child === undefined ||
+        child.status === "cancelled" ||
+        child.status === "succeeded" ||
+        child.status === "failed"
+      ) {
+        continue;
+      }
+      try {
+        this.#taskService.cancel(child.id);
+      } catch (error) {
+        console.warn("plan_child_cancel_failed", {
+          planId,
+          taskId: child.id,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
   }
 
   statusText(ownerId: string): string {
@@ -2691,9 +2799,6 @@ export class Router implements InboundHandler {
       if (view === undefined) {
         return [{ purpose: "failure", text: "计划不存在。" }];
       }
-      const runningTaskIds = view.steps
-        .filter((step) => step.status === "running" && step.taskId !== undefined)
-        .map((step) => step.taskId as string);
       try {
         // Validation and the step-status change happen inside replan's
         // transaction; child tasks are stopped only after the new version is
@@ -2715,22 +2820,9 @@ export class Router implements InboundHandler {
               timeoutMs: step.timeoutMs,
             })),
           },
-          { stopOpenSteps: true },
+          { stopOpenSteps: true, reason: "owner_replan" },
         );
-        for (const taskId of runningTaskIds) {
-          const child = this.#tasks.get(taskId);
-          if (child === undefined || child.status === "cancelled" || child.status === "succeeded" || child.status === "failed") {
-            continue;
-          }
-          try {
-            this.#taskService.cancel(child.id);
-          } catch (error) {
-            console.warn("plan_replan_child_cancel_failed", {
-              taskId: child.id,
-              message: error instanceof Error ? error.message : String(error),
-            });
-          }
-        }
+        this.#cancelPlanChildren(ownerId, resolved.id);
         return [
           {
             purpose: "status",
@@ -2875,7 +2967,7 @@ export class Router implements InboundHandler {
     const current = steps.find((step) => step.status === "running");
     const next = steps.find((step) => step.status === "ready");
     return [
-      `计划 ${plan.id.slice(0, 8)}  v${plan.planVersion}  ${plan.status}  task=${plan.parentTaskId.slice(0, 8)} rev=${plan.taskRevision} input=${plan.inputSeq}`,
+      `计划 ${plan.id.slice(0, 8)}  v${plan.planVersion}  ${plan.status}  task=${plan.parentTaskId.slice(0, 8)} rev=${plan.taskRevision} input=${plan.inputSeq} auto=${plan.autoReplans}`,
       `预算 steps<=${plan.budget.maxSteps} attempts<=${plan.budget.maxAttemptsPerStep} timeout=${plan.budget.timeoutMs}ms${plan.budget.maxToolCalls === undefined ? "" : ` calls<=${plan.budget.maxToolCalls}`}${plan.budget.maxCostUsd === undefined ? "" : ` cost<=$${plan.budget.maxCostUsd}`}`,
       `scope=${plan.approvedScopeRef ?? "-"}  project=${plan.projectKey ?? "-"}`,
       current === undefined ? "当前：无运行中步骤" : `当前：${current.key} ${current.goal.slice(0, 120)}`,

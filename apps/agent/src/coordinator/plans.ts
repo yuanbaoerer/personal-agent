@@ -18,6 +18,8 @@ import type { ActionRepository } from "../storage/actions.ts";
 export const PLAN_MIN_STEPS = 3;
 export const PLAN_MAX_STEPS = 5;
 export const PLAN_MAX_ATTEMPTS_PER_STEP = 3;
+/** One automatic recovery replan per plan lineage; the owner can still replan. */
+export const PLAN_MAX_AUTO_REPLANS = 1;
 export const PLAN_DEFAULT_TIMEOUT_MS = 300_000;
 export const PLAN_MAX_TIMEOUT_MS = 3_600_000;
 
@@ -30,6 +32,7 @@ export type PlanErrorCode =
   | "task_revision_changed"
   | "stale_task_input"
   | "conflict_active_plan"
+  | "replan_exhausted"
   | "invalid_transition";
 
 export class PlanError extends Error {
@@ -388,6 +391,20 @@ function planStepsToSpecs(steps: readonly PlanStepRecord[]): Required<PlanStepSp
   }));
 }
 
+function boundedNote(text: string, max = 240): string {
+  const oneLine = text.replace(/\s+/gu, " ").trim();
+  return oneLine.length <= max ? oneLine : `${oneLine.slice(0, max - 1)}…`;
+}
+
+/** Keep the original goal as far as possible while staying under the 500-char limit. */
+function appendGoalNote(goal: string, note: string): string {
+  const suffix = `\n\n${note}`;
+  if (goal.length + suffix.length <= 500) {
+    return `${goal}${suffix}`;
+  }
+  return `${goal.slice(0, Math.max(0, 500 - suffix.length))}${suffix}`;
+}
+
 export function diffPlanSteps(
   from: readonly PlanStepRecord[],
   to: readonly PlanStepRecord[],
@@ -469,6 +486,7 @@ export class PlanService {
         taskRevision: task.revision,
         inputSeq: this.#plans.maxInputSeq(task.id),
         planVersion: (latest?.planVersion ?? 0) + 1,
+        autoReplans: 0,
         status: "draft",
         projectKey: task.mandate.project,
         budget: spec.budget,
@@ -534,6 +552,7 @@ export class PlanService {
         taskRevision: task.revision,
         inputSeq: this.#plans.maxInputSeq(task.id),
         planVersion,
+        autoReplans: source.autoReplans,
         status: "draft",
         projectKey: task.mandate.project,
         budget: spec.budget,
@@ -584,7 +603,15 @@ export class PlanService {
     ownerId: string,
     planId: string,
     input: PlanSpecInput,
-    options: { stopOpenSteps?: boolean } = {},
+    options: {
+      stopOpenSteps?: boolean;
+      /** A supplement/recovery replan intentionally covers the latest input. */
+      allowNewerInput?: boolean;
+      /** Audit reason: owner command, chat revision, supplement, or recovery. */
+      reason?: string;
+      /** Only the automatic recovery path advances this counter. */
+      autoReplans?: number;
+    } = {},
   ): PlanView {
     const source = this.#ownedPlan(ownerId, planId);
     if (source.status !== "paused" && source.status !== "active") {
@@ -602,7 +629,7 @@ export class PlanService {
       throw new PlanError("task_revision_changed", "parent task revision changed");
     }
     const latestInput = this.#plans.maxInputSeq(task.id);
-    if (latestInput > source.inputSeq) {
+    if (latestInput > source.inputSeq && options.allowNewerInput !== true) {
       throw new PlanError("stale_task_input", "parent task has newer input");
     }
     const oldSteps = this.#plans.listSteps(source.id);
@@ -690,6 +717,7 @@ export class PlanService {
         taskRevision: task.revision,
         inputSeq: this.#plans.maxInputSeq(task.id),
         planVersion: (latest?.planVersion ?? source.planVersion) + 1,
+        autoReplans: options.autoReplans ?? source.autoReplans,
         status: "active",
         projectKey: task.mandate.project,
         approvedScopeRef: `task:${task.id}:rev:${task.revision}:plan:${(latest?.planVersion ?? source.planVersion) + 1}`,
@@ -751,12 +779,111 @@ export class PlanService {
       this.#plans.insertDiff(plan.id, diff);
       return { plan, steps };
     });
-    this.#audit("plan.replanned", view.plan, {
-      fromVersion: source.planVersion,
-      fromPlanId: source.id,
-    });
+    this.#audit(
+      options.reason === "external_failure" ? "plan.auto_replanned" : "plan.replanned",
+      view.plan,
+      {
+        fromVersion: source.planVersion,
+        fromPlanId: source.id,
+        reason: options.reason ?? "owner",
+        autoReplans: view.plan.autoReplans,
+      },
+    );
     this.#onLifecycle?.(view.plan.id);
     return view;
+  }
+
+  /**
+   * A mid-run supplement changes the owner's constraints, not the plan's
+   * authority. Append it to every unexecuted step, keep completed steps and
+   * the budget intact, and continue under a new durable version.
+   */
+  replanForSupplement(ownerId: string, planId: string, text: string): PlanView {
+    const source = this.#ownedPlan(ownerId, planId);
+    if (source.status !== "active") {
+      throw new PlanError(
+        "invalid_transition",
+        `cannot revise a ${source.status} plan from a supplement`,
+      );
+    }
+    const latestInput = this.#plans.maxInputSeq(source.parentTaskId);
+    if (latestInput <= source.inputSeq) {
+      throw new PlanError("stale_task_input", "supplement has not advanced the task input");
+    }
+    const constraint = boundedNote(text);
+    if (constraint.length === 0) {
+      throw new PlanError("invalid_plan", "supplement text is empty");
+    }
+    const steps = this.#annotatedSteps(
+      source,
+      `Owner constraint (input #${latestInput}): ${constraint}`,
+    );
+    return this.replan(
+      ownerId,
+      planId,
+      { steps, budget: source.budget },
+      {
+        stopOpenSteps: true,
+        allowNewerInput: true,
+        reason: "supplement",
+      },
+    );
+  }
+
+  /**
+   * One bounded recovery version for a retryable external failure. Only the
+   * failed step's goal receives the recovery note; the lineage counter stops
+   * a second automatic attempt, after which the owner decides. The budget
+   * object is unchanged; the counter is the explicit bound on the extra
+   * attempt a successor version gets.
+   */
+  autoReplanAfterFailure(
+    ownerId: string,
+    planId: string,
+    reason: string,
+    options: { stepKey?: string } = {},
+  ): PlanView {
+    const source = this.#ownedPlan(ownerId, planId);
+    if (source.autoReplans >= PLAN_MAX_AUTO_REPLANS) {
+      throw new PlanError(
+        "replan_exhausted",
+        "automatic recovery was already used for this plan lineage",
+      );
+    }
+    if (source.status !== "active" && source.status !== "paused") {
+      throw new PlanError("invalid_transition", `cannot replan a ${source.status} plan`);
+    }
+    const knownSteps = this.#plans.listSteps(source.id);
+    const failedKeys = new Set(
+      knownSteps
+        .filter((step) => step.status === "failed")
+        .map((step) => step.key),
+    );
+    if (options.stepKey !== undefined) {
+      if (!knownSteps.some((step) => step.key === options.stepKey)) {
+        throw new PlanError("invalid_plan", `step ${options.stepKey} does not exist`);
+      }
+      failedKeys.add(options.stepKey);
+    }
+    if (failedKeys.size === 0) {
+      throw new PlanError("invalid_transition", "no failed step to recover");
+    }
+    const steps = this.#annotatedSteps(
+      source,
+      `Automatic recovery after external failure: ${boundedNote(reason)}. ` +
+        "Re-read the external state before retrying; never repeat an unverified side effect.",
+      failedKeys,
+    );
+    return this.replan(
+      ownerId,
+      planId,
+      { steps, budget: source.budget },
+      {
+        stopOpenSteps: true,
+        reason: "external_failure",
+        autoReplans: source.autoReplans + 1,
+      },
+    );
   }
 
   activate(ownerId: string, planId: string): PlanView {
@@ -959,6 +1086,29 @@ export class PlanService {
     this.#audit(event, view.plan, {});
     this.#onLifecycle?.(view.plan.id);
     return view;
+  }
+
+  #annotatedSteps(
+    source: PlanRecord,
+    note: string,
+    onlyKeys?: ReadonlySet<string>,
+  ): Required<PlanStepSpec>[] {
+    return this.#plans.listSteps(source.id).map((step) => {
+      const annotate =
+        step.status !== "completed" &&
+        (onlyKeys === undefined || onlyKeys.has(step.key));
+      return {
+        key: step.key,
+        goal: annotate ? appendGoalNote(step.goal, note) : step.goal,
+        dependsOn: step.dependsOn,
+        tools: step.tools,
+        resources: step.resources,
+        verifierId: step.verifierId,
+        completionCriteria: step.completionCriteria,
+        maxAttempts: step.maxAttempts,
+        timeoutMs: step.timeoutMs,
+      };
+    });
   }
 
   #task(ownerId: string, taskId: string): TaskRecord {

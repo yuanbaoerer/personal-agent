@@ -190,6 +190,19 @@ export class TaskService {
     this.#proposer = proposer;
   }
 
+  /** Host services may report a deterministic transition through the same outbox. */
+  notify(
+    taskId: string,
+    purpose: "status" | "clarify" | "result" | "failure",
+    text: string,
+    suffix: string,
+  ): void {
+    const task = this.#tasks.get(taskId);
+    if (task !== undefined) {
+      this.#reply(task, purpose, text, suffix);
+    }
+  }
+
   install(dispatcher: EffectDispatcher): void {
     dispatcher.register("task.dispatch", (effect) => this.handleDispatch(effect.payload));
     dispatcher.register("assignment.wait", (effect) =>
