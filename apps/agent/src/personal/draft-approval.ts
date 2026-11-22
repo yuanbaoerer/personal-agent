@@ -282,6 +282,11 @@ export class IssueDraftApprovalBridge {
       expectedTaskRevision: proposed.action.taskRevision,
     });
     if (!approved.ok) {
+      this.#actionService.revokeApproval(
+        proposed.action.id,
+        "approval_failed",
+        input.actorId,
+      );
       this.#taskService.finishExternalAction(task.id, {
         status: "failed",
         summary: `动作批准失败：${approved.reason ?? "unknown"}`,
