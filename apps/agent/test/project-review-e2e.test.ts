@@ -924,3 +924,78 @@ describe("draft pre-state fidelity", () => {
     assert.equal(result.recorded[0]?.beforeSummary, body);
   });
 });
+
+describe("draft credential epoch binding", () => {
+  it("stores the epoch used by evidence and supersedes after a later rotation", () => {
+    const { services, credentials } = setup();
+    const task = services.taskService.createExternalActionTask({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "draft:credential-epoch",
+      goal: "review",
+      completionCriteria: "done",
+      mandate: {
+        resources: ["chat"],
+        tools: [],
+        project: PROJECT_KEY,
+        skills: ["github.project-review"],
+      },
+    });
+    const action = {
+      tool: "github.read",
+      status: "succeeded",
+      args: { operation: "file", repo: REPO, sha: MAIN_SHA, path: PLAN_PATH },
+      evidence: {
+        operation: "file",
+        commitSha: MAIN_SHA,
+        repositoryId: REPOSITORY_ID,
+        permanentUrl: `https://github.com/${REPO}/blob/${MAIN_SHA}/${PLAN_PATH}`,
+        credentialVersion: 1,
+        item: { type: "file", path: PLAN_PATH },
+      },
+    } as unknown as ActionRecord;
+    const recorded = services.issueDrafts.recordVerified({
+      task,
+      assignment: { id: "assignment:credential-epoch" } as AssignmentRecord,
+      findings: [
+        {
+          id: "f1",
+          requirementRef: "GH-04",
+          classification: "observed",
+          severity: "high",
+          repositoryId: REPOSITORY_ID,
+          commitSha: MAIN_SHA,
+          evidenceRefs: [String(action.evidence?.permanentUrl)],
+          expected: "x",
+          actual: "y",
+          impact: "z",
+          existingIssueMatches: [],
+          suggestedAction: "create",
+        },
+      ],
+      drafts: [
+        {
+          action: "create",
+          title: "Epoch bound draft",
+          body: "body",
+          findingIds: ["f1"],
+          idempotencyKey: "a".repeat(31) + "1",
+          requiresOwnerApproval: true,
+        },
+      ],
+      actions: [action],
+    });
+    assert.equal(recorded.recorded[0]?.credentialVersion, 1);
+    credentials.rotate("github:default", {
+      token: "project-token-2",
+      scopes: ["repository.read"],
+      ownerId: services.owner.id,
+      repositoryIds: [REPOSITORY_ID],
+    });
+    assert.equal(
+      services.issueDrafts.get(services.owner.id, recorded.recorded[0]?.id ?? "")
+        ?.status,
+      "superseded",
+    );
+  });
+});

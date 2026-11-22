@@ -139,6 +139,15 @@ export class IssueDraftApprovalBridge {
     ) {
       return { ok: false, reason: "credential_changed", draft };
     }
+    const tool = TOOL_FOR_ACTION[draft.action];
+    const info = this.#capabilities.toolInfo(tool);
+    if (
+      info === undefined ||
+      info.readOnly !== false ||
+      !info.permissions.includes("issues.write")
+    ) {
+      return { ok: false, reason: "issue_write_capability_unavailable", draft };
+    }
     const revision = await this.#currentRevision(draft, input.ownerId);
     if (!revision.ok) {
       return { ok: false, reason: revision.reason, draft };
@@ -173,15 +182,6 @@ export class IssueDraftApprovalBridge {
             ? draft
             : this.#draftService.get(input.ownerId, draft.id),
       };
-    }
-    const tool = TOOL_FOR_ACTION[draft.action];
-    const info = this.#capabilities.toolInfo(tool);
-    if (
-      info === undefined ||
-      info.readOnly !== false ||
-      !info.permissions.includes("issues.write")
-    ) {
-      return { ok: false, reason: "issue_write_capability_unavailable", draft };
     }
 
     const task = this.#taskService.createExternalActionTask({
@@ -221,6 +221,28 @@ export class IssueDraftApprovalBridge {
     if (proposed.action.status === "succeeded") {
       // A replay of the same approval after the write already landed.
       this.#drafts.updateStatus(draft.id, "approved", this.#now().toISOString());
+      return {
+        ok: true,
+        draft: this.#draftService.get(input.ownerId, draft.id),
+        action: proposed.action,
+        taskId: task.id,
+      };
+    }
+    if (
+      proposed.action.status === "approved" ||
+      proposed.action.status === "executing" ||
+      proposed.action.status === "unknown" ||
+      proposed.action.status === "reconciling"
+    ) {
+      // A crash after approval but before the draft status update is
+      // recoverable: keep the same action, mark the draft executing.
+      this.#drafts.updateStatus(
+        draft.id,
+        "executing",
+        this.#now().toISOString(),
+        { writeTaskId: task.id, writeActionId: proposed.action.id },
+        ["pending_approval"],
+      );
       return {
         ok: true,
         draft: this.#draftService.get(input.ownerId, draft.id),
