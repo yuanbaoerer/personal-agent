@@ -103,3 +103,20 @@ After the review fixes (title+body beforeHash, read/write credential separation,
 - Still no Feishu delivery and no GitHub write.
 
 A preceding run on the same branch (`DKYGOt`) was correctly rejected by the Verifier because an observed finding cited a truncated PR-files receipt with `coverage=complete` and `truncated=false`. The Verifier was not relaxed; the prompt now requires checking the receipt truncation flag and using `limit=100` for PR files.
+
+## Merged-main verification (2026-11-22)
+
+After all four PRs and the typed-claim fix were merged, the same real-model/read-only run was repeated on `main` at `19427b032939754208c28022f1094c7bd3292315`.
+
+- Task: `83b80321-d3f0-4bb9-ae37-bc553071865d` → `succeeded`
+- repositoryId `1445007789`; main `19427b03…`
+- Verifier: `project-review`, 3 observed / 0 inferred / 0 unknown, `missing=[]`
+- `externalFactsVerified=false`: citations and declared claims were checked, but narrative conclusions are explicitly marked unverified by the merged verifier.
+- Checked claims: `file.exists`, four `checks.conclusion`, four `issues.state`.
+- Drafts (all `pending_approval`, commit `19427b03…`):
+  - `4ab93a58-0069-4562-881b-c73a3eaf92a7` comment #62
+  - `71935337-853d-479a-bc00-40a1bc0b5341` comment #60
+  - `aa74b3f4-9173-4955-b87e-479987c38a88` comment #64
+- No GitHub write and no Feishu delivery.
+
+This supersedes the earlier pre-merge run for current-main behavior. The earlier run is retained to show the pre-merge verifier semantics.
