@@ -1,0 +1,479 @@
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+
+import { PlanError, PlanService, resolvePlanSpec } from "../src/coordinator/plans.ts";
+import type {
+  ConversationRecord,
+  OwnerIdentity,
+  PlanStepSpec,
+  TaskRecord,
+} from "../src/domain/types.ts";
+import type { CapabilityView } from "../src/plugins/fence.ts";
+import { PlanRepository } from "../src/storage/plans.ts";
+import { TaskRepository } from "../src/storage/tasks.ts";
+import type { Store } from "../src/storage/store.ts";
+import { createStore } from "./helpers.ts";
+
+const APP = "app_1";
+const NOW = "2026-01-01T00:00:00.000Z";
+
+function bindOwner(store: Store, actorId: string): OwnerIdentity {
+  return (
+    store.findOwner("feishu", APP, actorId) ??
+    store.bindOwner({
+      channel: "feishu",
+      accountId: APP,
+      actorId,
+      verifiedAt: NOW,
+    })
+  );
+}
+
+function conversation(store: Store, owner: OwnerIdentity): ConversationRecord {
+  return store.upsertConversation({
+    ownerId: owner.id,
+    channel: "feishu",
+    accountId: APP,
+    platformConversationId: "oc_plans",
+    kind: "p2p",
+    createdAt: NOW,
+  });
+}
+
+function capabilities(overrides: Partial<CapabilityView> = {}): CapabilityView {
+  const tools = overrides.toolNames?.() ?? ["github.read", "state.summary"];
+  const resources = overrides.resources?.() ?? ["chat", "github", "state"];
+  const mapping: Record<string, string> = {
+    "github.read": "github",
+    "state.summary": "state",
+  };
+  return {
+    generation: () => 1,
+    toolNames: () => tools,
+    resources: () => resources,
+    resourceForTool: (name) => mapping[name],
+    toolInfo: () => undefined,
+    ...overrides,
+  };
+}
+
+function makeTask(
+  store: Store,
+  owner: OwnerIdentity,
+  conv: ConversationRecord,
+  options: { goal?: string; budget?: Record<string, unknown>; mandate?: TaskRecord["mandate"] } = {},
+): TaskRecord {
+  return new TaskRepository(store.db).insert({
+    ownerId: owner.id,
+    conversationId: conv.id,
+    sourceKey: `task:${Math.random().toString(36).slice(2)}`,
+    goal: options.goal ?? "parent goal",
+    completionCriteria: "criteria",
+    mandate: options.mandate ?? {
+      resources: ["chat", "github", "state"],
+      tools: ["github.read", "state.summary"],
+    },
+    budget: options.budget,
+    createdAt: NOW,
+  }).task;
+}
+
+function steps(): PlanStepSpec[] {
+  return [
+    {
+      key: "A",
+      goal: "read evidence",
+      dependsOn: [],
+      tools: ["github.read"],
+      resources: ["github"],
+      verifierId: "project-review",
+    },
+    {
+      key: "B",
+      goal: "read state",
+      dependsOn: ["A"],
+      tools: ["state.summary"],
+      resources: ["state"],
+      verifierId: "state-read",
+    },
+    {
+      key: "C",
+      goal: "summarize",
+      dependsOn: ["A"],
+      tools: [],
+      resources: [],
+      verifierId: "text-report",
+    },
+  ];
+}
+
+function setup() {
+  const store = createStore();
+  const owner = bindOwner(store, "ou_owner");
+  const conv = conversation(store, owner);
+  const task = makeTask(store, owner, conv);
+  const service = new PlanService({
+    store,
+    plans: new PlanRepository(store.db),
+    tasks: new TaskRepository(store.db),
+    capabilities: capabilities(),
+    now: () => new Date(NOW),
+  });
+  return { store, owner, conv, task, service };
+}
+
+function codeOf(fn: () => unknown): string | undefined {
+  try {
+    fn();
+    return undefined;
+  } catch (error) {
+    return error instanceof PlanError ? error.code : `unexpected:${String(error)}`;
+  }
+}
+
+describe("plan validation", () => {
+  it("accepts a three-step DAG inside the parent mandate", () => {
+    const { task } = setup();
+    const spec = resolvePlanSpec({ steps: steps() }, task, capabilities());
+    assert.equal(spec.steps.length, 3);
+    assert.equal(spec.budget.maxSteps, 3);
+    assert.equal(spec.budget.maxAttemptsPerStep, 1);
+  });
+
+  it("rejects size, duplicate keys, unknown dependencies and cycles", () => {
+    const { task } = setup();
+    const two = steps().slice(0, 2);
+    assert.equal(codeOf(() => resolvePlanSpec({ steps: two }, task, capabilities())), "invalid_plan");
+
+    const duplicate = steps();
+    duplicate[1] = { ...duplicate[1]!, key: "A" };
+    assert.equal(
+      codeOf(() => resolvePlanSpec({ steps: duplicate }, task, capabilities())),
+      "invalid_plan",
+    );
+
+    const unknown = steps();
+    unknown[1] = { ...unknown[1]!, dependsOn: ["missing"] };
+    assert.equal(
+      codeOf(() => resolvePlanSpec({ steps: unknown }, task, capabilities())),
+      "invalid_plan",
+    );
+
+    const cycle = steps();
+    cycle[0] = { ...cycle[0]!, dependsOn: ["C"] };
+    cycle[1] = { ...cycle[1]!, dependsOn: ["A"] };
+    cycle[2] = { ...cycle[2]!, dependsOn: ["B"] };
+    assert.equal(
+      codeOf(() => resolvePlanSpec({ steps: cycle }, task, capabilities())),
+      "invalid_plan",
+    );
+  });
+
+  it("never lets a plan widen the parent mandate or the live catalog", () => {
+    const { task } = setup();
+    const outsideTool = steps();
+    outsideTool[0] = { ...outsideTool[0]!, tools: ["github.write"] };
+    assert.equal(
+      codeOf(() => resolvePlanSpec({ steps: outsideTool }, task, capabilities())),
+      "invalid_plan",
+    );
+
+    const outsideResource = steps();
+    outsideResource[0] = { ...outsideResource[0]!, resources: ["weather"] };
+    assert.equal(
+      codeOf(() => resolvePlanSpec({ steps: outsideResource }, task, capabilities())),
+      "invalid_plan",
+    );
+
+    const missingToolResource = steps();
+    missingToolResource[0] = { ...missingToolResource[0]!, resources: [] };
+    assert.equal(
+      codeOf(() => resolvePlanSpec({ steps: missingToolResource }, task, capabilities())),
+      "invalid_plan",
+    );
+
+    const disabledTool = steps();
+    assert.equal(
+      codeOf(() =>
+        resolvePlanSpec(
+          { steps: disabledTool },
+          task,
+          capabilities({ toolNames: () => ["state.summary"] }),
+        ),
+      ),
+      "invalid_plan",
+    );
+  });
+
+  it("bounds attempts, step timeout and cost against the parent budget", () => {
+    const { task } = setup();
+    const tooMany = steps();
+    tooMany[0] = { ...tooMany[0]!, maxAttempts: 3 };
+    assert.equal(
+      codeOf(() => resolvePlanSpec({ steps: tooMany, budget: { maxAttemptsPerStep: 1 } }, task, capabilities())),
+      "invalid_plan",
+    );
+
+    const tooLong = steps();
+    tooLong[0] = { ...tooLong[0]!, timeoutMs: 999_999 };
+    assert.equal(
+      codeOf(() => resolvePlanSpec({ steps: tooLong, budget: { timeoutMs: 60_000 } }, task, capabilities())),
+      "invalid_plan",
+    );
+
+    const { store, owner, conv } = setup();
+    const budgetTask = makeTask(store, owner, conv, { budget: { maxCostUsd: 1 } });
+    assert.equal(
+      codeOf(() =>
+        resolvePlanSpec(
+          { steps: steps(), budget: { maxCostUsd: 2 } },
+          budgetTask,
+          capabilities(),
+        ),
+      ),
+      "invalid_plan",
+    );
+  });
+});
+
+describe("plan lifecycle", () => {
+  it("creates a draft with blocked steps and activates only roots", () => {
+    const { store, owner, task, service } = setup();
+    const draft = service.create(owner.id, task.id, { steps: steps() });
+
+    assert.equal(draft.plan.status, "draft");
+    assert.equal(draft.plan.planVersion, 1);
+    assert.equal(draft.plan.taskRevision, task.revision);
+    assert.equal(draft.plan.inputSeq, 0);
+    assert.ok(draft.steps.every((step) => step.status === "blocked"));
+    assert.equal(draft.plan.approvedScopeRef, undefined);
+
+    const active = service.activate(owner.id, draft.plan.id);
+    assert.equal(active.plan.status, "active");
+    assert.equal(
+      active.plan.approvedScopeRef,
+      `task:${task.id}:rev:${task.revision}:plan:1`,
+    );
+    assert.deepEqual(
+      active.steps.map((step) => [step.key, step.status]),
+      [
+        ["A", "ready"],
+        ["B", "blocked"],
+        ["C", "blocked"],
+      ],
+    );
+    const events = store.listAuditAfter(0, 50).map((item) => item.event);
+    assert.ok(events.includes("plan.created"));
+    assert.ok(events.includes("plan.activated"));
+  });
+
+  it("refuses activation when the task revision or input advanced", () => {
+    const { store, owner, task, service } = setup();
+    const draft = service.create(owner.id, task.id, { steps: steps() });
+    new TaskRepository(store.db).addInput({
+      taskId: task.id,
+      text: "new constraint",
+      actorId: owner.actorId,
+      createdAt: NOW,
+    });
+    assert.equal(codeOf(() => service.activate(owner.id, draft.plan.id)), "stale_task_input");
+
+    const second = service.create(owner.id, task.id, { steps: steps() });
+    new TaskRepository(store.db).revise(task.id, { goal: "new goal" }, NOW);
+    assert.equal(
+      codeOf(() => service.activate(owner.id, second.plan.id)),
+      "task_revision_changed",
+    );
+  });
+
+  it("rejects a second active plan for the same task", () => {
+    const { owner, task, service } = setup();
+    const first = service.create(owner.id, task.id, { steps: steps() });
+    service.activate(owner.id, first.plan.id);
+    const second = service.create(owner.id, task.id, { steps: steps() });
+    assert.equal(
+      codeOf(() => service.activate(owner.id, second.plan.id)),
+      "conflict_active_plan",
+    );
+  });
+
+  it("revision supersedes the old version and records a diff", () => {
+    const { store, owner, task, service } = setup();
+    const first = service.create(owner.id, task.id, { steps: steps() });
+    service.activate(owner.id, first.plan.id);
+
+    const changed = steps();
+    changed[2] = { ...changed[2]!, goal: "summarize with evidence" };
+    changed.push({
+      key: "D",
+      goal: "final review",
+      dependsOn: ["B", "C"],
+      tools: [],
+      resources: [],
+      verifierId: "text-report",
+    });
+    const second = service.revise(owner.id, first.plan.id, { steps: changed });
+
+    assert.equal(second.plan.planVersion, 2);
+    assert.equal(second.plan.status, "draft");
+    assert.equal(service.get(owner.id, first.plan.id)?.plan.status, "superseded");
+    const diff = service.diff(owner.id, second.plan.id);
+    assert.equal(diff.fromVersion, 1);
+    assert.equal(diff.toVersion, 2);
+    assert.deepEqual(
+      diff.steps.map((step) => [step.key, step.change]),
+      [
+        ["A", "unchanged"],
+        ["B", "unchanged"],
+        ["C", "changed"],
+        ["D", "added"],
+      ],
+    );
+    assert.deepEqual(diff.steps[2]?.fields, ["goal"]);
+
+    const active = service.activate(owner.id, second.plan.id);
+    assert.equal(active.plan.status, "active");
+    const versions = service.list(owner.id, { parentTaskId: task.id });
+    assert.equal(versions.length, 2);
+    assert.ok(store.listAuditAfter(0, 50).some((item) => item.event === "plan.revised"));
+  });
+
+  it("pauses, resumes and cancels with step cleanup", () => {
+    const { owner, task, service } = setup();
+    const draft = service.create(owner.id, task.id, { steps: steps() });
+    service.activate(owner.id, draft.plan.id);
+
+    assert.equal(service.pause(owner.id, draft.plan.id).plan.status, "paused");
+    assert.equal(service.resume(owner.id, draft.plan.id).plan.status, "active");
+    const cancelled = service.cancel(owner.id, draft.plan.id);
+    assert.equal(cancelled.plan.status, "cancelled");
+    assert.ok(cancelled.steps.every((step) => step.status === "cancelled"));
+    assert.equal(
+      codeOf(() => service.resume(owner.id, draft.plan.id)),
+      "invalid_transition",
+    );
+  });
+
+  it("treats needs_review as a closed parent task", () => {
+    const { store, owner, task, service } = setup();
+    const draft = service.create(owner.id, task.id, { steps: steps() });
+    new TaskRepository(store.db).updateTask(task.id, task.revision, {
+      status: "needs_review",
+      updatedAt: NOW,
+    });
+    assert.equal(
+      codeOf(() => service.activate(owner.id, draft.plan.id)),
+      "task_terminal",
+    );
+    assert.equal(
+      codeOf(() => service.create(owner.id, task.id, { steps: steps() })),
+      "task_terminal",
+    );
+  });
+
+  it("refuses to resume one version while another is active", () => {
+    const { owner, task, service } = setup();
+    const first = service.create(owner.id, task.id, { steps: steps() });
+    service.activate(owner.id, first.plan.id);
+    service.pause(owner.id, first.plan.id);
+
+    const second = service.create(owner.id, task.id, { steps: steps() });
+    service.activate(owner.id, second.plan.id);
+    assert.equal(
+      codeOf(() => service.resume(owner.id, first.plan.id)),
+      "conflict_active_plan",
+    );
+  });
+
+  it("revalidates live capabilities before resuming", () => {
+    const store = createStore();
+    const owner = bindOwner(store, "ou_owner");
+    const conv = conversation(store, owner);
+    const task = makeTask(store, owner, conv);
+    let tools = ["github.read", "state.summary"];
+    const liveCapabilities: CapabilityView = {
+      generation: () => 1,
+      toolNames: () => tools,
+      resources: () => ["chat", "github", "state"],
+      resourceForTool: (name) =>
+        name === "github.read" ? "github" : name === "state.summary" ? "state" : undefined,
+      toolInfo: () => undefined,
+    };
+    const service = new PlanService({
+      store,
+      plans: new PlanRepository(store.db),
+      tasks: new TaskRepository(store.db),
+      capabilities: liveCapabilities,
+      now: () => new Date(NOW),
+    });
+    const draft = service.create(owner.id, task.id, { steps: steps() });
+    service.activate(owner.id, draft.plan.id);
+    service.pause(owner.id, draft.plan.id);
+
+    tools = ["state.summary"];
+    assert.equal(
+      codeOf(() => service.resume(owner.id, draft.plan.id)),
+      "invalid_plan",
+    );
+  });
+
+  it("keeps plans owner-scoped and survives a service restart", () => {
+    const { store, owner, task, service } = setup();
+    const draft = service.create(owner.id, task.id, { steps: steps() });
+    const other = bindOwner(store, "ou_other");
+
+    assert.equal(service.get(other.id, draft.plan.id), undefined);
+    assert.deepEqual(service.list(other.id), []);
+    assert.equal(codeOf(() => service.activate(other.id, draft.plan.id)), "plan_not_found");
+
+    const tasks = new TaskRepository(store.db);
+    const restarted = new PlanService({
+      store,
+      plans: new PlanRepository(store.db),
+      tasks,
+      capabilities: capabilities(),
+      now: () => new Date(NOW),
+    });
+    const restored = restarted.get(owner.id, draft.plan.id);
+    assert.equal(restored?.plan.planVersion, 1);
+    assert.equal(restored?.steps.length, 3);
+  });
+});
+
+describe("plan diff", () => {
+  it("detects unchanged, changed, added and removed steps", () => {
+    const { owner, task, service } = setup();
+    const first = service.create(owner.id, task.id, { steps: steps() });
+    const changed = steps().slice(0, 2);
+    changed[0] = { ...changed[0]!, goal: "read more evidence" };
+    changed.push({
+      key: "Z",
+      goal: "new step",
+      dependsOn: [],
+      tools: [],
+      resources: [],
+      verifierId: "text-report",
+    });
+    // A 3-step minimum means the revision must stay within bounds.
+    changed.push({
+      key: "Y",
+      goal: "another step",
+      dependsOn: [],
+      tools: [],
+      resources: [],
+      verifierId: "text-report",
+    });
+    const second = service.revise(owner.id, first.plan.id, { steps: changed });
+    const diff = service.diff(owner.id, second.plan.id);
+    assert.deepEqual(
+      diff.steps.map((step) => [step.key, step.change]),
+      [
+        ["A", "changed"],
+        ["B", "unchanged"],
+        ["Z", "added"],
+        ["Y", "added"],
+        ["C", "removed"],
+      ],
+    );
+  });
+});

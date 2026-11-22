@@ -16,9 +16,12 @@ import type {
   ActionRecord,
   ExtensionPolicy,
   Mandate,
+  PlanBudget,
+  PlanStepSpec,
   TaskRecord,
   TaskStatus,
 } from "./domain/types.ts";
+import { PlanError } from "./coordinator/plans.ts";
 import { ExtensionPolicyError } from "./domain/errors.ts";
 import {
   ProjectConflictError,
@@ -78,6 +81,7 @@ export interface ClientApiDeps {
     | "plugins"
     | "skills"
     | "projectService"
+    | "planService"
     | "issueDrafts"
   >;
   ownerId: string;
@@ -184,6 +188,123 @@ function parseStringArray(value: unknown, name: string): string[] {
   return value.map((item) => item.trim()).filter((item) => item.length > 0);
 }
 
+const PLAN_STATUSES = [
+  "draft",
+  "active",
+  "paused",
+  "completed",
+  "cancelled",
+  "superseded",
+] as const;
+
+function parsePlanSteps(value: unknown): PlanStepSpec[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new ApiError(400, "invalid_request", "steps must be a non-empty array");
+  }
+  return value.map((item, index) => {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) {
+      throw new ApiError(400, "invalid_request", `steps[${index}] must be an object`);
+    }
+    const record = item as Record<string, unknown>;
+    const step: PlanStepSpec = {
+      key: parseString(record.key, `steps[${index}].key`, 32),
+      goal: parseString(record.goal, `steps[${index}].goal`, 500),
+      dependsOn:
+        record.dependsOn === undefined
+          ? []
+          : parseStringArray(record.dependsOn, `steps[${index}].dependsOn`),
+      tools:
+        record.tools === undefined
+          ? []
+          : parseStringArray(record.tools, `steps[${index}].tools`),
+      resources:
+        record.resources === undefined
+          ? []
+          : parseStringArray(record.resources, `steps[${index}].resources`),
+      verifierId: parseString(record.verifierId, `steps[${index}].verifierId`, 64),
+    };
+    if (record.maxAttempts !== undefined) {
+      step.maxAttempts = parseApiInteger(record.maxAttempts, `steps[${index}].maxAttempts`, 1, 3);
+    }
+    if (record.timeoutMs !== undefined) {
+      step.timeoutMs = parseApiInteger(
+        record.timeoutMs,
+        `steps[${index}].timeoutMs`,
+        1_000,
+        3_600_000,
+      );
+    }
+    return step;
+  });
+}
+
+function parsePlanBudget(value: unknown): Partial<PlanBudget> | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new ApiError(400, "invalid_request", "budget must be an object");
+  }
+  const record = value as Record<string, unknown>;
+  const budget: Partial<PlanBudget> = {};
+  if (record.maxSteps !== undefined) {
+    budget.maxSteps = parseApiInteger(record.maxSteps, "budget.maxSteps", 3, 5);
+  }
+  if (record.maxAttemptsPerStep !== undefined) {
+    budget.maxAttemptsPerStep = parseApiInteger(
+      record.maxAttemptsPerStep,
+      "budget.maxAttemptsPerStep",
+      1,
+      3,
+    );
+  }
+  if (record.maxToolCalls !== undefined) {
+    budget.maxToolCalls = parseApiInteger(record.maxToolCalls, "budget.maxToolCalls", 1, 200);
+  }
+  if (record.timeoutMs !== undefined) {
+    budget.timeoutMs = parseApiInteger(
+      record.timeoutMs,
+      "budget.timeoutMs",
+      1_000,
+      3_600_000,
+    );
+  }
+  if (record.maxCostUsd !== undefined) {
+    if (
+      typeof record.maxCostUsd !== "number" ||
+      !Number.isFinite(record.maxCostUsd) ||
+      record.maxCostUsd <= 0 ||
+      record.maxCostUsd > 1_000
+    ) {
+      throw new ApiError(400, "invalid_request", "budget.maxCostUsd must be in (0, 1000]");
+    }
+    budget.maxCostUsd = record.maxCostUsd;
+  }
+  return budget;
+}
+
+function parseApiInteger(value: unknown, name: string, min: number, max: number): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < min || value > max) {
+    throw new ApiError(400, "invalid_request", `${name} must be an integer between ${min} and ${max}`);
+  }
+  return value;
+}
+
+function rethrowPlanError(error: unknown): never {
+  if (error instanceof PlanError) {
+    const status =
+      error.code === "plan_not_found" || error.code === "task_not_found"
+        ? 404
+        : error.code === "plan_forbidden"
+          ? 403
+          : error.code === "invalid_plan"
+            ? 400
+            : 409;
+    throw new ApiError(status, error.code, error.message);
+  }
+  throw error;
+}
+
 function parseString(value: unknown, name: string, max: number): string {
   if (typeof value !== "string") {
     throw new ApiError(400, "invalid_request", `${name} must be a string`);
@@ -193,6 +314,17 @@ function parseString(value: unknown, name: string, max: number): string {
     throw new ApiError(400, "invalid_request", `${name} must be 1-${max} characters`);
   }
   return trimmed;
+}
+
+function optionalInteger(raw: string | null, name: string): number | undefined {
+  if (raw === null || raw.length === 0) {
+    return undefined;
+  }
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 1) {
+    throw new ApiError(400, "invalid_request", `${name} must be a positive integer`);
+  }
+  return value;
 }
 
 function parseLimit(query: URLSearchParams): number {
@@ -567,6 +699,73 @@ export class ClientApiService {
       }
     }
 
+    if (resource === "plans") {
+      if (id === undefined && method === "GET") {
+        this.#require(auth, "read");
+        const status = request.query.get("status") ?? undefined;
+        if (
+          status !== undefined &&
+          !(PLAN_STATUSES as readonly string[]).includes(status)
+        ) {
+          throw new ApiError(400, "invalid_status");
+        }
+        return {
+          status: 200,
+          body: {
+            plans: this.#services.planService.list(this.#ownerId, {
+              ...(request.query.get("task") === null
+                ? {}
+                : { parentTaskId: request.query.get("task") as string }),
+              ...(status === undefined ? {} : { status: status as (typeof PLAN_STATUSES)[number] }),
+              limit: parseLimit(request.query),
+            }),
+          },
+        };
+      }
+      if (id === undefined && method === "POST") {
+        this.#require(auth, "write");
+        return this.#createPlan(request);
+      }
+      if (id !== undefined && action === undefined && method === "GET") {
+        this.#require(auth, "read");
+        const view = this.#services.planService.get(this.#ownerId, id);
+        if (view === undefined) {
+          throw new ApiError(404, "plan_not_found");
+        }
+        return { status: 200, body: view };
+      }
+      if (id !== undefined && action === "revise" && method === "POST") {
+        this.#require(auth, "write");
+        return this.#revisePlan(id, request);
+      }
+      if (
+        id !== undefined &&
+        method === "POST" &&
+        (action === "activate" ||
+          action === "pause" ||
+          action === "resume" ||
+          action === "cancel")
+      ) {
+        this.#require(auth, "write");
+        return this.#transitionPlan(id, action);
+      }
+      if (id !== undefined && action === "diff" && method === "GET") {
+        this.#require(auth, "read");
+        const from = optionalInteger(request.query.get("from"), "from");
+        const to = optionalInteger(request.query.get("to"), "to");
+        try {
+          return {
+            status: 200,
+            body: {
+              diff: this.#services.planService.diff(this.#ownerId, id, from, to),
+            },
+          };
+        } catch (error) {
+          rethrowPlanError(error);
+        }
+      }
+    }
+
     if (resource === "drafts") {
       if (id === undefined && method === "GET") {
         this.#require(auth, "read");
@@ -830,6 +1029,52 @@ export class ClientApiService {
       throw new ApiError(404, "task_not_found");
     }
     return task;
+  }
+
+  #createPlan(request: ClientApiRequest): ClientApiResponse {
+    const body = parseJsonBody(request);
+    const parentTaskId = parseString(body.parentTaskId, "parentTaskId", 64);
+    try {
+      const view = this.#services.planService.create(this.#ownerId, parentTaskId, {
+        steps: parsePlanSteps(body.steps),
+        budget: parsePlanBudget(body.budget),
+      });
+      return { status: 201, body: view };
+    } catch (error) {
+      rethrowPlanError(error);
+    }
+  }
+
+  #revisePlan(id: string, request: ClientApiRequest): ClientApiResponse {
+    const body = parseJsonBody(request);
+    try {
+      const view = this.#services.planService.revise(this.#ownerId, id, {
+        steps: parsePlanSteps(body.steps),
+        budget: parsePlanBudget(body.budget),
+      });
+      return { status: 200, body: view };
+    } catch (error) {
+      rethrowPlanError(error);
+    }
+  }
+
+  #transitionPlan(
+    id: string,
+    action: "activate" | "pause" | "resume" | "cancel",
+  ): ClientApiResponse {
+    try {
+      const view =
+        action === "activate"
+          ? this.#services.planService.activate(this.#ownerId, id)
+          : action === "pause"
+            ? this.#services.planService.pause(this.#ownerId, id)
+            : action === "resume"
+              ? this.#services.planService.resume(this.#ownerId, id)
+              : this.#services.planService.cancel(this.#ownerId, id);
+      return { status: 200, body: view };
+    } catch (error) {
+      rethrowPlanError(error);
+    }
   }
 
   #createTask(request: ClientApiRequest): ClientApiResponse {
