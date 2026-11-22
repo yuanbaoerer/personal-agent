@@ -402,6 +402,7 @@ function validateGithubTypedClaim(
   claim: GithubTypedClaim,
   actions: readonly ActionRecord[],
 ): string | undefined {
+  let missing: string | undefined;
   const candidates = actions.filter(
     (action) =>
       action.args.operation === claim.operation &&
@@ -441,9 +442,18 @@ function validateGithubTypedClaim(
         continue;
       }
     }
-    return matchTypedClaim(claim, evidence);
+    const result = matchTypedClaim(claim, evidence);
+    if (
+      result === undefined ||
+      !result.startsWith("github_typed_item_missing:")
+    ) {
+      return result;
+    }
+    // Another receipt at the same revision may contain the named item
+    // (e.g. two file reads); only report missing after all candidates.
+    missing = result;
   }
-  return `github_typed_revision_missing:${claim.operation}:${claim.revision}`;
+  return missing ?? `github_typed_revision_missing:${claim.operation}:${claim.revision}`;
 }
 
 function matchTypedClaim(
