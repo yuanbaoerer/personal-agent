@@ -90,7 +90,7 @@ class GitHubIssueWriteTool implements ActionTool {
     this.#config = config;
     this.name = `github.issue.${operation}`;
     this.timeoutMs = config.timeoutMs ?? 15_000;
-    this.#maxBytes = config.maxBytes ?? 1_000_000;
+    this.#maxBytes = config.maxBytes ?? 5_000_000;
     this.#allowed = new Set(
       config.allowedRepos.map((repo) => repo.toLowerCase()),
     );
