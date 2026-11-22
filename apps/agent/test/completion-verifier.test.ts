@@ -332,6 +332,27 @@ describe("TaskCompletionVerifier", () => {
     ]);
   });
 
+  it("accepts a source URL followed by CJK punctuation", () => {
+    const services = setup();
+    const task = createTask(services);
+    const assignment = claim(services);
+    insertSucceededAction(services, task.id, assignment);
+    services.taskService.report(
+      assignment.assignment.id,
+      assignment.assignment.fencingToken,
+      assignment.assignment.taskRevision,
+      ready("repo checked", [
+        {
+          kind: "github",
+          value: "source=https://github.com/owner/repo，返回 1 条",
+        },
+      ]),
+    );
+    const current = services.tasks.get(task.id);
+    assert.equal(current?.status, "succeeded");
+    assert.equal(current?.verification?.verdict, "succeeded");
+  });
+
   it("marks a GitHub claim without an executor receipt as needs_review", () => {
     const services = setup();
     const task = createTask(services);

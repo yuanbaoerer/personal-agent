@@ -245,7 +245,9 @@ function reportHasVerifiedGithubSource(
   const prefix = `https://github.com/${repo.toLowerCase()}`;
   let cited = 0;
   for (const item of report.evidence) {
-    for (const match of item.value.matchAll(/https:\/\/github\.com\/[^\s"'<>\])]+/gi)) {
+    for (const match of item.value.matchAll(
+      /https:\/\/github\.com\/[^\s"'<>\])，。；：、！？【】（）《》〈〉「」』]+/gi,
+    )) {
       const url = normalizeGithubUrl(match[0].replace(/[.,;:]+$/, ""));
       if (url === undefined) {
         continue;
