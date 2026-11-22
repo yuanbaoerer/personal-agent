@@ -170,6 +170,25 @@ describe("plan executor", () => {
     assert.equal(view?.steps[0]?.status, "failed");
     assert.equal(services.tasks.get(parent.id)?.status, "failed");
     assert.equal(childTasks(services, parent).length, 1);
+
+    // Maintenance must not turn a failed plan into cancelled; the owner can
+    // still replan it.
+    const executor = new PlanExecutor({
+      store: services.store,
+      plans: services.plans,
+      tasks: services.tasks,
+      taskService: services.taskService,
+      effects: services.effects,
+      projects: services.projects,
+      now: () => NOW,
+      tickDelayMs: 0,
+    });
+    executor.install(services.effectDispatcher);
+    executor.sweep();
+    assert.equal(
+      services.planService.get(services.owner.id, plan.plan.id)?.plan.status,
+      "paused",
+    );
   });
 
   it("shares the parent plan's model-call budget across steps", async () => {

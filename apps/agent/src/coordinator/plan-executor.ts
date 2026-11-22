@@ -105,9 +105,9 @@ export class PlanExecutor {
         this.#cancelSiblings(plan, now.toISOString());
         continue;
       }
-      if (isStoppedParent(parent.status)) {
-        // A direct task cancel/terminal state is authoritative even when the
-        // plan itself was paused first.
+      if (parent.status === "cancelling" || parent.status === "cancelled") {
+        // A direct task cancellation is authoritative even when the plan was
+        // paused first. failed/needs_review stay paused for owner replan.
         this.#plans.setPlanStatus(
           plan.id,
           ["paused", "active"],
