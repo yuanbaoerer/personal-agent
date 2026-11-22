@@ -32,6 +32,8 @@ import { SchedulePolicyRepository } from "./storage/schedule-policies.ts";
 import { EffectRepository } from "./storage/effects.ts";
 import { MemoryRepository, ScheduleRepository } from "./storage/personal.ts";
 import { ProjectRepository } from "./storage/projects.ts";
+import { IssueDraftRepository } from "./storage/issue-drafts.ts";
+import { IssueDraftService } from "./personal/issue-drafts.ts";
 import type { Store } from "./storage/store.ts";
 import { TaskRepository } from "./storage/tasks.ts";
 import { ProjectService } from "./personal/projects.ts";
@@ -80,6 +82,7 @@ export interface AppServices {
   preauthorizations: PreauthorizationRepository;
   schedulePolicies: SchedulePolicyRepository;
   projects: ProjectRepository;
+  issueDrafts: IssueDraftService;
   taskService: TaskService;
   actionService: ActionService;
   reminders: ReminderService;
@@ -126,10 +129,19 @@ export function createApp(deps: AppDeps): AppServices {
   const preauthorizations = new PreauthorizationRepository(db);
   const schedulePolicies = new SchedulePolicyRepository(db);
   const projects = new ProjectRepository(db);
+  const issueDrafts = new IssueDraftService({
+    store,
+    drafts: new IssueDraftRepository(db),
+    projects,
+    tasks,
+    credentials: deps.github?.credentials,
+    now: deps.now,
+  });
   const projectService = new ProjectService({
     projects,
     store,
     now: deps.now,
+    drafts: issueDrafts,
   });
   const state = new StateReadService({
     tasks,
@@ -162,6 +174,7 @@ export function createApp(deps: AppDeps): AppServices {
     extensions: catalog,
     capabilities: catalog,
     skills: deps.skills,
+    verifiedDrafts: issueDrafts,
   });
   const preauthorization = new PreauthorizationService({
     store,
@@ -250,6 +263,7 @@ export function createApp(deps: AppDeps): AppServices {
     preauthorizations,
     schedulePolicies,
     projects,
+    issueDrafts,
     taskService,
     actionService,
     reminders,

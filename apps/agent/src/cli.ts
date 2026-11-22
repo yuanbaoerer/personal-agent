@@ -2,7 +2,13 @@ import { randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
 
 import { ClientApiClient, ClientApiError } from "./client/sdk.ts";
-import type { ActionRecord, ProjectBinding, ScheduleRecord, TaskRecord } from "./domain/types.ts";
+import type {
+  ActionRecord,
+  IssueDraftSnapshot,
+  ProjectBinding,
+  ScheduleRecord,
+  TaskRecord,
+} from "./domain/types.ts";
 import type { PluginView } from "./plugins/types.ts";
 import { runTui } from "./tui.ts";
 
@@ -56,6 +62,9 @@ Usage:
                    [--branch main] [--credential-ref REF]
                    [--plan-paths a,b] [--json]
   pa projects unbind <id> --yes [--json]
+  pa drafts list [--status STATUS] [--project KEY] [--json]
+  pa drafts show <id> [--json]
+  pa drafts reject <id> --yes [--json]
   pa skills list [--json]
 
 Environment:
@@ -151,6 +160,24 @@ function formatProject(project: ProjectBinding): string {
   return [
     `${shortId(project.id)}  ${project.projectKey}  ${project.status.padEnd(7)}  ${project.repositoryFullName}  branch=${project.defaultBranch}  v${project.version}`,
     `  repoId=${project.repositoryId} credential=${project.credentialRef} plans=${project.allowedPlanPaths.join(",") || "-"}`,
+  ].join("\n");
+}
+
+function formatDraft(draft: IssueDraftSnapshot): string {
+  const target =
+    draft.targetIssue === undefined ? "" : ` #${draft.targetIssue}`;
+  const before =
+    draft.beforeSummary === undefined
+      ? "-"
+      : safeText(draft.beforeSummary).slice(0, 800);
+  return [
+    `${shortId(draft.id)}  ${draft.action}${target}  ${draft.status}  ${draft.projectKey}  ${draft.repositoryFullName}`,
+    `  repoId=${draft.repositoryId} commit=${draft.commitSha} findings=${draft.findingIds.join(",")}`,
+    `  sourceTask=${draft.sourceTaskId} rev=${draft.sourceTaskRevision} credential=${draft.credentialRef} v${draft.credentialVersion ?? "?"}`,
+    `  payloadHash=${draft.payloadHash} expires=${draft.expiresAt}`,
+    `  title: ${safeText(draft.title)}`,
+    `  before: ${before}`,
+    `  after: ${safeText(draft.body).slice(0, 2_000)}`,
   ].join("\n");
 }
 
@@ -606,6 +633,54 @@ export async function runCli(
           return 0;
         }
         throw new Error("projects subcommand must be list, show, bind or unbind");
+      }
+      case "drafts": {
+        const sub = requirePositional(args, 0, "drafts subcommand");
+        const json = args.flags.json === true;
+        if (sub === "list") {
+          const status = flagString(args.flags, "status");
+          if (
+            status !== undefined &&
+            status !== "draft" &&
+            status !== "pending_approval" &&
+            status !== "approved" &&
+            status !== "rejected" &&
+            status !== "expired" &&
+            status !== "superseded" &&
+            status !== "executing" &&
+            status !== "failed"
+          ) {
+            throw new Error("--status is not a valid draft status");
+          }
+          const drafts = await client.listDrafts({
+            ...(status === undefined ? {} : { status }),
+            ...(flagString(args.flags, "project") === undefined
+              ? {}
+              : { project: flagString(args.flags, "project") as string }),
+          });
+          if (json) printJson(io, { drafts });
+          else if (drafts.length === 0) io.out("No issue drafts.");
+          else for (const draft of drafts) io.out(formatDraft(draft));
+          return 0;
+        }
+        if (sub === "show") {
+          const id = requirePositional(args, 1, "draft id");
+          const draft = await client.getDraft(id);
+          if (json) printJson(io, { draft });
+          else io.out(formatDraft(draft));
+          return 0;
+        }
+        if (sub === "reject") {
+          const id = requirePositional(args, 1, "draft id");
+          if (args.flags.yes !== true) {
+            throw new Error("rejecting a draft requires --yes");
+          }
+          const draft = await client.rejectDraft(id);
+          if (json) printJson(io, { draft });
+          else io.out(formatDraft(draft));
+          return 0;
+        }
+        throw new Error("drafts subcommand must be list, show or reject");
       }
       case "skills": {
         const sub = requirePositional(args, 0, "skills subcommand");

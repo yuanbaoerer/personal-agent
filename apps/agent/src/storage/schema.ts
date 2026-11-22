@@ -495,6 +495,53 @@ const migrations: readonly (readonly string[])[] = [
     `CREATE INDEX pa_credential_refs_owner_idx
        ON pa_credential_refs (owner_id, plugin_id, status)`,
   ],
+  [
+    // Verifier-approved issue draft snapshots. The payload hash and source
+    // revision are immutable; status transition is separate. No token ref
+    // secret is stored, only the credential reference and epoch.
+    `CREATE TABLE pa_issue_drafts (
+      id TEXT PRIMARY KEY,
+      owner_id TEXT NOT NULL REFERENCES pa_identities(id),
+      project_key TEXT NOT NULL,
+      repository_id INTEGER NOT NULL CHECK (repository_id > 0),
+      repository_full_name TEXT NOT NULL,
+      source_task_id TEXT NOT NULL,
+      source_task_revision INTEGER NOT NULL CHECK (source_task_revision >= 1),
+      source_assignment_id TEXT NOT NULL,
+      commit_sha TEXT NOT NULL,
+      finding_ids_json TEXT NOT NULL,
+      action TEXT NOT NULL CHECK (action IN ('create', 'update', 'comment')),
+      target_issue INTEGER,
+      before_hash TEXT,
+      before_summary TEXT,
+      title TEXT NOT NULL,
+      body TEXT NOT NULL,
+      payload_hash TEXT NOT NULL,
+      idempotency_key TEXT NOT NULL,
+      credential_ref TEXT NOT NULL,
+      credential_version INTEGER,
+      status TEXT NOT NULL CHECK (
+        status IN (
+          'draft', 'pending_approval', 'approved', 'rejected', 'expired',
+          'superseded', 'executing', 'failed'
+        )
+      ),
+      write_task_id TEXT,
+      write_action_id TEXT,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    ) STRICT`,
+    `CREATE UNIQUE INDEX pa_issue_drafts_active_key_idx
+       ON pa_issue_drafts (owner_id, repository_id, idempotency_key)
+       WHERE status IN ('draft', 'pending_approval', 'approved', 'executing')`,
+    `CREATE INDEX pa_issue_drafts_owner_idx
+       ON pa_issue_drafts (owner_id, status, created_at)`,
+    `CREATE INDEX pa_issue_drafts_task_idx
+       ON pa_issue_drafts (source_task_id, source_task_revision)`,
+    `CREATE INDEX pa_issue_drafts_project_idx
+       ON pa_issue_drafts (owner_id, project_key, repository_id, status)`,
+  ],
 ];
 
 /** Highest schema version this build can read/migrate. */

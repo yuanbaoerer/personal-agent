@@ -28,6 +28,10 @@ export interface BindProjectInput {
   allowedPlanPaths?: string[];
 }
 
+export interface ProjectDraftInvalidator {
+  supersedeForRepository(ownerId: string, repositoryId: number): number;
+}
+
 export interface BindProjectResult {
   project: ProjectBinding;
   created: boolean;
@@ -47,15 +51,18 @@ export class ProjectService {
   readonly #projects: ProjectRepository;
   readonly #store: Store;
   readonly #now: () => Date;
+  readonly #drafts?: ProjectDraftInvalidator;
 
   constructor(deps: {
     projects: ProjectRepository;
     store: Store;
     now?: () => Date;
+    drafts?: ProjectDraftInvalidator;
   }) {
     this.#projects = deps.projects;
     this.#store = deps.store;
     this.#now = deps.now ?? (() => new Date());
+    this.#drafts = deps.drafts;
   }
 
   list(ownerId: string, status?: ProjectStatus): ProjectBinding[] {
@@ -135,6 +142,7 @@ export class ProjectService {
         traceId: `project:${updated.id}`,
         occurredAt: updated.updatedAt,
       });
+      this.#drafts?.supersedeForRepository(ownerId, updated.repositoryId);
       return { project: updated, created: false };
     }
     const byRepository = this.#projects.findActiveByRepository(
@@ -168,6 +176,7 @@ export class ProjectService {
     }
     if (result.changed) {
       this.#audit("project.unbound", actorId, result.project, "active");
+      this.#drafts?.supersedeForRepository(ownerId, result.project.repositoryId);
     }
     return result;
   }

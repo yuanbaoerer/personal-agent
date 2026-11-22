@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 
 import { ClientApiService } from "../src/client-api.ts";
 import { hashArgs } from "../src/actions/tools.ts";
+import type { IssueDraft } from "../src/domain/types.ts";
 import type { ClientApiRequest } from "../src/client-api.ts";
 import { createServices, type TestServices } from "./services.ts";
 
@@ -61,6 +62,68 @@ function createTask(
       mandate: { resources: ["chat"], tools: [] },
     },
   });
+}
+
+function seedDraft(services: TestServices): string {
+  services.projectService.bind(
+    services.owner.id,
+    {
+      projectKey: "personal-agent",
+      repositoryId: 101,
+      repositoryFullName: "owner/repo",
+      defaultBranch: "main",
+      credentialRef: "github:default",
+      allowedPlanPaths: ["README.md"],
+    },
+    "admin",
+  );
+  const task = services.taskService.create({
+    ownerId: services.owner.id,
+    conversationId: services.conversation.id,
+    sourceKey: "draft:source",
+    goal: "review",
+    completionCriteria: "done",
+    mandate: {
+      resources: ["chat"],
+      tools: [],
+      project: "personal-agent",
+      skills: ["github.project-review"],
+    },
+  });
+  const claimed = services.tasks.claimNext(NOW.toISOString(), 60_000, 2);
+  assert.ok(claimed);
+  const draft: IssueDraft = {
+    action: "create",
+    title: "Add draft snapshot lifecycle",
+    body: "Persist the approved payload.",
+    findingIds: ["f1"],
+    idempotencyKey: "a".repeat(32),
+    requiresOwnerApproval: true,
+  };
+  const result = services.issueDrafts.recordVerified({
+    task,
+    assignment: claimed.assignment,
+    findings: [
+      {
+        id: "f1",
+        requirementRef: "GH-04",
+        classification: "observed",
+        severity: "high",
+        repositoryId: 101,
+        commitSha: "b".repeat(40),
+        evidenceRefs: [],
+        expected: "draft exists",
+        actual: "draft is missing",
+        impact: "approval cannot be bound",
+        existingIssueMatches: [],
+        suggestedAction: "persist it",
+      },
+    ],
+    drafts: [draft],
+    actions: [],
+  });
+  assert.equal(result.recorded.length, 1);
+  return (result.recorded[0] as { id: string }).id;
 }
 
 describe("client API", () => {
@@ -443,3 +506,45 @@ describe("client API", () => {
 });
 
 export type { TestServices };
+
+
+describe("issue draft API", () => {
+  it("lists, shows and rejects a pending draft with write scope", async () => {
+    const { services, api } = fixture();
+    const id = seedDraft(services);
+
+    const listed = await call(api, "GET", "/api/v1/drafts", {
+      token: ADMIN,
+      query: { status: "pending_approval", project: "personal-agent" },
+    });
+    assert.equal(listed.status, 200);
+    assert.equal((listed.body.drafts as unknown[]).length, 1);
+
+    const shown = await call(api, "GET", `/api/v1/drafts/${id}`, { token: ADMIN });
+    assert.equal(shown.status, 200);
+    const draft = shown.body.draft as Record<string, unknown>;
+    assert.equal(draft.repositoryFullName, "owner/repo");
+    assert.equal(draft.payloadHash?.toString().length, 64);
+    assert.equal(JSON.stringify(shown.body).includes("ghp_"), false);
+
+    const readOnly = await call(api, "POST", "/api/v1/tokens", {
+      token: ADMIN,
+      body: { name: "reader", scopes: ["read"] },
+    });
+    const readToken = readOnly.body.token as string;
+    const forbidden = await call(api, "POST", `/api/v1/drafts/${id}/reject`, {
+      token: readToken,
+    });
+    assert.equal(forbidden.status, 403);
+
+    const rejected = await call(api, "POST", `/api/v1/drafts/${id}/reject`, {
+      token: ADMIN,
+    });
+    assert.equal(rejected.status, 200);
+    assert.equal((rejected.body.draft as Record<string, unknown>).status, "rejected");
+    const second = await call(api, "POST", `/api/v1/drafts/${id}/reject`, {
+      token: ADMIN,
+    });
+    assert.equal(second.status, 409);
+  });
+});

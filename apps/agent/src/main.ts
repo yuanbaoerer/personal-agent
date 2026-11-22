@@ -342,6 +342,7 @@ async function main(): Promise<void> {
         app.taskService.sweep();
         app.actionService.sweep();
         const expiredConfirmations = app.confirmation.expirePending();
+        const expiredDrafts = app.issueDrafts.expireDue();
         const fired = await app.reminders.fireDue();
         const scheduled = app.schedulePolicy.fireDue();
         const effectResult = await app.effectDispatcher.drain(20);
@@ -349,6 +350,7 @@ async function main(): Promise<void> {
         const changed =
           recovered +
           expiredConfirmations +
+          expiredDrafts +
           fired +
           scheduled +
           effectResult.done +
@@ -363,6 +365,7 @@ async function main(): Promise<void> {
           logger.info("maintenance", {
             recovered,
             expiredConfirmations,
+            expiredDrafts,
             fired,
             scheduled,
             effects: effectResult,

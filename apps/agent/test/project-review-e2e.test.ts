@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { describe, it } from "node:test";
 
 import { CredentialBroker } from "../src/actions/credentials.ts";
+import { assignDraftKeys } from "../src/coordinator/project-review.ts";
 import type { ProjectBinding, TaskRecord } from "../src/domain/types.ts";
 import { createServices, type TestServices } from "./services.ts";
 import { inbound } from "./helpers.ts";
@@ -260,7 +261,10 @@ async function runReview(options: FakeGitHubOptions = {}) {
   const { services } = fixture;
   enqueueReviewDecision(services);
   await services.ingress.accept(
-    inbound({ text: REVIEW_TEXT, platformEventId: "evt_project_review_e2e" }),
+    inbound({
+      text: REVIEW_TEXT,
+      platformEventId: `evt_project_review_${Math.random().toString(36).slice(2)}`,
+    }),
   );
   // Process only the Router effect; the task dispatch stays queued so the
   // test can claim the assignment deterministically.
@@ -384,23 +388,26 @@ function reviewReport(services: TestServices, task: TaskRecord) {
   };
 }
 
+async function completeReview(options: FakeGitHubOptions = {}) {
+  const fixture = await runReview(options);
+  const claimed = fixture.services.tasks.claimNext(START.toISOString(), 60_000, 2);
+  assert.ok(claimed);
+  fixture.services.taskService.report(
+    claimed.assignment.id,
+    claimed.assignment.fencingToken,
+    claimed.assignment.taskRevision,
+    reviewReport(fixture.services, fixture.task),
+  );
+  return {
+    ...fixture,
+    task: fixture.services.tasks.get(fixture.task.id) as TaskRecord,
+    assignment: claimed.assignment,
+  };
+}
+
 describe("read-only project review E2E (fake GitHub API)", () => {
   it("runs binding → typed reads → verified findings/drafts → Feishu outbox", async () => {
-    const { services, task, github } = await runReview();
-    const current = services.tasks.get(task.id);
-    assert.equal(current?.status, "queued");
-    assert.equal(current?.mandate.project, PROJECT_KEY);
-    assert.deepEqual(current?.mandate.skills, ["github.project-review"]);
-
-    const claimed = services.tasks.claimNext(START.toISOString(), 60_000, 2);
-    assert.ok(claimed);
-    services.taskService.report(
-      claimed.assignment.id,
-      claimed.assignment.fencingToken,
-      claimed.assignment.taskRevision,
-      reviewReport(services, task),
-    );
-
+    const { services, task, github } = await completeReview();
     const verified = services.tasks.get(task.id) as TaskRecord;
     assert.equal(verified.status, "succeeded");
     assert.equal(verified.verification?.verifier, "project-review");
@@ -420,6 +427,26 @@ describe("read-only project review E2E (fake GitHub API)", () => {
     assert.match(resultText, /approval required/);
     assert.match(resultText, /GH-02 evidence/);
 
+    const persisted = services.issueDrafts.list(services.owner.id);
+    assert.equal(persisted.length, 2);
+    assert.ok(persisted.every((draft) => draft.status === "pending_approval"));
+    assert.ok(persisted.every((draft) => draft.validity === "valid"));
+    assert.ok(persisted.every((draft) => /^[0-9a-f]{64}$/.test(draft.payloadHash)));
+    assert.ok(persisted.every((draft) => draft.repositoryId === REPOSITORY_ID));
+    assert.ok(persisted.every((draft) => draft.commitSha === MAIN_SHA));
+    assert.ok(persisted.every((draft) => draft.sourceTaskId === task.id));
+    const updateDraft = persisted.find((draft) => draft.action === "update");
+    assert.ok(updateDraft);
+    assert.equal(updateDraft.targetIssue, 60);
+    assert.equal(
+      updateDraft.beforeHash,
+      createHash("sha256").update(ISSUE_BODY).digest("hex"),
+    );
+    assert.match(updateDraft.beforeSummary ?? "", /Existing GH-02 evidence body/);
+    const createDraft = persisted.find((draft) => draft.action === "create");
+    assert.ok(createDraft);
+    assert.equal(createDraft.targetIssue, undefined);
+
     const audits = services.store
       .listAuditAfter(0, 200)
       .map((row) => row.event);
@@ -434,6 +461,118 @@ describe("read-only project review E2E (fake GitHub API)", () => {
     const after = services.tasks.get(task.id);
     assert.equal(after?.status, "succeeded");
     assert.equal(github.calls.length, callsBefore);
+  });
+
+  it("deduplicates repeated verified drafts instead of creating duplicates", async () => {
+    const { services, task, assignment } = await completeReview();
+    const first = services.issueDrafts.list(services.owner.id);
+    assert.equal(first.length, 2);
+    const actions = services.actions.listByTask(task.id);
+    const findings = [
+      {
+        id: "f1",
+        requirementRef: "docs/24 GH-04 只读评估",
+        classification: "observed" as const,
+        severity: "high" as const,
+        repositoryId: REPOSITORY_ID,
+        commitSha: MAIN_SHA,
+        evidenceRefs: [String(actions.find((action) => action.args.path === PLAN_PATH)?.evidence?.permanentUrl)],
+        expected: "x",
+        actual: "y",
+        impact: "z",
+        existingIssueMatches: [60],
+        suggestedAction: "a",
+      },
+      {
+        id: "f2",
+        requirementRef: "docs/24 GH-02 PR 证据",
+        classification: "observed" as const,
+        severity: "medium" as const,
+        repositoryId: REPOSITORY_ID,
+        commitSha: MAIN_SHA,
+        evidenceRefs: [String(actions.find((action) => action.args.path === SOURCE_PATH)?.evidence?.permanentUrl)],
+        expected: "x",
+        actual: "y",
+        impact: "z",
+        existingIssueMatches: [],
+        suggestedAction: "a",
+      },
+    ];
+    const drafts = assignDraftKeys(findings, reviewReport(services, task).issueDrafts);
+    const result = services.issueDrafts.recordVerified({
+      task,
+      assignment,
+      findings,
+      drafts,
+      actions,
+    });
+    assert.equal(result.recorded.length, 2);
+    assert.equal(result.deduplicated, 2);
+    const after = services.issueDrafts.list(services.owner.id);
+    assert.deepEqual(after.map((draft) => draft.id).sort(), first.map((draft) => draft.id).sort());
+  });
+
+  it("rejects a draft and invalidates it for later approval", async () => {
+    const { services } = await completeReview();
+    const draft = services.issueDrafts.list(services.owner.id)[0];
+    assert.ok(draft);
+    const rejected = services.issueDrafts.reject(services.owner.id, draft.id, "owner");
+    assert.equal(rejected.ok, true);
+    assert.equal(rejected.draft?.status, "rejected");
+    assert.equal(services.issueDrafts.get(services.owner.id, draft.id)?.validity, "inactive");
+    const second = services.issueDrafts.reject(services.owner.id, draft.id, "owner");
+    assert.equal(second.ok, false);
+    assert.match(second.reason ?? "", /draft_rejected/);
+  });
+
+  it("supersedes drafts on task revision, binding revoke and credential rotation", async () => {
+    const revision = await completeReview();
+    const revisionDrafts = revision.services.issueDrafts.list(revision.services.owner.id);
+    assert.equal(revisionDrafts.length, 2);
+    revision.services.issueDrafts.supersedeForTask(revision.task.id, revision.task.revision + 1);
+    assert.ok(
+      revision.services.issueDrafts
+        .list(revision.services.owner.id)
+        .every((draft) => draft.status === "superseded"),
+    );
+
+    const binding = await completeReview();
+    const project = binding.services.projects.findActiveByKey(
+      binding.services.owner.id,
+      PROJECT_KEY,
+    );
+    assert.ok(project);
+    binding.services.projectService.unbind(binding.services.owner.id, project.id, "owner");
+    assert.ok(
+      binding.services.issueDrafts
+        .list(binding.services.owner.id)
+        .every((draft) => draft.status === "superseded"),
+    );
+
+    const credential = await completeReview();
+    credential.credentials.rotate("github:default", {
+      token: "project-token",
+      scopes: ["repository.read"],
+      ownerId: credential.services.owner.id,
+      repositoryIds: [REPOSITORY_ID],
+    });
+    assert.ok(
+      credential.services.issueDrafts
+        .list(credential.services.owner.id)
+        .every((draft) => draft.status === "superseded"),
+    );
+  });
+
+  it("expires drafts past their approval window", async () => {
+    const { services } = await completeReview();
+    services.store.db.run(
+      "UPDATE pa_issue_drafts SET expires_at = ?",
+      "2025-12-31T00:00:00.000Z",
+    );
+    const expired = services.issueDrafts.list(services.owner.id);
+    assert.equal(expired.length, 2);
+    assert.ok(expired.every((draft) => draft.status === "expired"));
+    assert.ok(expired.every((draft) => draft.validity === "expired"));
   });
 
   it("refuses an unbound projectKey, a wrong repo, a revoked binding and a missing credential before fetch", async () => {

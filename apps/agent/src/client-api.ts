@@ -78,6 +78,7 @@ export interface ClientApiDeps {
     | "plugins"
     | "skills"
     | "projectService"
+    | "issueDrafts"
   >;
   ownerId: string;
   /** Local bootstrap credential; device token hashes are also accepted. */
@@ -563,6 +564,60 @@ export class ClientApiService {
       if (id !== undefined && action === "supplement" && method === "POST") {
         this.#require(auth, "write");
         return this.#supplementTask(id, request);
+      }
+    }
+
+    if (resource === "drafts") {
+      if (id === undefined && method === "GET") {
+        this.#require(auth, "read");
+        const status = request.query.get("status") ?? undefined;
+        if (
+          status !== undefined &&
+          status !== "draft" &&
+          status !== "pending_approval" &&
+          status !== "approved" &&
+          status !== "rejected" &&
+          status !== "expired" &&
+          status !== "superseded" &&
+          status !== "executing" &&
+          status !== "failed"
+        ) {
+          throw new ApiError(400, "invalid_status");
+        }
+        return {
+          status: 200,
+          body: {
+            drafts: this.#services.issueDrafts.list(this.#ownerId, {
+              ...(status === undefined ? {} : { status }),
+              ...(request.query.get("project") === null
+                ? {}
+                : { projectKey: request.query.get("project") as string }),
+            }),
+          },
+        };
+      }
+      if (id !== undefined && action === undefined && method === "GET") {
+        this.#require(auth, "read");
+        const draft = this.#services.issueDrafts.get(this.#ownerId, id);
+        if (draft === undefined) {
+          throw new ApiError(404, "draft_not_found");
+        }
+        return { status: 200, body: { draft } };
+      }
+      if (id !== undefined && action === "reject" && method === "POST") {
+        this.#require(auth, "write");
+        const result = this.#services.issueDrafts.reject(
+          this.#ownerId,
+          id,
+          this.#ownerId,
+        );
+        if (!result.ok) {
+          throw new ApiError(
+            result.reason === "draft_not_found" ? 404 : 409,
+            result.reason ?? "draft_reject_failed",
+          );
+        }
+        return { status: 200, body: { draft: result.draft } };
       }
     }
 

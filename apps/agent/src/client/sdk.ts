@@ -2,6 +2,7 @@ import type {
   ActionRecord,
   AssignmentRecord,
   ExtensionPolicy,
+  IssueDraftSnapshot,
   MemoryRecord,
   ProjectBinding,
   ScheduleRecord,
@@ -158,6 +159,31 @@ export class ClientApiClient {
     return this.#request(`/projects/${encodeURIComponent(id)}`, {
       method: "DELETE",
     });
+  }
+
+  async listDrafts(options: {
+    status?: IssueDraftSnapshot["status"];
+    project?: string;
+  } = {}): Promise<IssueDraftSnapshot[]> {
+    const result = await this.#request<{ drafts: IssueDraftSnapshot[] }>("/drafts", {
+      query: { status: options.status, project: options.project },
+    });
+    return result.drafts;
+  }
+
+  async getDraft(id: string): Promise<IssueDraftSnapshot> {
+    const result = await this.#request<{ draft: IssueDraftSnapshot }>(
+      `/drafts/${encodeURIComponent(id)}`,
+    );
+    return result.draft;
+  }
+
+  async rejectDraft(id: string): Promise<IssueDraftSnapshot> {
+    const result = await this.#request<{ draft: IssueDraftSnapshot }>(
+      `/drafts/${encodeURIComponent(id)}/reject`,
+      { method: "POST" },
+    );
+    return result.draft;
   }
 
   async listTasks(options: { status?: TaskStatus; limit?: number } = {}): Promise<TaskRecord[]> {

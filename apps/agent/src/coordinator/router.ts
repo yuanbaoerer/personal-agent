@@ -645,6 +645,14 @@ export class Router implements InboundHandler {
           conversationId: task.conversationId,
           project: task.mandate.project,
         })),
+        projectContext: (this.#projects?.list(ownerId, "active") ?? [])
+          .slice(0, 20)
+          .map((project) => ({
+            projectKey: project.projectKey,
+            repositoryId: project.repositoryId,
+            repositoryFullName: project.repositoryFullName,
+            defaultBranch: project.defaultBranch,
+          })),
       }, this.#capabilities);
     } catch (error) {
       if (error instanceof RouterPendingError) {
@@ -733,6 +741,12 @@ export class Router implements InboundHandler {
     }
     switch (decision.action) {
       case "reply": {
+        // A real model may ask for owner/name even when an active binding
+        // already determines it. An explicit project review with one
+        // resolvable binding becomes a deterministic task here.
+        if (this.#tryDeterministicProjectReview(context)) {
+          return { status: "done" };
+        }
         // A model reply must not invent current state. Explicit read
         // questions always come from the deterministic owner snapshot.
         if (decision.queryError !== undefined) {
@@ -1824,6 +1838,78 @@ export class Router implements InboundHandler {
     }
 
     return undefined;
+  }
+
+  /**
+   * Deterministic project-review entry used when the Router model replies
+   * with a clarification instead of a task. It never guesses a repository:
+   * the owner's mention must resolve to exactly one active ProjectBinding.
+   */
+  #tryDeterministicProjectReview(context: {
+    ownerId: string;
+    conversationId: string;
+    inboxId: string;
+    text?: string;
+  }): boolean {
+    const text = context.text ?? "";
+    if (!wantsProjectReview(text)) {
+      return false;
+    }
+    const resolution = resolveProjectMention({
+      text,
+      ownerId: context.ownerId,
+      projects: this.#projects,
+      requireProject: true,
+    });
+    if (resolution.status !== "resolved") {
+      if (resolution.status === "none") {
+        return false;
+      }
+      this.#reply(context, describeProjectResolutionFailure(resolution), "failure");
+      return true;
+    }
+    const project = resolution.project;
+    const mandate = this.#constrainMandate(
+      ensureMandateResources(
+        {
+          resources: ["chat", "github"],
+          tools: ["github.read"],
+          skills: ["github.project-review"],
+          project: project.projectKey,
+        },
+        this.#capabilities,
+      ),
+    );
+    if (!mandate.tools.includes("github.read")) {
+      this.#reply(
+        context,
+        "GitHub 只读能力当前未启用；请先由主人启用 github 插件。",
+        "failure",
+      );
+      return true;
+    }
+    const task = this.#taskService.create({
+      ownerId: context.ownerId,
+      conversationId: context.conversationId,
+      sourceKey: `inbox:${context.inboxId}:task`,
+      goal: text,
+      completionCriteria: normalizeStateCriteria(
+        normalizeGithubCriteria(
+          "只读项目评估：给出有证据的 findings、关联已有 Issue 和待审批的修改草稿。",
+          text,
+          text,
+          mandate.tools,
+          mandate.skills ?? [],
+          project,
+        ),
+        mandate.tools,
+      ),
+      mandate,
+    });
+    this.#rememberTaskFocus(context.conversationId, task.id);
+    this.#reply(context, `已接单：${task.goal}\n项目：${project.projectKey}`, "ack");
+    void this.#wake.wake();
+    return true;
   }
 
   #rememberTaskFocus(conversationId: string, taskId: string): void {
