@@ -162,6 +162,20 @@ export function wantsProjectReview(text: string): boolean {
   return PROJECT_REVIEW_PATTERN.test(text);
 }
 
+/**
+ * A project review mentions drafts and "do not modify GitHub"; the generic
+ * compound-request guard would otherwise split it as state query + mutation.
+ * Only an explicit read-only constraint gets this exemption.
+ */
+export function isReadOnlyProjectReviewRequest(text: string): boolean {
+  return (
+    wantsProjectReview(text) &&
+    /(?:只读|不要(?:实际)?(?:修改|写入|创建|提交|评论|发送)|不(?:实际)?修改|禁止(?:写入|修改)|read[\s-]?only|no\s+writes?)/i.test(
+      text,
+    )
+  );
+}
+
 const STATE_QUERY_PATTERNS = [
   /当前(?:的)?任务/,
   /任务(?:和|与|及)提醒/,
@@ -671,7 +685,8 @@ export class Router implements InboundHandler {
     if (
       decision.action !== "reply" &&
       decision.action !== "query_status" &&
-      isCompoundControlRequest(context.text)
+      isCompoundControlRequest(context.text) &&
+      !isReadOnlyProjectReviewRequest(context.text)
     ) {
       this.#reply(
         context,
