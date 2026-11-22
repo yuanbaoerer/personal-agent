@@ -1330,6 +1330,76 @@
         }
       }
     },
+    "/plans/{id}/replan": {
+      "post": {
+        "operationId": "replanPlan",
+        "summary": "Replace a paused plan with a bounded new active version",
+        "tags": [
+          "plans"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "steps"
+                ],
+                "properties": {
+                  "steps": {
+                    "type": "array",
+                    "minItems": 3,
+                    "maxItems": 5,
+                    "items": {
+                      "$ref": "#/components/schemas/PlanStepSpec"
+                    }
+                  },
+                  "budget": {
+                    "$ref": "#/components/schemas/PlanBudget"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Replanned active version"
+          },
+          "400": {
+            "description": "Invalid plan, changed completed step or expanded budget"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Plan not found"
+          },
+          "409": {
+            "description": "Plan is not paused/active or the task is closed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
     "/plans/{id}/activate": {
       "post": {
         "operationId": "activatePlan",

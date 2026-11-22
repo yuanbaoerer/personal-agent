@@ -35,6 +35,7 @@ const expected: Record<string, string[]> = {
   "/plans": ["get", "post"],
   "/plans/{id}": ["get"],
   "/plans/{id}/revise": ["post"],
+  "/plans/{id}/replan": ["post"],
   "/plans/{id}/activate": ["post"],
   "/plans/{id}/pause": ["post"],
   "/plans/{id}/resume": ["post"],
