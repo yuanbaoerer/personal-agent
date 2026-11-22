@@ -702,9 +702,17 @@ export type RouterAction =
   | "confirm_schedule"
   | "cancel_schedule";
 
+/** Non-authorizing classification of a plain reply. */
+export type RouterReplyKind = "chat" | "clarify" | "plan_proposal";
+
 export interface RouterDecision {
   action: RouterAction;
   text: string;
+  /**
+   * Set only for action=reply. `plan_proposal` is a text outline: it never
+   * creates a Plan record, a Task, or an execution authorization.
+   */
+  replyKind?: RouterReplyKind;
   task?: {
     goal: string;
     completionCriteria: string;
