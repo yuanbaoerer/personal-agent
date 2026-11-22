@@ -162,11 +162,16 @@ type TurnCandidate = {
   turn: ConversationTurn;
   at: string;
   id: string;
+  /** Index of the user turn this message is anchored to; -1 when none. */
+  anchor: number;
 };
 
 function compareTurns(a: TurnCandidate, b: TurnCandidate): number {
   if (a.at !== b.at) {
     return a.at < b.at ? -1 : 1;
+  }
+  if (a.anchor !== b.anchor) {
+    return a.anchor - b.anchor;
   }
   // A user message and the reply it caused can share a timestamp; the user
   // side is always the earlier turn.
@@ -174,6 +179,38 @@ function compareTurns(a: TurnCandidate, b: TurnCandidate): number {
     return a.turn.role === "user" ? -1 : 1;
   }
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
+
+/** The inbox this outbox row answers, from its durable causal keys. */
+function causalInboxId(row: {
+  business_key: string;
+  trace_id: string | null;
+  task_source_key: string | null;
+}): string | undefined {
+  const fromKey = /^inbox:([^:]+):/.exec(row.business_key)?.[1];
+  if (fromKey !== undefined) {
+    return fromKey;
+  }
+  const fromTrace = /^inbox:([^:]+)$/.exec(row.trace_id ?? "")?.[1];
+  if (fromTrace !== undefined) {
+    return fromTrace;
+  }
+  return /^inbox:([^:]+):task$/.exec(row.task_source_key ?? "")?.[1];
+}
+
+/** Last user turn received at or before `at`; -1 when the reply precedes all. */
+function latestUserAnchor(
+  ascending: readonly { id: string; received_at: string }[],
+  at: string,
+): number {
+  let anchor = -1;
+  for (let index = 0; index < ascending.length; index += 1) {
+    const row = ascending[index];
+    if (row !== undefined && row.received_at <= at) {
+      anchor = index;
+    }
+  }
+  return anchor;
 }
 
 function clipTurn(
@@ -716,9 +753,14 @@ export class Store {
       id: string;
       text: string;
       created_at: string;
+      business_key: string;
+      trace_id: string | null;
+      task_source_key: string | null;
     }>(
-      `SELECT o.id, o.text, o.created_at
+      `SELECT o.id, o.text, o.created_at, o.business_key, o.trace_id,
+              t.source_key AS task_source_key
        FROM pa_outbox o
+       LEFT JOIN pa_tasks t ON t.id = o.task_id
        WHERE ${outboxWhere}
        ORDER BY o.created_at DESC, o.id DESC
        LIMIT ?`,
@@ -734,6 +776,12 @@ export class Store {
       ...outboxParams,
     )[0];
 
+    // Timestamps can collide when a reply and the next message land in the
+    // same millisecond. Anchor each assistant reply to the user turn it
+    // answers (business key/trace/task source) so ties keep causal order.
+    const userAscending = [...userRows].reverse();
+    const userIndex = new Map(userAscending.map((row, index) => [row.id, index]));
+
     const candidates: TurnCandidate[] = [
       ...userRows.map((row) => ({
         turn: {
@@ -747,17 +795,25 @@ export class Store {
         },
         at: row.received_at,
         id: row.id,
+        anchor: userIndex.get(row.id) ?? 0,
       })),
-      ...assistantRows.map((row) => ({
-        turn: {
-          role: "assistant" as const,
-          text: row.text,
+      ...assistantRows.map((row) => {
+        const causalInbox = causalInboxId(row);
+        const anchor =
+          (causalInbox === undefined ? undefined : userIndex.get(causalInbox)) ??
+          latestUserAnchor(userAscending, row.created_at);
+        return {
+          turn: {
+            role: "assistant" as const,
+            text: row.text,
+            at: row.created_at,
+            outboxId: row.id,
+          },
           at: row.created_at,
-          outboxId: row.id,
-        },
-        at: row.created_at,
-        id: row.id,
-      })),
+          id: row.id,
+          anchor,
+        };
+      }),
     ].sort(compareTurns);
 
     const kept: ConversationTurn[] = [];
