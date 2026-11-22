@@ -2,7 +2,7 @@
 
 > **2026-11-21 产品定义升级 / 规划，不代表已实现**。代码核对基线 main `345faacf803fe3d230ab1843295b18d353e5da66`；执行前应重新检查最新 main。实施 Issue：[CONV-01 #89](https://github.com/yuanbaoerer/personal-agent/issues/89)、[PLAN-01 #90](https://github.com/yuanbaoerer/personal-agent/issues/90)、[PLAN-02 #91](https://github.com/yuanbaoerer/personal-agent/issues/91)、[EXP-01 #92](https://github.com/yuanbaoerer/personal-agent/issues/92)。与 [#41 MVP Functional Ready](https://github.com/yuanbaoerer/personal-agent/issues/41)、[21 · 私有 MVP 实施纲领](21-mvp-functional-ready.md)、[12 · Mode Architecture](12-mode-architecture.md)、[24 · GitHub Project Management](24-github-project-management.md) 并存。**原 M01–M14、K/SEC、E3/E4 验收及正式发布门槛不降低。**
 
-> **2026-11-22 实施状态**：P0-A/B/C 的代码路径已通过 PR #106–#110 合并到 main（`a0b6bdf`，线性栈 CX-01 → PL-01 → PL-02）；CX-02 聊天侧计划修订（`revise_plan` + `/plan replan` + PlanDiff）已通过 PR #112 合并（main `acc5bd6`）；E1 记录见 [E1 acceptance](acceptance/2026-11-22-conversational-planning-e1.md)。runbook 前置步骤已在 live 数据库上执行（服务重启、schema 17→25、健康检查、preflight），见 [runbook execution](acceptance/2026-11-22-conversational-planning-runbook.md)；真实 Feishu 交互与 GitHub/成本 E3/E4 仍为 **BLOCKED**，不能据此宣称 Pilot。原 #41 M01–M14 与安全/预算门槛不变。
+> **2026-11-22 实施状态**：P0-A/B/C 的代码路径已通过 PR #106–#110 合并到 main（`a0b6bdf`，线性栈 CX-01 → PL-01 → PL-02）；CX-02 聊天侧计划修订（`revise_plan` + `/plan replan` + PlanDiff）已通过 PR #112 合并，PL-03 的 replan/暂停/取消/恢复同时交付（main `5e9ac94`）；E1 记录见 [E1 acceptance](acceptance/2026-11-22-conversational-planning-e1.md)。runbook 前置步骤已在 live 数据库上执行（服务重启、schema 17→25、健康检查、preflight），见 [runbook execution](acceptance/2026-11-22-conversational-planning-runbook.md)；真实 Feishu 交互与 GitHub/成本 E3/E4 仍为 **BLOCKED**，不能据此宣称 Pilot。原 #41 M01–M14 与安全/预算门槛不变。
 
 ## 1. 产品北极星和实际差异
 
@@ -98,17 +98,17 @@ Owner message
 
 ## 5. 交付依赖、PR 顺序及并行化
 
-| Workstream / PR | 目标 | 前置 | 不在范围 |
-| --- | --- | --- | --- |
-| CX-01 | Conversation 上下文/自然 chat vs task routing | #39 已有 Intent、#41 入口 | 第三方渠道/向量检索 |
-| CX-02 | Discussion → Plan Draft / Clarification / PlanDiff UX | CX-01 可并行 PLAN-01 schema | 全自动后台 |
-| PL-01 | Plan/Step Store + validated DAG + API/CLI | TaskService + #7/#28 守卫 | Organization Mode |
-| PL-02 | Dependent Step dispatch + verifier + budget fence | PL-01 | 未经许可的写入 |
-| PL-03 | Replan / pause / resume / cancellation / recovery | PL-02 | 无界递归 |
-| ACC-01 | E1/E3/E4 真实验收和修复，维护效果指标 | CX/PL 与 #60/#62 | 仅凭 CI 宣称发布 |
-| 并行现有业务线 | #60/#62 L2-R 项目真实感知、#68 账号、#7/#28 安全 | 独立 Workstream | 为聊天重造 GH Plugin |
+| Workstream / PR | 目标 | 前置 | 不在范围 | 状态（2026-11-22） |
+| --- | --- | --- | --- | --- |
+| CX-01 | Conversation 上下文/自然 chat vs task routing | #39 已有 Intent、#41 入口 | 第三方渠道/向量检索 | ✅ 已合并 #106/#107（E1） |
+| CX-02 | Discussion → Plan Draft / Clarification / PlanDiff UX | CX-01 可并行 PLAN-01 schema | 全自动后台 | ✅ 已合并 #112（E1） |
+| PL-01 | Plan/Step Store + validated DAG + API/CLI | TaskService + #7/#28 守卫 | Organization Mode | ✅ 已合并 #108（E1） |
+| PL-02 | Dependent Step dispatch + verifier + budget fence | PL-01 | 未经许可的写入 | ✅ 已合并 #109（E1） |
+| PL-03 | Replan / pause / resume / cancellation / recovery | PL-02 | 无界递归 | ✅ 随 PL-02/CX-02 交付（有界 replan、暂停/恢复/取消、重启/孤儿清理、局部重试；E1） |
+| ACC-01 | E1/E3/E4 真实验收和修复，维护效果指标 | CX/PL 与 #60/#62 | 仅凭 CI 宣称发布 | 🔶 前置检查 PASS；E3/E4 BLOCKED（#92 open） |
+| 并行现有业务线 | #60/#62 L2-R 项目真实感知、#68 账号、#7/#28 安全 | 独立 Workstream | 为聊天重造 GH Plugin | 按各自 Issue 独立推进 |
 
-**建议下一开发 PR**：先 CX-01 多轮会话与自然回复，再 PL-01 持久化小 Plan；两者可不同分支并行评审。PL-02/PL-03 在边界经过测试后实施；#92 严格按功能累积真实证据。#61 GitHub Issue 写可以在对应安全条件满足时独立推进，但不得被误称为“自然对话能力完成”。
+**当前下一阶段**：代码 Workstream（CX-01/CX-02/PL-01/PL-02/PL-03）已合并，下一步是 ACC-01 的真实门禁：配置只读 GitHub 允许仓库/凭据与 ProjectBinding，owner 在真实飞书私聊执行 C01–C12，再做受控重启/成本记录。#92 在 E3/E4 证据齐备前保持 open；不得用 E1/CI 结果替代。
 
 ## 6. 产品验收示例
 

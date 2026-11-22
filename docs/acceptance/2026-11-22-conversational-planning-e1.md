@@ -17,6 +17,17 @@
 
 CX-01/PL-01/PL-02 were merged to main at `a0b6bdf` via #106–#110; CX-02 was merged via #112 at `acc5bd6`. A real acceptance run must record the actual deployed/main SHA instead of a branch tip.
 
+## Implementation progress (2026-11-22)
+
+| Workstream | Status | Evidence |
+| --- | --- | --- |
+| CX-01 conversation context/routing | ✅ merged #106–#107 | `conversation-window.test.ts`, `conv-01-routing.test.ts` |
+| CX-02 plan draft/revision UX | ✅ merged #112 | `plan-query.test.ts` draft/revise/replan/diff cases |
+| PL-01 Plan store/DAG/API/CLI | ✅ merged #108 | `plans.test.ts`, `plans-api.test.ts`, `cli.test.ts` |
+| PL-02 bounded execution | ✅ merged #109 | `plan-executor.test.ts`, tool-budget case |
+| PL-03 replan/pause/resume/cancel/recovery | ✅ delivered with PL-02/CX-02 | bounded replan, running-safe stop, superseded/orphan sweep, phase tests |
+| ACC-01 real acceptance | 🔶 prerequisites PASS; E3/E4 BLOCKED | runbook record; #92 remains open |
+
 ## Commands and results
 
 | Branch | Command | Result |
