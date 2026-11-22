@@ -259,4 +259,89 @@ describe("legacy schema migration", () => {
       await rm(directory, { recursive: true, force: true });
     }
   });
+
+  it("upgrades a schema-23 database that already has budget_key and backfills children", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pa-migrate-23b-"));
+    const path = join(directory, "agent.sqlite");
+    try {
+      const created = openStore(path);
+      let parentId = "";
+      let childId = "";
+      try {
+        const owner = created.bindOwner({
+          channel: "feishu",
+          accountId: "app",
+          actorId: "owner",
+          verifiedAt: "2026-01-01T00:00:00.000Z",
+        });
+        const conversation = created.upsertConversation({
+          ownerId: owner.id,
+          channel: "feishu",
+          accountId: "app",
+          platformConversationId: "chat",
+          kind: "p2p",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        });
+        const tasks = new TaskRepository(created.db);
+        const parent = tasks.insert({
+          ownerId: owner.id,
+          conversationId: conversation.id,
+          sourceKey: "schema-23b:parent",
+          goal: "parent",
+          completionCriteria: "criteria",
+          mandate: { resources: ["chat"], tools: [] },
+          createdAt: "2026-01-01T00:00:00.000Z",
+        }).task;
+        parentId = parent.id;
+        created.db.run(
+          `INSERT INTO pa_plans
+            (id, owner_id, parent_task_id, task_revision, input_seq, plan_version,
+             status, project_key, approved_scope_ref, budget_json, created_at, updated_at)
+           VALUES ('legacy-plan', ?, ?, 1, 0, 1, 'active', NULL, NULL, ?, ?, ?)`,
+          owner.id,
+          parent.id,
+          '{"maxSteps":3,"maxAttemptsPerStep":1,"timeoutMs":300000}',
+          "2026-01-01T00:00:00.000Z",
+          "2026-01-01T00:00:00.000Z",
+        );
+        childId = tasks.insert({
+          ownerId: owner.id,
+          conversationId: conversation.id,
+          sourceKey: "schema-23b:child",
+          goal: "child",
+          completionCriteria: "criteria",
+          mandate: { resources: ["chat"], tools: [] },
+          planId: "legacy-plan",
+          planStepKey: "A",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        }).task.id;
+      } finally {
+        created.close();
+      }
+
+      const legacy = new DatabaseSync(path);
+      legacy.exec("UPDATE pa_meta SET value = '23' WHERE key = 'schema_version'");
+      legacy.close();
+
+      // The 1f971e8 shape already has the column; reopening must not try to
+      // add it again, and the existing plan child must be backfilled.
+      const upgraded = openStore(path);
+      try {
+        const columns = upgraded.db
+          .all<{ name: string }>("PRAGMA table_info(pa_tasks)")
+          .filter((row) => row.name === "budget_key");
+        assert.equal(columns.length, 1);
+        const version = upgraded.db.all<{ value: string }>(
+          "SELECT value FROM pa_meta WHERE key = 'schema_version'",
+        )[0]?.value;
+        assert.equal(Number(version), LATEST_SCHEMA_VERSION);
+        const child = new TaskRepository(upgraded.db).get(childId);
+        assert.equal(child?.budgetKey, `plan:${parentId}`);
+      } finally {
+        upgraded.close();
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
 });

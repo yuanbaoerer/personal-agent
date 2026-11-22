@@ -105,6 +105,18 @@ export class PlanExecutor {
         this.#cancelSiblings(plan, now.toISOString());
         continue;
       }
+      if (isStoppedParent(parent.status)) {
+        // A direct task cancel/terminal state is authoritative even when the
+        // plan itself was paused first.
+        this.#plans.setPlanStatus(
+          plan.id,
+          ["paused", "active"],
+          "cancelled",
+          now.toISOString(),
+        );
+        this.#settleCancelled(plan);
+        continue;
+      }
       if (parent.status !== "waiting_external") {
         continue;
       }
@@ -130,10 +142,9 @@ export class PlanExecutor {
       }
     }
     for (const plan of this.#plans.listPlansByStatus("cancelled")) {
-      const parent = this.#tasks.get(plan.parentTaskId);
-      if (parent !== undefined && parent.planId === plan.id) {
-        this.#settleCancelled(plan);
-      }
+      // Idempotent: cancels this version's children and only touches the
+      // parent when the version still owns it.
+      this.#settleCancelled(plan);
     }
     for (const plan of this.#plans.listPlansByStatus("completed")) {
       const parent = this.#tasks.get(plan.parentTaskId);
@@ -168,7 +179,11 @@ export class PlanExecutor {
     // The parent may be gone; settle this plan's own children above.
     if (plan.status === "completed") {
       const parent = this.#tasks.get(plan.parentTaskId);
-      if (parent !== undefined && parent.planId === plan.id) {
+      if (
+        parent !== undefined &&
+        parent.planId === plan.id &&
+        parent.status === "waiting_external"
+      ) {
         this.#settleCompleted(plan, parent, this.#plans.listSteps(plan.id));
       }
       return { status: "done" };
@@ -181,13 +196,7 @@ export class PlanExecutor {
       this.#plans.setPlanStatus(plan.id, ["active"], "cancelled", this.#now().toISOString());
       return { status: "done" };
     }
-    if (
-      parent.status === "cancelling" ||
-      parent.status === "cancelled" ||
-      parent.status === "failed" ||
-      parent.status === "succeeded" ||
-      parent.status === "needs_review"
-    ) {
+    if (isStoppedParent(parent.status)) {
       // A direct task cancel/revision terminal state stops the plan and its
       // children; settlement also clears the binding so a cancelling parent
       // can finish through onActionSettled.
@@ -643,6 +652,16 @@ export class PlanExecutor {
 
 function isTerminal(status: TaskRecord["status"]): boolean {
   return status === "succeeded" || status === "failed" || status === "cancelled";
+}
+
+function isStoppedParent(status: TaskRecord["status"]): boolean {
+  return (
+    status === "cancelling" ||
+    status === "cancelled" ||
+    status === "failed" ||
+    status === "succeeded" ||
+    status === "needs_review"
+  );
 }
 
 function evidenceRefsOf(task: TaskRecord): string[] {

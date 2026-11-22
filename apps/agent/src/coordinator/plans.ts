@@ -510,6 +510,7 @@ export class PlanService {
       throw new PlanError("invalid_transition", "pause the plan before revising it");
     }
     this.#assertNoRunningVersions(task.id, source.id);
+    this.#assertNoInFlightActions(task.id);
     const latest = this.#plans.latestForTask(task.id);
     const now = this.#now().toISOString();
     const planVersion = (latest?.planVersion ?? source.planVersion) + 1;
@@ -794,6 +795,7 @@ export class PlanService {
       throw new PlanError("conflict_active_plan", "another plan version is already active");
     }
     this.#assertNoRunningVersions(task.id, plan.id);
+    this.#assertNoInFlightActions(task.id);
     // The catalog can change without a task revision; re-check the steps
     // against the live mandate/capabilities before making them runnable.
     resolvePlanSpec(
@@ -953,9 +955,8 @@ export class PlanService {
     for (const version of this.#plans.listVersions(taskId)) {
       if (
         version.id === exceptPlanId ||
-        (version.status !== "draft" &&
-          version.status !== "active" &&
-          version.status !== "paused")
+        version.status === "completed" ||
+        version.status === "cancelled"
       ) {
         continue;
       }

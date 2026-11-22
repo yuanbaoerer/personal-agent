@@ -9,7 +9,9 @@ import type { Db } from "./db.ts";
  * lives in pa_meta rather than `PRAGMA user_version`, which Durable Object
  * SQLite does not expose through its typed API.
  */
-const migrations: readonly (readonly string[])[] = [
+type MigrationStatement = string | ((db: Db) => void);
+
+const migrations: readonly (readonly MigrationStatement[])[] = [
   [
     `CREATE TABLE pa_identities (
       id TEXT PRIMARY KEY,
@@ -633,12 +635,25 @@ const migrations: readonly (readonly string[])[] = [
     `CREATE INDEX IF NOT EXISTS pa_plan_steps_task_idx ON pa_plan_steps (task_id)`,
   ],
   [
-    // Stable plan-lineage budget key. This must be a separate migration:
-
-    // databases already at the previous version have the shipped entry
-    // applied and only run entries added after it.
-    `ALTER TABLE pa_tasks ADD COLUMN budget_key TEXT`,
+    // Stable plan-lineage budget key. Some databases at schema 23 already
+    // have the column (the intermediate branch tip added it early), so the
+    // ALTER must be conditional. Existing plan children are backfilled to
+    // the parent-task lineage instead of keeping a per-plan-row counter.
+    (db) => {
+      const columns = db.all<{ name: string }>("PRAGMA table_info(pa_tasks)");
+      if (!columns.some((column) => column.name === "budget_key")) {
+        db.exec("ALTER TABLE pa_tasks ADD COLUMN budget_key TEXT");
+      }
+    },
     `CREATE INDEX IF NOT EXISTS pa_tasks_budget_idx ON pa_tasks (budget_key)`,
+    `UPDATE pa_tasks
+       SET budget_key = 'plan:' || (
+         SELECT p.parent_task_id FROM pa_plans p WHERE p.id = pa_tasks.plan_id
+       )
+     WHERE plan_id IS NOT NULL
+       AND plan_step_key IS NOT NULL
+       AND budget_key IS NULL
+       AND EXISTS (SELECT 1 FROM pa_plans p WHERE p.id = pa_tasks.plan_id)`,
   ],
 ];
 
@@ -687,7 +702,11 @@ export function migrate(db: Db): void {
 
     db.transaction(() => {
       for (const statement of statements) {
-        db.exec(statement);
+        if (typeof statement === "string") {
+          db.exec(statement);
+        } else {
+          statement(db);
+        }
       }
       db.run(
         `INSERT INTO pa_meta (key, value) VALUES (?, ?)

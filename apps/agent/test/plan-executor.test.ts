@@ -318,6 +318,28 @@ describe("plan executor", () => {
     assert.equal(services.tasks.get(parent.id)?.status, "waiting_external");
   });
 
+  it("stops a paused plan when the parent is cancelled directly", async () => {
+    const { services, parent, executor } = setup();
+    const plan = services.planService.create(services.owner.id, parent.id, {
+      steps: steps(),
+    });
+    services.planService.activate(services.owner.id, plan.plan.id);
+    await executor.tick(plan.plan.id);
+    const child = childTasks(services, parent)[0];
+    assert.ok(child);
+    services.planService.pause(services.owner.id, plan.plan.id);
+
+    services.taskService.cancel(parent.id);
+    executor.sweep();
+
+    assert.equal(services.tasks.get(parent.id)?.status, "cancelled");
+    assert.equal(
+      services.planService.get(services.owner.id, plan.plan.id)?.plan.status,
+      "cancelled",
+    );
+    assert.notEqual(services.tasks.get(child.id)?.status, "queued");
+  });
+
   it("stops the plan when the parent is cancelled directly", async () => {
     const { services, parent, executor } = setup();
     const plan = services.planService.create(services.owner.id, parent.id, {
