@@ -13,7 +13,7 @@
 | PL-01 plan store | `feat/plan-01-store` | `5c8fece` | schema/service/API/CLI + review fixes, rebased on CX-01 (`26fb0f5`, `ef362cc`, `5c8fece`) |
 | PL-02 executor | `feat/plan-02-executor` | `40891da` | child-task executor, shared budgets, progress/replan, model-proposed drafts, review-hardened cancellation/settlement and idempotent schema upgrade (`5ef92ed`…`40891da`) |
 | Acceptance record | `docs/exp-01-evidence` | merged via #110 | docs only |
-| CX-02 revision | `feat/cx-02-plan-revision` | `5b20c5b` | chat draft revision + /plan replan + PlanDiff, budget-preserving (pending) |
+| CX-02 revision | `feat/cx-02-plan-revision` | `781ee30` | chat draft revision + /plan replan + PlanDiff, budget-preserving, parent-state guidance (pending) |
 
 CX-01/PL-01/PL-02 were merged to main at `a0b6bdf` via #106–#110. CX-02/revision is pending. A real acceptance run must record the actual deployed/main SHA instead of a branch tip.
 
@@ -27,7 +27,7 @@ CX-01/PL-01/PL-02 were merged to main at `a0b6bdf` via #106–#110. CX-02/revisi
 | `feat/plan-01-store` | `npm test` | 536 tests pass |
 | `feat/plan-02-executor` | `npm run typecheck` | pass |
 | `feat/plan-02-executor` | `npm test` | 582 tests pass |
-| `feat/cx-02-plan-revision` | `npm test` | 591 tests pass |
+| `feat/cx-02-plan-revision` | `npm test` | 592 tests pass |
 | all | `node --test apps/agent/test/plans.test.ts apps/agent/test/plan-executor.test.ts apps/agent/test/plans-api.test.ts` | 39 tests pass |
 
 Environment: macOS x64, local Node, `:memory:` SQLite for tests, `FakeRuntime` for model answers. No provider call, no Feishu send, no GitHub request.
@@ -38,7 +38,7 @@ Environment: macOS x64, local Node, `:memory:` SQLite for tests, `FakeRuntime` f
 | --- | --- | --- | --- |
 | C01 普通聊天 6 轮、不误建 Task | E1 | `conv-01-routing.test.ts` — 6-turn scripted flow; only the explicit “开始执行” turn creates a Task; restart restores the window; a second chat sees an empty window | PARTIAL (E1 pass, E3 blocked) |
 | C02 讨论→3–5 step Plan、草稿非执行 | E1 | `plan-query.test.ts` — a `draft_plan` Router decision persists a validated draft and creates no child task; a misrouted state question is redirected before any draft; `plans.test.ts`/`plans-api.test.ts` cover creation/activation separation | PARTIAL (E1 pass, E3 blocked) |
-| C03 修改计划、PlanDiff、旧版本失效 | E1 | `plans.test.ts` “revision supersedes…”; `plans-api.test.ts` pause+revise+diff, partial budget merge, superseded 409; `plan-query.test.ts` chat `revise_plan` + PlanDiff, `/plan replan <id> confirm`, budget preservation/rejection, natural planRef, multi-draft/draft+active asks, cross-conversation task/focus blocking, and state-specific rejection | PARTIAL (E1 pass, E3 blocked) |
+| C03 修改计划、PlanDiff、旧版本失效 | E1 | `plans.test.ts` “revision supersedes…”; `plans-api.test.ts` pause+revise+diff, partial budget merge, superseded 409; `plan-query.test.ts` chat `revise_plan` + PlanDiff, `/plan replan <id> confirm`, budget preservation/rejection, natural planRef, multi-draft/draft+active asks, cross-conversation task/focus blocking, and parent-aware paused guidance | PARTIAL (E1 pass, E3 blocked) |
 | C04 依赖步骤执行、真实 receipts、Worker 不能自证 | E1 | `plan-executor.test.ts` — A→B→C chain as child Tasks; final step proves the parent completion criteria; parent settles only from that verified child | BLOCKED for E3 — uses `FakeRuntime` and no GitHub/State receipts |
 | C05 忙时进度追问、不编造状态 | E1 | `plan-query.test.ts` — natural progress question answers from persisted Plan/Step state with no Worker/model call; `/plans`, `/plan <id>`, `/plan diff`; cross-conversation isolation | PARTIAL (E1 pass, no real busy-Worker E3) |
 | C06 补充、暂停/继续/取消、seq/fencing | E1 | `plans.test.ts` pause/resume/cancel + stale input/revision rejection; `plan-executor.test.ts` cancel settles parent and children; TaskService retains input barriers/fencing | PARTIAL — mid-run supplement→plan revision is not wired |
