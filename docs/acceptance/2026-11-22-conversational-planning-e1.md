@@ -13,9 +13,9 @@
 | PL-01 plan store | `feat/plan-01-store` | `5c8fece` | schema/service/API/CLI + review fixes, rebased on CX-01 (`26fb0f5`, `ef362cc`, `5c8fece`) |
 | PL-02 executor | `feat/plan-02-executor` | `40891da` | child-task executor, shared budgets, progress/replan, model-proposed drafts, review-hardened cancellation/settlement and idempotent schema upgrade (`5ef92ed`…`40891da`) |
 | Acceptance record | `docs/exp-01-evidence` | merged via #110 | docs only |
-| CX-02 revision | `feat/cx-02-plan-revision` | `a1d17fc` | chat draft revision + atomic running-safe /plan replan with durable orphan cleanup + PlanDiff, budget-preserving, conversation-scoped refs (pending) |
+| CX-02 revision | `feat/cx-02-plan-revision` | merged via #112 (`acc5bd6`) | chat draft revision + atomic running-safe /plan replan with durable orphan cleanup + PlanDiff, budget-preserving, conversation-scoped refs |
 
-CX-01/PL-01/PL-02 were merged to main at `a0b6bdf` via #106–#110. CX-02/revision is pending. A real acceptance run must record the actual deployed/main SHA instead of a branch tip.
+CX-01/PL-01/PL-02 were merged to main at `a0b6bdf` via #106–#110; CX-02 was merged via #112 at `acc5bd6`. A real acceptance run must record the actual deployed/main SHA instead of a branch tip.
 
 ## Commands and results
 
