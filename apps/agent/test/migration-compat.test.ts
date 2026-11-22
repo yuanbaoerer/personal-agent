@@ -8,6 +8,7 @@ import { describe, it } from "node:test";
 import { LATEST_SCHEMA_VERSION } from "../src/storage/schema.ts";
 import { openStore } from "../src/storage/node.ts";
 import { ProjectRepository } from "../src/storage/projects.ts";
+import { TaskRepository } from "../src/storage/tasks.ts";
 
 /**
  * A database created on main (schema 18) must upgrade in place. This guards
@@ -192,6 +193,65 @@ describe("legacy schema migration", () => {
         )[0];
         assert.equal(action?.status, "succeeded");
         assert.equal(action?.source_key, "legacy:action");
+      } finally {
+        store.close();
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("upgrades a schema-23 database that predates the budget key", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pa-migrate-23-"));
+    const path = join(directory, "agent.sqlite");
+    try {
+      // Build the previous tip, then remove the column and roll the version
+      // back to simulate a database created before the new migration entry.
+      const created = openStore(path);
+      created.close();
+      const legacy = new DatabaseSync(path);
+      legacy.exec(`
+        DROP INDEX IF EXISTS pa_tasks_budget_idx;
+        ALTER TABLE pa_tasks DROP COLUMN budget_key;
+        UPDATE pa_meta SET value = '23' WHERE key = 'schema_version';
+      `);
+      legacy.close();
+
+      const store = openStore(path);
+      try {
+        const version = store.db.all<{ value: string }>(
+          "SELECT value FROM pa_meta WHERE key = 'schema_version'",
+        )[0]?.value;
+        assert.equal(Number(version), LATEST_SCHEMA_VERSION);
+        const columns = store.db
+          .all<{ name: string }>("PRAGMA table_info(pa_tasks)")
+          .map((row) => row.name);
+        assert.ok(columns.includes("budget_key"));
+
+        const owner = store.bindOwner({
+          channel: "feishu",
+          accountId: "app",
+          actorId: "owner",
+          verifiedAt: "2026-01-01T00:00:00.000Z",
+        });
+        const conversation = store.upsertConversation({
+          ownerId: owner.id,
+          channel: "feishu",
+          accountId: "app",
+          platformConversationId: "chat",
+          kind: "p2p",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        });
+        const task = new TaskRepository(store.db).insert({
+          ownerId: owner.id,
+          conversationId: conversation.id,
+          sourceKey: "schema-23:task",
+          goal: "post-upgrade task",
+          completionCriteria: "criteria",
+          mandate: { resources: ["chat"], tools: [] },
+          createdAt: "2026-01-01T00:00:00.000Z",
+        }).task;
+        assert.equal(task.goal, "post-upgrade task");
       } finally {
         store.close();
       }

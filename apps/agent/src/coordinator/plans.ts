@@ -13,6 +13,7 @@ import type { CapabilityView } from "../plugins/fence.ts";
 import { PlanRepository } from "../storage/plans.ts";
 import type { Store } from "../storage/store.ts";
 import type { TaskRepository } from "../storage/tasks.ts";
+import type { ActionRepository } from "../storage/actions.ts";
 
 export const PLAN_MIN_STEPS = 3;
 export const PLAN_MAX_STEPS = 5;
@@ -422,6 +423,7 @@ export interface PlanServiceDeps {
   store: Store;
   plans: PlanRepository;
   tasks: TaskRepository;
+  actions?: ActionRepository;
   capabilities?: CapabilityView;
   now?: () => Date;
 }
@@ -435,6 +437,7 @@ export class PlanService {
   readonly #store: Store;
   readonly #plans: PlanRepository;
   readonly #tasks: TaskRepository;
+  readonly #actions?: ActionRepository;
   readonly #capabilities?: CapabilityView;
   readonly #now: () => Date;
   #onLifecycle?: (planId: string) => void;
@@ -443,6 +446,7 @@ export class PlanService {
     this.#store = deps.store;
     this.#plans = deps.plans;
     this.#tasks = deps.tasks;
+    this.#actions = deps.actions;
     this.#capabilities = deps.capabilities;
     this.#now = deps.now ?? (() => new Date());
   }
@@ -505,6 +509,7 @@ export class PlanService {
     if (oldSteps.some((step) => step.status === "running")) {
       throw new PlanError("invalid_transition", "pause the plan before revising it");
     }
+    this.#assertNoRunningVersions(task.id, source.id);
     const latest = this.#plans.latestForTask(task.id);
     const now = this.#now().toISOString();
     const planVersion = (latest?.planVersion ?? source.planVersion) + 1;
@@ -589,6 +594,8 @@ export class PlanService {
     if (oldSteps.some((step) => step.status === "running")) {
       throw new PlanError("invalid_transition", "pause the plan before replanning");
     }
+    this.#assertNoRunningVersions(task.id, source.id);
+    this.#assertNoInFlightActions(task.id);
     const spec = resolvePlanSpec(input, task, this.#capabilities);
     assertBudgetNotExpanded(spec.budget, source.budget);
 
@@ -733,6 +740,8 @@ export class PlanService {
         "parent task already has an active Worker; wait for or cancel it before activating a plan",
       );
     }
+    this.#assertNoRunningVersions(task.id, plan.id);
+    this.#assertNoInFlightActions(task.id);
     const steps = this.#plans.listSteps(plan.id);
     resolvePlanSpec(
       { steps: planStepsToSpecs(steps), budget: plan.budget },
@@ -784,6 +793,7 @@ export class PlanService {
     if (this.#plans.activeForTask(task.id) !== undefined) {
       throw new PlanError("conflict_active_plan", "another plan version is already active");
     }
+    this.#assertNoRunningVersions(task.id, plan.id);
     // The catalog can change without a task revision; re-check the steps
     // against the live mandate/capabilities before making them runnable.
     resolvePlanSpec(
@@ -935,6 +945,38 @@ export class PlanService {
   #assertTaskOpen(task: TaskRecord): void {
     if (TERMINAL_TASK_STATUSES.has(task.status)) {
       throw new PlanError("task_terminal", `parent task is ${task.status}`);
+    }
+  }
+
+  /** No other non-terminal version may still have a running step. */
+  #assertNoRunningVersions(taskId: string, exceptPlanId?: string): void {
+    for (const version of this.#plans.listVersions(taskId)) {
+      if (
+        version.id === exceptPlanId ||
+        (version.status !== "draft" &&
+          version.status !== "active" &&
+          version.status !== "paused")
+      ) {
+        continue;
+      }
+      const running = this.#plans
+        .listSteps(version.id)
+        .find((step) => step.status === "running");
+      if (running !== undefined) {
+        throw new PlanError(
+          "invalid_transition",
+          `plan ${version.id.slice(0, 8)} still has a running step ${running.key}`,
+        );
+      }
+    }
+  }
+
+  #assertNoInFlightActions(taskId: string): void {
+    if ((this.#actions?.listInFlight(taskId).length ?? 0) > 0) {
+      throw new PlanError(
+        "invalid_transition",
+        "parent task has an in-flight action; wait for it to settle before binding a plan",
+      );
     }
   }
 

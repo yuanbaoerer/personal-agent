@@ -670,13 +670,14 @@ export class TaskService {
     if (task === undefined) {
       return;
     }
-    // A plan parent is settled by the PlanExecutor, not by the Worker loop.
-    if (this.#isPlanParent(task)) {
+    if (task.status === "cancelling") {
+      // Finish a cancellation even when the task is also a plan parent;
+      // otherwise its in-flight action receipt would be dropped forever.
+      this.#finalizeCancellation(taskId, now);
       return;
     }
-
-    if (task.status === "cancelling") {
-      this.#finalizeCancellation(taskId, now);
+    // A plan parent is otherwise settled by the PlanExecutor.
+    if (this.#isPlanParent(task)) {
       return;
     }
 

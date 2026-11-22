@@ -96,7 +96,11 @@ export class PlanExecutor {
     }
     for (const plan of this.#plans.listPlansByStatus("paused")) {
       const parent = this.#tasks.get(plan.parentTaskId);
-      if (parent === undefined || parent.status !== "waiting_external") {
+      if (
+        parent === undefined ||
+        parent.planId !== plan.id ||
+        parent.status !== "waiting_external"
+      ) {
         continue;
       }
       const steps = this.#plans.listSteps(plan.id);
@@ -120,9 +124,19 @@ export class PlanExecutor {
         );
       }
     }
+    for (const plan of this.#plans.listPlansByStatus("cancelled")) {
+      const parent = this.#tasks.get(plan.parentTaskId);
+      if (parent !== undefined && parent.planId === plan.id) {
+        this.#settleCancelled(plan);
+      }
+    }
     for (const plan of this.#plans.listPlansByStatus("completed")) {
       const parent = this.#tasks.get(plan.parentTaskId);
-      if (parent !== undefined && parent.status === "waiting_external") {
+      if (
+        parent !== undefined &&
+        parent.planId === plan.id &&
+        parent.status === "waiting_external"
+      ) {
         this.#settleCompleted(plan, parent, this.#plans.listSteps(plan.id));
       }
     }
@@ -146,6 +160,14 @@ export class PlanExecutor {
       this.#settleCancelled(plan);
       return { status: "done" };
     }
+    // The parent may be gone; settle this plan's own children above.
+    if (plan.status === "completed") {
+      const parent = this.#tasks.get(plan.parentTaskId);
+      if (parent !== undefined && parent.planId === plan.id) {
+        this.#settleCompleted(plan, parent, this.#plans.listSteps(plan.id));
+      }
+      return { status: "done" };
+    }
     if (plan.status !== "active") {
       return { status: "done" };
     }
@@ -154,8 +176,23 @@ export class PlanExecutor {
       this.#plans.setPlanStatus(plan.id, ["active"], "cancelled", this.#now().toISOString());
       return { status: "done" };
     }
-    if (isTerminal(parent.status)) {
-      this.#plans.setPlanStatus(plan.id, ["active"], "cancelled", this.#now().toISOString());
+    if (
+      parent.status === "cancelling" ||
+      parent.status === "cancelled" ||
+      parent.status === "failed" ||
+      parent.status === "succeeded" ||
+      parent.status === "needs_review"
+    ) {
+      // A direct task cancel/revision terminal state stops the plan and its
+      // children; settlement also clears the binding so a cancelling parent
+      // can finish through onActionSettled.
+      this.#plans.setPlanStatus(
+        plan.id,
+        ["active", "paused"],
+        "cancelled",
+        this.#now().toISOString(),
+      );
+      this.#settleCancelled(plan);
       return { status: "done" };
     }
     // A revision or supplement after activation invalidates the stored plan
@@ -478,7 +515,7 @@ export class PlanExecutor {
     // plan/parent outcome transaction to avoid nested BEGIN.
     this.#cancelSiblings(plan, now);
     this.#store.db.transaction(() => {
-      this.#plans.setPlanStatus(plan.id, ["active", "paused"], "paused", now);
+      this.#plans.setPlanStatus(plan.id, ["active", "paused", "completed"], "paused", now);
       if (!isTerminal(parent.status)) {
         this.#taskService.finishExternalAction(parent.id, {
           status: "needs_review",
@@ -501,7 +538,7 @@ export class PlanExecutor {
     const now = this.#now().toISOString();
     this.#cancelSiblings(plan, now);
     this.#store.db.transaction(() => {
-      this.#plans.setPlanStatus(plan.id, ["active", "paused"], "paused", now);
+      this.#plans.setPlanStatus(plan.id, ["active", "paused", "completed"], "paused", now);
       if (!isTerminal(parent.status)) {
         this.#taskService.finishExternalAction(parent.id, {
           status: "failed",
@@ -522,12 +559,10 @@ export class PlanExecutor {
 
   #settleCancelled(plan: PlanRecord): void {
     const parent = this.#tasks.get(plan.parentTaskId);
-    // A draft or superseded version never owns the parent; cancelling it must
-    // not cancel another plan's parent task.
-    if (parent === undefined || parent.planId !== plan.id) {
-      return;
-    }
+    const ownsParent = parent !== undefined && parent.planId === plan.id;
     const now = this.#now().toISOString();
+    // Always stop this plan's own children, even when a newer version has
+    // already taken over the parent task.
     for (const step of this.#plans.listSteps(plan.id)) {
       if (
         step.status === "blocked" ||
@@ -550,9 +585,12 @@ export class PlanExecutor {
         }
       }
     }
+    if (!ownsParent || parent === undefined) {
+      return;
+    }
     // The parent is a plan parent, so it has no assignment of its own; the
     // task cancellation path still clears actions/effects if any appeared.
-    if (!isTerminal(parent.status)) {
+    if (parent.status !== "cancelling" && !isTerminal(parent.status)) {
       this.#taskService.cancel(parent.id);
     }
     this.#tasks.clearPlanBinding(parent.id, now);

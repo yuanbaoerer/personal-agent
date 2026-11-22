@@ -294,6 +294,52 @@ describe("plan executor", () => {
     );
   });
 
+  it("cancels an old version's child without touching a rebound parent", async () => {
+    const { services, parent, executor } = setup();
+    const first = services.planService.create(services.owner.id, parent.id, {
+      steps: steps(),
+    });
+    services.planService.activate(services.owner.id, first.plan.id);
+    await executor.tick(first.plan.id);
+    const child = childTasks(services, parent)[0];
+    assert.ok(child);
+    services.planService.pause(services.owner.id, first.plan.id);
+    const second = services.planService.create(services.owner.id, parent.id, {
+      steps: steps(),
+    });
+    // Simulate a rebind that bypassed the normal activation guard.
+    assert.ok(services.tasks.bindPlan(parent.id, second.plan.id, NOW.toISOString()));
+
+    services.planService.cancel(services.owner.id, first.plan.id);
+    await executor.tick(first.plan.id);
+
+    assert.equal(services.tasks.get(child.id)?.status === "queued", false);
+    assert.equal(services.tasks.get(parent.id)?.planId, second.plan.id);
+    assert.equal(services.tasks.get(parent.id)?.status, "waiting_external");
+  });
+
+  it("stops the plan when the parent is cancelled directly", async () => {
+    const { services, parent, executor } = setup();
+    const plan = services.planService.create(services.owner.id, parent.id, {
+      steps: steps(),
+    });
+    services.planService.activate(services.owner.id, plan.plan.id);
+    await executor.tick(plan.plan.id);
+    const child = childTasks(services, parent)[0];
+    assert.ok(child);
+
+    services.taskService.cancel(parent.id);
+    await executor.tick(plan.plan.id);
+
+    assert.equal(services.tasks.get(parent.id)?.status, "cancelled");
+    assert.equal(services.tasks.get(parent.id)?.planId, undefined);
+    assert.equal(
+      services.planService.get(services.owner.id, plan.plan.id)?.plan.status,
+      "cancelled",
+    );
+    assert.notEqual(services.tasks.get(child.id)?.status, "queued");
+  });
+
   it("inherits the parent extension policy on every step child", async () => {
     const services = createServices({ now: () => NOW });
     const parent = services.taskService.create({

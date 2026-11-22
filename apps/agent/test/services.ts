@@ -172,6 +172,7 @@ export function createServices(options: {
     store,
     plans,
     tasks,
+    actions,
     capabilities: catalog,
     now,
   });

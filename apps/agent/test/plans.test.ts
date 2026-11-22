@@ -490,6 +490,22 @@ describe("plan lifecycle", () => {
     );
   });
 
+  it("refuses activation over another version with a running step", () => {
+    const { store, owner, task, service } = setup();
+    const first = service.create(owner.id, task.id, { steps: steps() });
+    service.activate(owner.id, first.plan.id);
+    assert.ok(
+      new PlanRepository(store.db).bindStepTask(first.plan.id, "A", "child-running", NOW),
+    );
+    service.pause(owner.id, first.plan.id);
+
+    const second = service.create(owner.id, task.id, { steps: steps() });
+    assert.equal(
+      codeOf(() => service.activate(owner.id, second.plan.id)),
+      "invalid_transition",
+    );
+  });
+
   it("refuses to revise while a step is running", () => {
     const { store, owner, task, service } = setup();
     const draft = service.create(owner.id, task.id, { steps: steps() });

@@ -175,6 +175,7 @@ export function createApp(deps: AppDeps): AppServices {
     store,
     plans,
     tasks,
+    actions,
     capabilities: catalog,
     now: deps.now,
   });
