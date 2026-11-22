@@ -1,7 +1,7 @@
 # 2026-11-22 · Conversational & Autonomous Planning runbook execution
 
 > Scope: execute `docs/22-mvp-acceptance-runbook.md` §9 against merged main and record exactly how far the real E3/E4 path could proceed.
-> **Result: prerequisites PASS; C01 is E3 PASS; C02–C10 remain pending; C04/C11/C12 and E4 remain BLOCKED.** No mock, injected Feishu event, or synthetic owner message was used. This record must not be read as a full Pilot pass.
+> **Result: prerequisites PASS; C01–C03 are E3 PASS; C05–C10 remain pending; C04/C11/C12 and E4 remain BLOCKED.** No mock, injected Feishu event, or synthetic owner message was used. This record must not be read as a full Pilot pass.
 
 ## Environment
 
@@ -32,7 +32,8 @@
 | --- | --- | --- |
 | Prerequisites / restart | PASS | Health OK; live DB migrated 17→25; no pending work lost; service log shows long-connection dispatcher ready |
 | C01 six-turn chat, no unintended Task | **PASS (E3)** | 6 real inbound / 6 real result outbound in the owner Feishu p2p chat; 0 new Task/Action/Plan; turn 5 referenced the earlier “先做减法” advice; turn 6 produced a three-step summary. See evidence table below |
-| C02/C03 plan draft/revision | PENDING | Draft/revision E1 exists; requires the owner to send the C02/C03 Feishu turns next |
+| C02 three-step plan draft, non-executing | **PASS (E3)** | Real Feishu turn produced a 3-step A→B→C draft with deps/tools/resources/verifier and 0 actions; parent task remained queued. Evidence below |
+| C03 revise draft + PlanDiff | **PASS (E3)** | Follow-up turn produced v2 draft, v1 superseded, persisted `PlanDiff v1 -> v2` (A unchanged, B/C goal changed), 0 actions. Evidence below |
 | C05–C10 remaining chat cases | PENDING | Require further owner Feishu turns (progress, pause/replan, restart, isolation) |
 | C04 bounded read-only execution | BLOCKED | No GitHub ProjectBinding / allowed repo / credential; state-only plan execution was not substituted for the runbook |
 | C11 real GitHub project review | BLOCKED | `github` plugin disabled and unconfigured; `GITHUB_ALLOWED_REPOS` empty; no binding |
@@ -52,7 +53,18 @@
 
 Counts at check time: 6 accepted inbound, 6 accepted `result` outbound, 6 bootstrap `ack` rows; `pa_tasks` has only the pre-existing 2026-11-19 succeeded task; `pa_actions=0`, `pa_plans=0`, `pa_plan_steps=0`. Model usage/cost was not persisted, so C12 has no number.
 
-Only C01 is claimed E3 PASS. C02–C12 and E4 are not. The run also proved that merged main starts on the existing live database, migrates it, and exposes the plan/status surfaces.
+### C02/C03 evidence (2026-11-22T13:10:49Z–13:11:24Z)
+
+The parent task `9c5bb3d0-6025-4453-ad41-b27adec69750` was created as a **queued, undispatched** fixture so the plan had a legal Parent Task; no worker ran it.
+
+| # | inbox prefix | outbox prefix | platform msg prefix | result |
+| --- | --- | --- | --- | --- |
+| C02 | `0cc951ef-444b` | `f581ead0` | `om_x100b7f1ad0a1` | plan `5b1373e9` v1 draft, 3 steps A→B→C, deps `[]/["A"]/["B"]`, tools `[]`, resources `["chat"]`, verifier `structural`, all blocked |
+| C03 | `af7639d3-85a7` | `a7f9b394` | `om_x100b7f1ad118` | plan `e51e3a07` v2 draft, v1 superseded, `PlanDiff v1 -> v2`: A unchanged, B/C goal changed |
+
+At check time: `pa_actions=0`; the only non-old task is the queued parent; no child task was created because the plan was never activated. C02/C03 are E3 PASS for plan draft/PlanDiff UX; plan execution remains C04 (blocked on GitHub/state setup).
+
+Only C01–C03 are claimed E3 PASS. C04–C12 and E4 are not. The run also proved that merged main starts on the existing live database, migrates it, and exposes the plan/status surfaces.
 
 ## Owner prerequisites for the next run
 
