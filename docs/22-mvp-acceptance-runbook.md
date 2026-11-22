@@ -189,4 +189,4 @@ sqlite3 data/agent.sqlite "select event,after_json from pa_audit where event lik
 ### 9.1 当前证据（2026-11-22）
 
 - E1：CX-01/PL-01/PL-02 的确定性测试与逐用例状态见 [2026-11-22 · Conversational & Autonomous Planning E1 record](acceptance/2026-11-22-conversational-planning-e1.md)。
-- E3/E4：**BLOCKED**。尚无真实 Feishu 入站/出站、真实模型 Worker、授权项目 GitHub 读取或受控重启证据；C05 进度追问与 C07 外部错误重规划也仍未实现。不得据 E1 结果宣称 Pilot 通过。
+- E3/E4：**BLOCKED**。2026-11-22 已在合并后 main 上实际执行前置步骤（服务重启、live DB 17→25 迁移、健康检查、preflight、计划/项目/插件状态核对），记录见 [runbook execution](acceptance/2026-11-22-conversational-planning-runbook.md)。owner 未在真实飞书私聊输入 C01–C10；GitHub 插件未启用且无绑定/允许仓库，C04/C11 仍 blocked；C12 无真实成本数据。不得据 E1 或前置检查宣称 Pilot 通过。
