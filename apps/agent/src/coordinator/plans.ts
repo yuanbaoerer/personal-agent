@@ -153,6 +153,30 @@ function normalizeBudget(steps: readonly PlanStepSpec[], input?: Partial<PlanBud
   return budget;
 }
 
+/** A replan may shrink but never refresh or expand an existing plan budget. */
+function assertBudgetNotExpanded(next: PlanBudget, current: PlanBudget): void {
+  const required: { key: "maxSteps" | "maxAttemptsPerStep" | "timeoutMs"; label: string }[] = [
+    { key: "maxSteps", label: "maxSteps" },
+    { key: "maxAttemptsPerStep", label: "maxAttemptsPerStep" },
+    { key: "timeoutMs", label: "timeoutMs" },
+  ];
+  for (const { key, label } of required) {
+    if (next[key] > current[key]) {
+      throw new PlanError("invalid_plan", `replan cannot increase budget.${label}`);
+    }
+  }
+  for (const key of ["maxToolCalls", "maxCostUsd"] as const) {
+    const currentValue = current[key];
+    const nextValue = next[key];
+    if (
+      currentValue !== undefined &&
+      (nextValue === undefined || nextValue > currentValue)
+    ) {
+      throw new PlanError("invalid_plan", `replan cannot increase budget.${key}`);
+    }
+  }
+}
+
 /**
  * Validate a model- or owner-proposed plan against the parent task mandate
  * and the live capability catalog. The program never lets a plan widen
@@ -529,6 +553,161 @@ export class PlanService {
       fromPlanId: source.id,
     });
     this.#onLifecycle?.(source.id);
+    return view;
+  }
+
+  /**
+   * Owner-initiated replan after a paused/failed step. Completed steps are
+   * immutable and copied into the new version; budgets can only shrink.
+   * The new version becomes active immediately under the owner's explicit
+   * command and keeps the same parent task/authorization.
+   */
+  replan(ownerId: string, planId: string, input: PlanSpecInput): PlanView {
+    const source = this.#ownedPlan(ownerId, planId);
+    if (source.status !== "paused" && source.status !== "active") {
+      throw new PlanError("invalid_transition", `cannot replan a ${source.status} plan`);
+    }
+    const task = this.#task(ownerId, source.parentTaskId);
+    if (
+      task.status === "succeeded" ||
+      task.status === "cancelled" ||
+      task.status === "needs_review"
+    ) {
+      throw new PlanError("task_terminal", `parent task is ${task.status}`);
+    }
+    if (source.taskRevision !== task.revision) {
+      throw new PlanError("task_revision_changed", "parent task revision changed");
+    }
+    const latestInput = this.#plans.maxInputSeq(task.id);
+    if (latestInput > source.inputSeq) {
+      throw new PlanError("stale_task_input", "parent task has newer input");
+    }
+    const oldSteps = this.#plans.listSteps(source.id);
+    if (oldSteps.some((step) => step.status === "running")) {
+      throw new PlanError("invalid_transition", "pause the plan before replanning");
+    }
+    const spec = resolvePlanSpec(input, task, this.#capabilities);
+    assertBudgetNotExpanded(spec.budget, source.budget);
+
+    for (const step of oldSteps) {
+      if (step.status !== "completed") {
+        continue;
+      }
+      const replacement = spec.steps.find((candidate) => candidate.key === step.key);
+      if (replacement === undefined) {
+        throw new PlanError(
+          "invalid_plan",
+          `completed step ${step.key} cannot be removed by a replan`,
+        );
+      }
+      const comparison = diffPlanSteps([step], [
+        {
+          ...step,
+          goal: replacement.goal,
+          dependsOn: replacement.dependsOn,
+          tools: replacement.tools,
+          resources: replacement.resources,
+          verifierId: replacement.verifierId,
+          completionCriteria: replacement.completionCriteria,
+          maxAttempts: replacement.maxAttempts,
+          timeoutMs: replacement.timeoutMs,
+        },
+      ])[0];
+      if (comparison?.change !== "unchanged") {
+        throw new PlanError(
+          "invalid_plan",
+          `completed step ${step.key} cannot be changed by a replan`,
+        );
+      }
+    }
+
+    const completed = new Set(
+      oldSteps.filter((step) => step.status === "completed").map((step) => step.key),
+    );
+    const completedByKey = new Map(
+      oldSteps.filter((step) => step.status === "completed").map((step) => [step.key, step]),
+    );
+    const latest = this.#plans.latestForTask(task.id);
+    const now = this.#now().toISOString();
+    const view = this.#store.db.transaction(() => {
+      this.#plans.setPlanStatus(
+        source.id,
+        ["active", "paused"],
+        "superseded",
+        now,
+      );
+      const plan = this.#plans.insertPlan({
+        ownerId,
+        parentTaskId: task.id,
+        taskRevision: task.revision,
+        inputSeq: this.#plans.maxInputSeq(task.id),
+        planVersion: (latest?.planVersion ?? source.planVersion) + 1,
+        status: "active",
+        projectKey: task.mandate.project,
+        approvedScopeRef: `task:${task.id}:rev:${task.revision}:plan:${(latest?.planVersion ?? source.planVersion) + 1}`,
+        budget: spec.budget,
+        createdAt: now,
+      });
+      if (this.#tasks.bindPlan(task.id, plan.id, now) === undefined) {
+        throw new PlanError("invalid_transition", "parent task could not be rebound");
+      }
+      const steps = spec.steps.map((step, ordinal) => {
+        const previous = completedByKey.get(step.key);
+        if (previous !== undefined) {
+          return this.#plans.insertStep({
+            planId: plan.id,
+            stepKey: step.key,
+            ordinal,
+            goal: step.goal,
+            dependsOn: step.dependsOn,
+            tools: step.tools,
+            resources: step.resources,
+            verifierId: step.verifierId,
+            completionCriteria: step.completionCriteria,
+            maxAttempts: step.maxAttempts,
+            timeoutMs: step.timeoutMs,
+            status: "completed",
+            evidenceRefs: previous.evidenceRefs,
+            taskId: previous.taskId,
+            attempts: previous.attempts,
+            startedAt: previous.startedAt,
+            completedAt: previous.completedAt,
+            createdAt: now,
+          });
+        }
+        return this.#plans.insertStep({
+          planId: plan.id,
+          stepKey: step.key,
+          ordinal,
+          goal: step.goal,
+          dependsOn: step.dependsOn,
+          tools: step.tools,
+          resources: step.resources,
+          verifierId: step.verifierId,
+          completionCriteria: step.completionCriteria,
+          maxAttempts: step.maxAttempts,
+          timeoutMs: step.timeoutMs,
+          status: step.dependsOn.every((dependency) => completed.has(dependency))
+            ? "ready"
+            : "blocked",
+          createdAt: now,
+        });
+      });
+      const diff: PlanDiff = {
+        parentTaskId: task.id,
+        fromVersion: source.planVersion,
+        toVersion: plan.planVersion,
+        steps: diffPlanSteps(oldSteps, steps),
+        createdAt: now,
+      };
+      this.#plans.insertDiff(plan.id, diff);
+      return { plan, steps };
+    });
+    this.#audit("plan.replanned", view.plan, {
+      fromVersion: source.planVersion,
+      fromPlanId: source.id,
+    });
+    this.#onLifecycle?.(view.plan.id);
     return view;
   }
 

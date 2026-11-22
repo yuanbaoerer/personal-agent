@@ -417,6 +417,68 @@ describe("plan lifecycle", () => {
     );
   });
 
+  it("replans a failed plan while preserving completed steps and budget", () => {
+    const { store, owner, task, service } = setup();
+    const draft = service.create(owner.id, task.id, { steps: steps() });
+    service.activate(owner.id, draft.plan.id);
+    const plans = new PlanRepository(store.db);
+    assert.ok(plans.bindStepTask(draft.plan.id, "A", "child-a", NOW));
+    plans.setStepOutcome(draft.plan.id, "A", "completed", ["task:child-a"], undefined, NOW);
+    new TaskRepository(store.db).updateTask(task.id, task.revision, {
+      status: "failed",
+      updatedAt: NOW,
+    });
+
+    const changed = steps();
+    changed[1] = { ...changed[1]!, goal: "analyze revised evidence" };
+    const replanned = service.replan(owner.id, draft.plan.id, { steps: changed });
+
+    assert.equal(replanned.plan.planVersion, 2);
+    assert.equal(replanned.plan.status, "active");
+    assert.equal(service.get(owner.id, draft.plan.id)?.plan.status, "superseded");
+    assert.deepEqual(
+      replanned.steps.map((step) => [step.key, step.status]),
+      [
+        ["A", "completed"],
+        ["B", "ready"],
+        ["C", "ready"],
+      ],
+    );
+    const preserved = replanned.steps.find((step) => step.key === "A");
+    assert.equal(preserved?.taskId, "child-a");
+    assert.deepEqual(preserved?.evidenceRefs, ["task:child-a"]);
+    assert.equal(store.listAuditAfter(0, 100).filter((item) => item.event === "plan.replanned").length, 1);
+    assert.equal(new TaskRepository(store.db).get(task.id)?.planId, replanned.plan.id);
+    assert.equal(new TaskRepository(store.db).get(task.id)?.status, "waiting_external");
+  });
+
+  it("rejects replans that change completed steps or expand the budget", () => {
+    const first = setup();
+    const draft = first.service.create(first.owner.id, first.task.id, { steps: steps() });
+    first.service.activate(first.owner.id, draft.plan.id);
+    const plans = new PlanRepository(first.store.db);
+    assert.ok(plans.bindStepTask(draft.plan.id, "A", "child-a", NOW));
+    plans.setStepOutcome(draft.plan.id, "A", "completed", [], undefined, NOW);
+
+    const changedCompleted = steps();
+    changedCompleted[0] = { ...changedCompleted[0]!, goal: "different completed goal" };
+    assert.equal(
+      codeOf(() => first.service.replan(first.owner.id, draft.plan.id, { steps: changedCompleted })),
+      "invalid_plan",
+    );
+
+    const expanded = steps();
+    assert.equal(
+      codeOf(() =>
+        first.service.replan(first.owner.id, draft.plan.id, {
+          steps: expanded,
+          budget: { maxAttemptsPerStep: 2 },
+        }),
+      ),
+      "invalid_plan",
+    );
+  });
+
   it("keeps plans owner-scoped and survives a service restart", () => {
     const { store, owner, task, service } = setup();
     const draft = service.create(owner.id, task.id, { steps: steps() });

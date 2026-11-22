@@ -38,6 +38,11 @@ export interface NewPlanStep {
   timeoutMs: number;
   status: PlanStepStatus;
   evidenceRefs?: string[];
+  /** Preserved when a replan copies a completed step from an older version. */
+  taskId?: string;
+  attempts?: number;
+  startedAt?: string;
+  completedAt?: string;
   createdAt: string;
 }
 
@@ -174,8 +179,9 @@ export class PlanRepository {
       `INSERT INTO pa_plan_steps
         (id, plan_id, step_key, ordinal, goal, depends_on_json, tools_json,
          resources_json, verifier_id, completion_criteria, max_attempts,
-         timeout_ms, status, evidence_refs_json, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         timeout_ms, status, evidence_refs_json, task_id, attempts,
+         started_at, completed_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        RETURNING *`,
       randomUUID(),
       input.planId,
@@ -191,6 +197,10 @@ export class PlanRepository {
       input.timeoutMs,
       input.status,
       JSON.stringify(input.evidenceRefs ?? []),
+      input.taskId ?? null,
+      input.attempts ?? 0,
+      input.startedAt ?? null,
+      input.completedAt ?? null,
       input.createdAt,
       input.createdAt,
     )[0];

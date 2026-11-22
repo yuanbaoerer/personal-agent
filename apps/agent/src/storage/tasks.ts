@@ -940,7 +940,10 @@ export class TaskRepository {
     const row = this.#db.all<TaskRow>(
       `UPDATE pa_tasks
        SET plan_id = ?,
-           status = CASE WHEN status = 'queued' THEN 'waiting_external' ELSE status END,
+           status = CASE
+             WHEN status IN ('queued', 'failed') THEN 'waiting_external'
+             ELSE status
+           END,
            updated_at = ?
        WHERE id = ? AND (
          plan_id IS NULL OR plan_id = ? OR NOT EXISTS (
