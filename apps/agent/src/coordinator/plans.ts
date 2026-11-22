@@ -97,6 +97,7 @@ function compareStepFields(
   if (!sameList(left.tools, right.tools)) fields.push("tools");
   if (!sameList(left.resources, right.resources)) fields.push("resources");
   if (left.verifierId !== right.verifierId) fields.push("verifierId");
+  if (left.completionCriteria !== right.completionCriteria) fields.push("completionCriteria");
   if (left.maxAttempts !== right.maxAttempts) fields.push("maxAttempts");
   if (left.timeoutMs !== right.timeoutMs) fields.push("timeoutMs");
   return fields;
@@ -199,6 +200,30 @@ export function resolvePlanSpec(
     if (!VERIFIER_PATTERN.test(verifierId)) {
       throw new PlanError("invalid_plan", `step ${key} verifierId is not valid`);
     }
+    const completionCriteria = (raw.completionCriteria ?? "").trim();
+    if (completionCriteria.length > 2_000) {
+      throw new PlanError(
+        "invalid_plan",
+        `step ${key} completionCriteria must be at most 2000 characters`,
+      );
+    }
+    if (completionCriteria.startsWith("{")) {
+      let criteria: unknown;
+      try {
+        criteria = JSON.parse(completionCriteria);
+      } catch {
+        throw new PlanError("invalid_plan", `step ${key} completionCriteria is not valid JSON`);
+      }
+      if (typeof criteria === "object" && criteria !== null) {
+        const declared = (criteria as Record<string, unknown>).verifier;
+        if (typeof declared === "string" && declared !== verifierId) {
+          throw new PlanError(
+            "invalid_plan",
+            `step ${key} completionCriteria verifier ${declared} does not match ${verifierId}`,
+          );
+        }
+      }
+    }
 
     const tools = uniqueStrings(raw.tools, `step ${key} tools`);
     const resources = uniqueStrings(raw.resources, `step ${key} resources`);
@@ -265,6 +290,7 @@ export function resolvePlanSpec(
       tools,
       resources,
       verifierId,
+      completionCriteria,
       maxAttempts,
       timeoutMs,
     });
@@ -331,6 +357,7 @@ function planStepsToSpecs(steps: readonly PlanStepRecord[]): Required<PlanStepSp
     tools: step.tools,
     resources: step.resources,
     verifierId: step.verifierId,
+    completionCriteria: step.completionCriteria,
     maxAttempts: step.maxAttempts,
     timeoutMs: step.timeoutMs,
   }));
@@ -386,6 +413,7 @@ export class PlanService {
   readonly #tasks: TaskRepository;
   readonly #capabilities?: CapabilityView;
   readonly #now: () => Date;
+  #onLifecycle?: (planId: string) => void;
 
   constructor(deps: PlanServiceDeps) {
     this.#store = deps.store;
@@ -393,6 +421,11 @@ export class PlanService {
     this.#tasks = deps.tasks;
     this.#capabilities = deps.capabilities;
     this.#now = deps.now ?? (() => new Date());
+  }
+
+  /** The host wires this to the executor; tests can omit it. */
+  setLifecycleHook(handler: (planId: string) => void): void {
+    this.#onLifecycle = handler;
   }
 
   create(ownerId: string, parentTaskId: string, input: PlanSpecInput): PlanView {
@@ -423,6 +456,7 @@ export class PlanService {
           tools: step.tools,
           resources: step.resources,
           verifierId: step.verifierId,
+          completionCriteria: step.completionCriteria,
           maxAttempts: step.maxAttempts,
           timeoutMs: step.timeoutMs,
           status: "blocked",
@@ -473,6 +507,7 @@ export class PlanService {
           tools: step.tools,
           resources: step.resources,
           verifierId: step.verifierId,
+          completionCriteria: step.completionCriteria,
           maxAttempts: step.maxAttempts,
           timeoutMs: step.timeoutMs,
           status: "blocked",
@@ -493,6 +528,7 @@ export class PlanService {
       fromVersion: source.planVersion,
       fromPlanId: source.id,
     });
+    this.#onLifecycle?.(source.id);
     return view;
   }
 
@@ -532,9 +568,17 @@ export class PlanService {
       if (stamped === undefined) {
         throw new PlanError("plan_not_found", "plan disappeared during activation");
       }
+      // Reserve the parent task before any dispatch effect can claim it.
+      if (this.#tasks.bindPlan(task.id, plan.id, now) === undefined) {
+        throw new PlanError(
+          "invalid_transition",
+          "parent task is already bound to another active plan",
+        );
+      }
       return { plan: stamped, steps: this.#plans.listSteps(plan.id) };
     });
     this.#audit("plan.activated", view.plan, { roots });
+    this.#onLifecycle?.(view.plan.id);
     return view;
   }
 
@@ -594,6 +638,7 @@ export class PlanService {
       return { plan: cancelled, steps: this.#plans.listSteps(plan.id) };
     });
     this.#audit("plan.cancelled", view.plan, {});
+    this.#onLifecycle?.(view.plan.id);
     return view;
   }
 
@@ -672,6 +717,7 @@ export class PlanService {
       return { plan: updated, steps: this.#plans.listSteps(plan.id) };
     });
     this.#audit(event, view.plan, {});
+    this.#onLifecycle?.(view.plan.id);
     return view;
   }
 

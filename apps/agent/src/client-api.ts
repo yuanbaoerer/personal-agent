@@ -223,6 +223,13 @@ function parsePlanSteps(value: unknown): PlanStepSpec[] {
           : parseStringArray(record.resources, `steps[${index}].resources`),
       verifierId: parseString(record.verifierId, `steps[${index}].verifierId`, 64),
     };
+    if (record.completionCriteria !== undefined) {
+      step.completionCriteria = parseString(
+        record.completionCriteria,
+        `steps[${index}].completionCriteria`,
+        2_000,
+      );
+    }
     if (record.maxAttempts !== undefined) {
       step.maxAttempts = parseApiInteger(record.maxAttempts, `steps[${index}].maxAttempts`, 1, 3);
     }

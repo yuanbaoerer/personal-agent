@@ -383,6 +383,7 @@ async function main(): Promise<void> {
         const recovered = await app.ingress.recoverPending(20);
         app.taskService.sweep();
         app.actionService.sweep();
+        app.planExecutor.sweep();
         const expiredConfirmations = app.confirmation.expirePending();
         const expiredDrafts = app.issueDrafts.expireDue();
         const settledDrafts =

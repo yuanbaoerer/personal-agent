@@ -226,6 +226,7 @@ export function createServices(options: {
     maxConcurrentTools: options.maxConcurrentTools,
     maxToolCallsPerTask: options.maxToolCallsPerTask,
     tasks,
+    plans,
     preauthorizations: preauthorization,
     schedulePolicies: schedulePolicy,
     onSettled: (taskId) => taskService.onActionSettled(taskId),

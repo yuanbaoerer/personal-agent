@@ -355,6 +355,7 @@ export class Assistant extends DurableObject<Env> {
     await app.ingress.recoverPending(20);
     app.taskService.sweep();
     app.actionService.sweep();
+    app.planExecutor.sweep();
     app.confirmation.expirePending();
     await app.reminders.fireDue();
     app.schedulePolicy.fireDue();

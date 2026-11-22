@@ -621,6 +621,17 @@ const migrations: readonly (readonly string[])[] = [
     `CREATE INDEX pa_plan_diffs_plan_idx
        ON pa_plan_diffs (plan_id, to_version DESC)`,
   ],
+  [
+    // PL-02 wires plan steps to child tasks. The child task carries plan_id
+    // so the dispatcher can reserve the parent while the plan runs; steps
+    // keep the child task id and their own completion criteria.
+    `ALTER TABLE pa_tasks ADD COLUMN plan_id TEXT`,
+    `ALTER TABLE pa_tasks ADD COLUMN plan_step_key TEXT`,
+    `CREATE INDEX IF NOT EXISTS pa_tasks_plan_idx ON pa_tasks (plan_id, plan_step_key)`,
+    `ALTER TABLE pa_plan_steps ADD COLUMN task_id TEXT`,
+    `ALTER TABLE pa_plan_steps ADD COLUMN completion_criteria TEXT NOT NULL DEFAULT ''`,
+    `CREATE INDEX IF NOT EXISTS pa_plan_steps_task_idx ON pa_plan_steps (task_id)`,
+  ],
 ];
 
 /** Highest schema version this build can read/migrate. */

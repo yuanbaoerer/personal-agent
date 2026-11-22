@@ -11,6 +11,7 @@ import type { EffectRepository } from "../storage/effects.ts";
 import type { ActionRepository } from "../storage/actions.ts";
 import type { Store } from "../storage/store.ts";
 import type { TaskRepository } from "../storage/tasks.ts";
+import type { PlanRepository } from "../storage/plans.ts";
 import type { WakeScheduler } from "../runtime/types.ts";
 import type { PreauthorizationService } from "../personal/preauthorizations.ts";
 import type { SchedulePolicyService } from "../personal/schedule-policies.ts";
@@ -41,6 +42,8 @@ export interface ActionServiceDeps {
   /** Cumulative action proposals allowed for one task. */
   maxToolCallsPerTask?: number;
   tasks?: TaskRepository;
+  /** Plan budgets are shared by every child step task. */
+  plans?: PlanRepository;
   preauthorizations?: PreauthorizationService;
   schedulePolicies?: SchedulePolicyService;
   onSettled?: (taskId: string) => void;
@@ -76,6 +79,7 @@ export class ActionService {
   readonly #maxConcurrentTools: number;
   readonly #maxToolCallsPerTask: number;
   readonly #tasks?: TaskRepository;
+  readonly #plans?: PlanRepository;
   readonly #preauthorizations?: PreauthorizationService;
   readonly #schedulePolicies?: SchedulePolicyService;
   readonly #onSettled: (taskId: string) => void;
@@ -98,6 +102,7 @@ export class ActionService {
     this.#maxConcurrentTools = Math.max(1, deps.maxConcurrentTools ?? 2);
     this.#maxToolCallsPerTask = Math.max(1, deps.maxToolCallsPerTask ?? 20);
     this.#tasks = deps.tasks;
+    this.#plans = deps.plans;
     this.#preauthorizations = deps.preauthorizations;
     this.#schedulePolicies = deps.schedulePolicies;
     this.#onSettled = deps.onSettled ?? (() => {});
@@ -201,7 +206,7 @@ export class ActionService {
     let count = 0;
     let rejected = 0;
     let remaining =
-      this.#maxToolCallsPerTask - this.#actions.listByTask(task.id).length;
+      this.#toolCallLimit(task) - this.#toolCallsUsed(task);
     const autoApprove: string[] = [];
     for (const item of proposed) {
       if (item.tool.startsWith("github.issue.")) {
@@ -274,7 +279,7 @@ export class ActionService {
     proposed: ProposedAction,
     sourceKey?: string,
   ): ActionRecord | undefined {
-    if (this.#actions.listByTask(task.id).length >= this.#maxToolCallsPerTask) {
+    if (this.#toolCallsUsed(task) >= this.#toolCallLimit(task)) {
       return undefined;
     }
     const canonical = this.#canonicalProposal(task, proposed);
@@ -290,6 +295,23 @@ export class ActionService {
       false,
       canonical.binding,
     )?.action;
+  }
+
+  /** All step children of a plan share one cumulative tool-call budget. */
+  #toolCallsUsed(task: TaskRecord): number {
+    if (task.planId === undefined) {
+      return this.#actions.listByTask(task.id).length;
+    }
+    return this.#actions.countByPlan(task.planId);
+  }
+
+  #toolCallLimit(task: TaskRecord): number {
+    const plan =
+      task.planId === undefined ? undefined : this.#plans?.getPlan(task.planId);
+    return Math.min(
+      this.#maxToolCallsPerTask,
+      plan?.budget.maxToolCalls ?? this.#maxToolCallsPerTask,
+    );
   }
 
   #canonicalProposal(

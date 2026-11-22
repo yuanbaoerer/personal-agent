@@ -229,6 +229,10 @@ export interface TaskRecord {
   acknowledgedBy?: string;
   /** Set when this task was created by an authorized schedule policy. */
   schedulePolicyId?: string;
+  /** Set when this task is a plan parent or a plan step child. */
+  planId?: string;
+  /** Set only on a child task that executes one plan step. */
+  planStepKey?: string;
   /** Capability catalog identity pinned at task creation/revision. */
   extension?: TaskExtensionSnapshot;
   createdAt: string;
@@ -275,6 +279,8 @@ export interface PlanStepSpec {
   /** Subset of the parent task mandate resources, including tool resources. */
   resources: string[];
   verifierId: string;
+  /** Task completion criteria for this step; defaults from verifierId. */
+  completionCriteria?: string;
   maxAttempts?: number;
   timeoutMs?: number;
 }
@@ -301,10 +307,13 @@ export interface PlanStepRecord extends PlanStepSpec {
   id: string;
   planId: string;
   ordinal: number;
+  completionCriteria: string;
   maxAttempts: number;
   timeoutMs: number;
   status: PlanStepStatus;
   assignmentId?: string;
+  /** Child task that executes this step; absent before dispatch. */
+  taskId?: string;
   attempts: number;
   evidenceRefs: string[];
   lastError?: string;
