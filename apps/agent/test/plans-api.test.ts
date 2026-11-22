@@ -65,7 +65,11 @@ describe("plan API", () => {
   it("creates, activates, lists and diffs a plan", async () => {
     const { api, task } = fixture();
     const created = await call(api, "POST", "/api/v1/plans", {
-      body: { parentTaskId: task.id, steps: steps() },
+      body: {
+        parentTaskId: task.id,
+        steps: steps(),
+        budget: { maxToolCalls: 1 },
+      },
     });
     assert.equal(created.status, 201);
     const plan = created.body.plan as { id: string; status: string; planVersion: number };
@@ -93,16 +97,26 @@ describe("plan API", () => {
       ],
     );
 
+    const paused = await call(api, "POST", `/api/v1/plans/${plan.id}/pause`);
+    assert.equal(paused.status, 200);
+
     const revised = await call(api, "POST", `/api/v1/plans/${plan.id}/revise`, {
       body: {
+        budget: { maxSteps: 4 },
         steps: steps().map((step) =>
           step.key === "B" ? { ...step, goal: "summarize with evidence" } : step,
         ),
       },
     });
     assert.equal(revised.status, 200);
-    const next = revised.body.plan as { id: string; planVersion: number };
+    const next = revised.body.plan as {
+      id: string;
+      planVersion: number;
+      budget: { maxToolCalls?: number };
+    };
     assert.equal(next.planVersion, 2);
+    // A partial budget body augments, never resets, the source budget.
+    assert.equal(next.budget.maxToolCalls, 1);
 
     const diff = await call(api, "GET", `/api/v1/plans/${next.id}/diff`);
     assert.equal(diff.status, 200);
@@ -115,6 +129,45 @@ describe("plan API", () => {
         ["C", "unchanged"],
       ],
     );
+
+    const superseded = await call(api, "POST", `/api/v1/plans/${plan.id}/revise`, {
+      body: { steps: steps() },
+    });
+    assert.equal(superseded.status, 409);
+  });
+
+  it("replans a running plan when stopOpenSteps is explicit", async () => {
+    const { services, api, task } = fixture();
+    const created = await call(api, "POST", "/api/v1/plans", {
+      body: { parentTaskId: task.id, steps: steps() },
+    });
+    const plan = created.body.plan as { id: string };
+    assert.equal(
+      (await call(api, "POST", `/api/v1/plans/${plan.id}/activate`)).status,
+      200,
+    );
+    const child = services.tasks.insert({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "api-replan-child",
+      goal: "running child",
+      completionCriteria: "criteria",
+      mandate: { resources: ["chat"], tools: [] },
+      planId: plan.id,
+      planStepKey: "A",
+      createdAt: NOW.toISOString(),
+    }).task;
+    assert.ok(
+      services.plans.bindStepTask(plan.id, "A", child.id, NOW.toISOString()),
+    );
+
+    const replanned = await call(api, "POST", `/api/v1/plans/${plan.id}/replan`, {
+      body: { steps: steps(), stopOpenSteps: true },
+    });
+    assert.equal(replanned.status, 200);
+    assert.equal((replanned.body.plan as { status: string }).status, "active");
+    assert.equal(services.plans.listSteps(plan.id)[0]?.status, "cancelled");
+    assert.notEqual(services.tasks.get(child.id)?.status, "queued");
   });
 
   it("maps invalid plans and stale activation to owner-visible errors", async () => {

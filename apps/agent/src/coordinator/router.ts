@@ -141,6 +141,7 @@ const REMIND_TIME_HINT =
   /(?:\d{1,2}\s*[点:：时]|今天|明天|后天|大后天|下周|上午|下午|中午|晚上|早上)/;
 const REDIRECTABLE_CONTROL_ACTIONS: ReadonlySet<RouterDecision["action"]> = new Set([
   "draft_plan",
+  "revise_plan",
   "supplement_task",
   "revise_task",
   "cancel_task",
@@ -1047,8 +1048,16 @@ export class Router implements InboundHandler {
           this.#reply(context, "请提供 3–5 个步骤的计划草稿。", "status");
           return { status: "done" };
         }
-        const target = this.#resolveDecisionTask(context, decision);
+        const target = this.#resolveConversationTask(context, decision);
         if (target === undefined) {
+          return { status: "done" };
+        }
+        if (!this.#isPlanEditableTask(target)) {
+          this.#reply(
+            context,
+            "该任务已结束或待确认，不能生成新计划；请先处理该任务或创建新任务。",
+            "failure",
+          );
           return { status: "done" };
         }
         try {
@@ -1064,6 +1073,201 @@ export class Router implements InboundHandler {
           this.#reply(
             context,
             `计划草稿未创建：${error instanceof Error ? error.message : String(error)}`,
+            "failure",
+          );
+        }
+        return { status: "done" };
+      }
+      case "revise_plan": {
+        if (this.#plans === undefined) {
+          this.#reply(context, "计划能力当前未启用。", "failure");
+          return { status: "done" };
+        }
+        if (decision.plan === undefined || decision.plan.steps.length === 0) {
+          this.#reply(context, "请提供修改后的完整 3–5 步计划。", "status");
+          return { status: "done" };
+        }
+        let source: PlanRecord | undefined;
+        const conversationPlans = this.#conversationPlans(
+          context.ownerId,
+          context.conversationId,
+        );
+        const ref = decision.planId ?? decision.planRef;
+        if (ref !== undefined) {
+          const matches = conversationPlans.filter(
+            (plan) => plan.id === ref || plan.id.startsWith(ref),
+          );
+          if (matches.length === 1) {
+            source = matches[0];
+          } else if (matches.length > 1) {
+            this.#reply(
+              context,
+              `计划引用不唯一：${matches
+                .map((plan) => `${plan.id.slice(0, 8)}(v${plan.planVersion})`)
+                .join(", ")}。请使用更长的 id。`,
+              "clarify",
+            );
+            return { status: "done" };
+          } else if (decision.planId !== undefined) {
+            this.#reply(context, `当前会话没有匹配 ${ref} 的计划。`, "failure");
+            return { status: "done" };
+          } else {
+            // A natural planRef ("刚才那个计划") falls back to the only
+            // editable draft in this conversation.
+            const drafts = conversationPlans.filter(
+              (plan) => plan.status === "draft",
+            );
+            if (drafts.length === 1) {
+              source = drafts[0];
+            } else if (drafts.length > 1) {
+              this.#reply(
+                context,
+                `有多个计划草稿，请指定 id：${drafts
+                  .map((plan) => `${plan.id.slice(0, 8)}(v${plan.planVersion})`)
+                  .join(", ")}。`,
+                "clarify",
+              );
+              return { status: "done" };
+            }
+          }
+        } else {
+          const target = this.#resolveConversationTask(context, decision);
+          if (target === undefined) {
+            return { status: "done" };
+          }
+          if (
+            target.status === "succeeded" ||
+            target.status === "cancelled" ||
+            target.status === "needs_review"
+          ) {
+            this.#reply(
+              context,
+              "该任务已结束或待确认，不能修改计划；请先处理该任务或创建新任务。",
+              "failure",
+            );
+            return { status: "done" };
+          }
+          const plans = this.#plans.list(context.ownerId, {
+            parentTaskId: target.id,
+            limit: 20,
+          });
+          const drafts = plans.filter((plan) => plan.status === "draft");
+          const active = plans.find((plan) => plan.status === "active");
+          const pausedPlans = plans.filter((plan) => plan.status === "paused");
+          if (active !== undefined && drafts.length + pausedPlans.length > 0) {
+            this.#reply(
+              context,
+              `这个任务同时有执行中计划 ${active.id.slice(0, 8)} 和可修改的草稿/暂停版本；请在消息中指明要修改的计划 id，或先 /plan pause ${active.id.slice(0, 8)}。`,
+              "clarify",
+            );
+            return { status: "done" };
+          }
+          if (drafts.length === 1) {
+            source = drafts[0];
+          } else if (drafts.length > 1) {
+            this.#reply(
+              context,
+              `这个任务有多个计划草稿，请指定 id：${drafts
+                .map((plan) => `${plan.id.slice(0, 8)}(v${plan.planVersion})`)
+                .join(", ")}。`,
+              "clarify",
+            );
+            return { status: "done" };
+          } else if (active !== undefined) {
+            this.#reply(
+              context,
+              `计划 ${active.id.slice(0, 8)} 正在执行；/plan replan ${active.id.slice(0, 8)} confirm 会停止当前步骤并重新激活，改步骤用 pa plans replan --file。`,
+              "clarify",
+            );
+            return { status: "done" };
+          } else if (pausedPlans.length === 1) {
+            const paused = pausedPlans[0] as PlanRecord;
+            this.#reply(context, this.#pausedPlanGuidance(paused), "clarify");
+            return { status: "done" };
+          } else if (pausedPlans.length > 1) {
+            this.#reply(
+              context,
+              `这个任务有多个暂停计划，请指定 id：${pausedPlans
+                .map((plan) => `${plan.id.slice(0, 8)}(v${plan.planVersion})`)
+                .join(", ")}。`,
+              "clarify",
+            );
+            return { status: "done" };
+          } else {
+            this.#reply(
+              context,
+              "这个任务当前没有可修改的草稿计划；请先让我生成草稿。",
+              "status",
+            );
+            return { status: "done" };
+          }
+        }
+        if (source === undefined) {
+          this.#reply(
+            context,
+            "当前会话没有可修改的计划草稿；请先让我生成草稿。",
+            "status",
+          );
+          return { status: "done" };
+        }
+        const parentTask = this.#tasks.get(source.parentTaskId);
+        if (
+          parentTask !== undefined &&
+          (parentTask.status === "succeeded" ||
+            parentTask.status === "cancelled" ||
+            parentTask.status === "needs_review")
+        ) {
+          this.#reply(
+            context,
+            "父任务已结束或待确认，不能修改该计划；请先处理父任务或创建新任务。",
+            "failure",
+          );
+          return { status: "done" };
+        }
+        if (source.status === "draft" && parentTask?.status === "failed") {
+          this.#reply(
+            context,
+            "父任务已失败，草稿不能直接修改；请用 /plan replan 或创建新任务。",
+            "failure",
+          );
+          return { status: "done" };
+        }
+        if (source.status !== "draft") {
+          const short = source.id.slice(0, 8);
+          const guidance =
+            source.status === "active"
+              ? `计划 ${short} 正在执行；/plan replan ${short} confirm 会停止当前步骤并重新激活，改步骤用 pa plans replan --file。`
+              : source.status === "paused"
+                ? this.#pausedPlanGuidance(source)
+                : source.status === "completed"
+                  ? `计划 ${short} 已完成，不能再修改；请新建草稿。`
+                  : source.status === "cancelled"
+                    ? `计划 ${short} 已取消，不能再修改；请新建草稿。`
+                    : `计划 ${short} 已被新版本替代，不能再修改；请使用最新版本或新建草稿。`;
+          this.#reply(context, guidance, "clarify");
+          return { status: "done" };
+        }
+        try {
+          const revised = this.#plans.revise(context.ownerId, source.id, {
+            steps: decision.plan.steps,
+            // Never silently reset/widen the stored budget.
+            budget: source.budget,
+          });
+          const diff = this.#plans.diff(
+            context.ownerId,
+            revised.plan.id,
+            source.planVersion,
+            revised.plan.planVersion,
+          );
+          this.#reply(
+            context,
+            `计划草稿已更新为 v${revised.plan.planVersion}（未执行）。\n${this.#planDiffText(diff)}`,
+            "status",
+          );
+        } catch (error) {
+          this.#reply(
+            context,
+            `计划修改失败：${error instanceof Error ? error.message : String(error)}`,
             "failure",
           );
         }
@@ -2178,6 +2382,80 @@ export class Router implements InboundHandler {
     return [{ purpose: "failure", text: "draft 子命令应为 list/show/approve/reject。" }];
   }
 
+  /**
+   * Resolve a task for plan revision without writing cross-conversation
+   * focus: only tasks in this conversation (plus its own focus) are visible.
+   */
+  #resolveConversationTask(
+    context: { ownerId: string; conversationId: string; inboxId: string },
+    decision: RouterDecision,
+  ): TaskRecord | undefined {
+    const exactId =
+      decision.taskId ??
+      (decision.taskRef !== undefined &&
+      /^[0-9a-f][0-9a-f-]{7,63}$/i.test(decision.taskRef.trim())
+        ? decision.taskRef.trim()
+        : undefined);
+    if (exactId !== undefined) {
+      // Exact ids bypass the 50-task scan; the conversation check prevents a
+      // cross-chat task from becoming selectable.
+      const task = this.#tasks.get(exactId);
+      if (
+        task !== undefined &&
+        task.ownerId === context.ownerId &&
+        task.conversationId === context.conversationId
+      ) {
+        return task;
+      }
+      this.#reply(
+        context,
+        "当前会话没有这个任务；请指定当前会话的任务 id 或引用。",
+        "failure",
+      );
+      return undefined;
+    }
+    const focus = this.#store.metaGet(taskFocusKey(context.conversationId));
+    const resolution = resolveTaskReference(
+      context.ownerId,
+      context.conversationId,
+      decision.taskRef,
+      this.#tasks,
+      { preferredTaskId: focus },
+    );
+    if (resolution.status === "ok") {
+      if (resolution.task.conversationId !== context.conversationId) {
+        this.#reply(
+          context,
+          "该任务不属于当前会话；请指定当前会话的任务或计划 id。",
+          "failure",
+        );
+        return undefined;
+      }
+      return resolution.task;
+    }
+    if (resolution.status === "ambiguous") {
+      this.#reply(
+        context,
+        `任务引用不唯一：${resolution.candidates
+          .map((task) => task.id.slice(0, 8))
+          .join(", ")}。请使用更长的 id。`,
+        "clarify",
+      );
+      return undefined;
+    }
+    this.#reply(context, resolution.reason, "failure");
+    return undefined;
+  }
+
+  #isPlanEditableTask(task: TaskRecord): boolean {
+    return (
+      task.status !== "succeeded" &&
+      task.status !== "failed" &&
+      task.status !== "cancelled" &&
+      task.status !== "needs_review"
+    );
+  }
+
   #rememberTaskFocus(conversationId: string, taskId: string): void {
     this.#store.metaSet(taskFocusKey(conversationId), taskId);
   }
@@ -2240,6 +2518,7 @@ export class Router implements InboundHandler {
         const task = this.#tasks.get(explicit.id);
         if (
           task !== undefined &&
+          task.conversationId === context.conversationId &&
           (project === undefined || task.mandate.project === project)
         ) {
           this.#rememberTaskFocus(context.conversationId, task.id);
@@ -2262,6 +2541,24 @@ export class Router implements InboundHandler {
     }
 
     const ref = decision.taskRef;
+    if (ref !== undefined && /^[0-9a-f][0-9a-f-]{7,63}$/i.test(ref.trim())) {
+      const task = this.#tasks.get(ref.trim());
+      if (
+        task !== undefined &&
+        task.ownerId === context.ownerId &&
+        task.conversationId === context.conversationId &&
+        (project === undefined || task.mandate.project === project)
+      ) {
+        this.#rememberTaskFocus(context.conversationId, task.id);
+        return task;
+      }
+      this.#reply(
+        context,
+        "当前会话没有这个任务；请指定当前会话的任务 id 或引用。",
+        "failure",
+      );
+      return undefined;
+    }
     const resolution = resolveTaskReference(
       context.ownerId,
       context.conversationId,
@@ -2276,6 +2573,14 @@ export class Router implements InboundHandler {
       },
     );
     if (resolution.status === "ok") {
+      if (resolution.task.conversationId !== context.conversationId) {
+        this.#reply(
+          context,
+          "该任务不属于当前会话；请指定当前会话的任务或计划 id。",
+          "failure",
+        );
+        return undefined;
+      }
       this.#rememberTaskFocus(context.conversationId, resolution.task.id);
       return resolution.task;
     }
@@ -2355,6 +2660,88 @@ export class Router implements InboundHandler {
           {
             purpose: "failure",
             text: `读取 PlanDiff 失败：${error instanceof Error ? error.message : String(error)}`,
+          },
+        ];
+      }
+    }
+
+    if (sub === "replan") {
+      const ref = parts[2];
+      if (ref === undefined) {
+        return [
+          {
+            purpose: "failure",
+            text: "用法：/plan replan <id> confirm（按现有步骤重新激活；改步骤请用 pa plans replan --file）",
+          },
+        ];
+      }
+      if (parts[3] !== "confirm") {
+        return [
+          {
+            purpose: "clarify",
+            text: `replan 会重新激活计划：/plan replan ${ref} confirm`,
+          },
+        ];
+      }
+      const resolved = this.#resolvePlan(ownerId, conversationId, ref);
+      if ("error" in resolved) {
+        return [{ purpose: "failure", text: resolved.error }];
+      }
+      const view = this.#plans.get(ownerId, resolved.id);
+      if (view === undefined) {
+        return [{ purpose: "failure", text: "计划不存在。" }];
+      }
+      const runningTaskIds = view.steps
+        .filter((step) => step.status === "running" && step.taskId !== undefined)
+        .map((step) => step.taskId as string);
+      try {
+        // Validation and the step-status change happen inside replan's
+        // transaction; child tasks are stopped only after the new version is
+        // durable, so a failed replan leaves the source untouched.
+        const replanned = this.#plans.replan(
+          ownerId,
+          resolved.id,
+          {
+            budget: view.plan.budget,
+            steps: view.steps.map((step) => ({
+              key: step.key,
+              goal: step.goal,
+              dependsOn: step.dependsOn,
+              tools: step.tools,
+              resources: step.resources,
+              verifierId: step.verifierId,
+              completionCriteria: step.completionCriteria,
+              maxAttempts: step.maxAttempts,
+              timeoutMs: step.timeoutMs,
+            })),
+          },
+          { stopOpenSteps: true },
+        );
+        for (const taskId of runningTaskIds) {
+          const child = this.#tasks.get(taskId);
+          if (child === undefined || child.status === "cancelled" || child.status === "succeeded" || child.status === "failed") {
+            continue;
+          }
+          try {
+            this.#taskService.cancel(child.id);
+          } catch (error) {
+            console.warn("plan_replan_child_cancel_failed", {
+              taskId: child.id,
+              message: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+        return [
+          {
+            purpose: "status",
+            text: this.#planDetailText(ownerId, replanned.plan),
+          },
+        ];
+      } catch (error) {
+        return [
+          {
+            purpose: "failure",
+            text: `replan 失败：${error instanceof Error ? error.message : String(error)}`,
           },
         ];
       }
@@ -2499,6 +2886,18 @@ export class Router implements InboundHandler {
           `- ${step.key} [${step.status}] ${step.goal.slice(0, 100)}  deps=${step.dependsOn.join(",") || "-"}  tools=${step.tools.join(",") || "-"}  verifier=${step.verifierId}`,
       ),
     ].join("\n");
+  }
+
+  #pausedPlanGuidance(plan: PlanRecord): string {
+    const short = plan.id.slice(0, 8);
+    const parent = this.#tasks.get(plan.parentTaskId);
+    if (parent?.status === "needs_review") {
+      return `计划 ${short} 已暂停，但父任务处于待确认；请先确认或取消该任务，计划不能直接 replan/resume。`;
+    }
+    if (parent?.status === "failed") {
+      return `计划 ${short} 已暂停（父任务失败）；用 /plan replan ${short} confirm 重新激活，或 /plan cancel ${short} confirm。`;
+    }
+    return `计划 ${short} 已暂停；/plan replan ${short} confirm 会停止当前步骤并重新激活（保留已完成步骤、预算不扩张）；改步骤用 pa plans replan --file。也可 /plan resume ${short} 继续，或 /plan cancel ${short} confirm。`;
   }
 
   #planDiffText(diff: PlanDiff): string {

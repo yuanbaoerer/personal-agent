@@ -499,15 +499,26 @@ export class PlanService {
 
   revise(ownerId: string, planId: string, input: PlanSpecInput): PlanView {
     const source = this.#ownedPlan(ownerId, planId);
-    if (source.status === "completed" || source.status === "cancelled") {
-      throw new PlanError("invalid_transition", `cannot revise a ${source.status} plan`);
+    if (source.status !== "draft" && source.status !== "paused") {
+      throw new PlanError(
+        "invalid_transition",
+        `cannot revise a plan in status ${source.status}; pause and use replan for an active plan`,
+      );
     }
     const task = this.#task(ownerId, source.parentTaskId);
     this.#assertTaskOpen(task);
-    const spec = resolvePlanSpec(input, task, this.#capabilities);
+    // A revision must never silently reset or widen the stored budget.
+    const spec = resolvePlanSpec(
+      { steps: input.steps, budget: { ...source.budget, ...input.budget } },
+      task,
+      this.#capabilities,
+    );
     const oldSteps = this.#plans.listSteps(source.id);
     if (oldSteps.some((step) => step.status === "running")) {
-      throw new PlanError("invalid_transition", "pause the plan before revising it");
+      throw new PlanError(
+        "invalid_transition",
+        "a step is still running; wait for it to finish or cancel it before revising",
+      );
     }
     this.#assertNoRunningVersions(task.id, source.id);
     this.#assertNoInFlightActions(task.id);
@@ -516,9 +527,7 @@ export class PlanService {
     const planVersion = (latest?.planVersion ?? source.planVersion) + 1;
 
     const view = this.#store.db.transaction(() => {
-      if (source.status !== "superseded") {
-        this.#plans.setPlanStatus(source.id, ["draft", "active", "paused"], "superseded", now);
-      }
+      this.#plans.setPlanStatus(source.id, ["draft", "paused"], "superseded", now);
       const plan = this.#plans.insertPlan({
         ownerId,
         parentTaskId: task.id,
@@ -571,7 +580,12 @@ export class PlanService {
    * The new version becomes active immediately under the owner's explicit
    * command and keeps the same parent task/authorization.
    */
-  replan(ownerId: string, planId: string, input: PlanSpecInput): PlanView {
+  replan(
+    ownerId: string,
+    planId: string,
+    input: PlanSpecInput,
+    options: { stopOpenSteps?: boolean } = {},
+  ): PlanView {
     const source = this.#ownedPlan(ownerId, planId);
     if (source.status !== "paused" && source.status !== "active") {
       throw new PlanError("invalid_transition", `cannot replan a ${source.status} plan`);
@@ -592,12 +606,24 @@ export class PlanService {
       throw new PlanError("stale_task_input", "parent task has newer input");
     }
     const oldSteps = this.#plans.listSteps(source.id);
-    if (oldSteps.some((step) => step.status === "running")) {
-      throw new PlanError("invalid_transition", "pause the plan before replanning");
+    const hasRunning = oldSteps.some((step) => step.status === "running");
+    if (hasRunning && options.stopOpenSteps !== true) {
+      throw new PlanError(
+        "invalid_transition",
+        "a step is still running; cancel it or use the stop-open-steps replan path",
+      );
+    }
+    const otherActive = this.#plans.activeForTask(task.id);
+    if (otherActive !== undefined && otherActive.id !== source.id) {
+      throw new PlanError("conflict_active_plan", "another plan version is already active");
     }
     this.#assertNoRunningVersions(task.id, source.id);
     this.#assertNoInFlightActions(task.id);
-    const spec = resolvePlanSpec(input, task, this.#capabilities);
+    const spec = resolvePlanSpec(
+      { steps: input.steps, budget: { ...source.budget, ...input.budget } },
+      task,
+      this.#capabilities,
+    );
     assertBudgetNotExpanded(spec.budget, source.budget);
 
     for (const step of oldSteps) {
@@ -640,6 +666,14 @@ export class PlanService {
     );
     const latest = this.#plans.latestForTask(task.id);
     const now = this.#now().toISOString();
+    const openStepKeys =
+      options.stopOpenSteps === true
+        ? oldSteps
+            .filter(
+              (step) => step.status === "running" || step.status === "ready",
+            )
+            .map((step) => step.key)
+        : [];
     const view = this.#store.db.transaction(() => {
       this.#plans.setPlanStatus(
         source.id,
@@ -647,6 +681,9 @@ export class PlanService {
         "superseded",
         now,
       );
+      if (openStepKeys.length > 0) {
+        this.#plans.setStepsStatus(source.id, openStepKeys, "cancelled", now);
+      }
       const plan = this.#plans.insertPlan({
         ownerId,
         parentTaskId: task.id,

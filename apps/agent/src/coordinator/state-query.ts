@@ -305,13 +305,16 @@ export function resolveTaskReference(
     if (ordinal === undefined || ordinal < 1) {
       return { status: "not_found", reason: "无法理解任务序号。" };
     }
-    if (ordinal > all.length) {
+    if (scoped.length === 0) {
+      return { status: "not_found", reason: "当前会话没有任务。" };
+    }
+    if (ordinal > scoped.length) {
       return {
         status: "not_found",
-        reason: `当前只有 ${all.length} 个任务，找不到第 ${ordinal} 个。`,
+        reason: `当前会话只有 ${scoped.length} 个任务，找不到第 ${ordinal} 个。`,
       };
     }
-    return { status: "ok", task: all[ordinal - 1] as TaskRecord };
+    return { status: "ok", task: scoped[ordinal - 1] as TaskRecord };
   }
 
   const prefer = (candidates: TaskRecord[]): TaskReferenceResolution | undefined => {
@@ -323,7 +326,10 @@ export function resolveTaskReference(
   };
 
   if (DEICTIC.test(value)) {
-    const base = scoped.length > 0 ? scoped : all;
+    if (scoped.length === 0) {
+      return { status: "not_found", reason: "当前会话没有任务。" };
+    }
+    const base = scoped;
     const focused = prefer(base);
     if (focused !== undefined) {
       return focused;

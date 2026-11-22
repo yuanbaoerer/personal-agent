@@ -1372,6 +1372,10 @@
                   },
                   "budget": {
                     "$ref": "#/components/schemas/PlanBudget"
+                  },
+                  "stopOpenSteps": {
+                    "type": "boolean",
+                    "description": "Cancel the source plan's running/ready steps and stop their children after the new version commits."
                   }
                 }
               }
