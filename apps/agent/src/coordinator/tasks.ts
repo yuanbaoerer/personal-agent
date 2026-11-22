@@ -1654,7 +1654,7 @@ function workerPrompt(
     lines.push(
       "Project review output must be structured; prose alone is not verified:",
       '{"findings":[{"id":"f1","requirementRef":"plan section","classification":"observed|inferred|unknown","severity":"critical|high|medium|low","repositoryId":123,"commitSha":"<40-hex or unknown for a gap>","evidenceRefs":["<source URL or path from an action receipt>"],"expected":"...","actual":"...","impact":"...","existingIssueMatches":[60],"suggestedAction":"...","evidenceGap":"required for unknown","coverage":"complete|partial|unknown","truncated":false}]}',
-      '{"issueDrafts":[{"action":"create|update|comment","targetIssue":60,"title":"...","body":"...","findingIds":["f1"],"beforeHash":"<sha256 of the existing issue body for update>","requiresOwnerApproval":true}]}',
+      '{"issueDrafts":[{"action":"create|update|comment","targetIssue":60,"title":"...","body":"...","findingIds":["f1"],"beforeHash":"<beforeHash from issue detail receipt, for updates>","requiresOwnerApproval":true}]}',
       "Start with a repo read to obtain the immutable repositoryId, then a ref read to resolve the branch to a fixed commit SHA before typed file/tree/checks reads.",
       "Typed read args (use exactly these field names; limit is 1..20):",
       '{"operation":"ref","projectKey":"<key>","repo":"owner/name","ref":"heads/main"}',
@@ -1666,7 +1666,7 @@ function workerPrompt(
       '{"operation":"issues","repo":"owner/name","limit":20}',
       "Do not invent placeholder SHAs: copy the 40-hex sha from the ref or file receipt. A read with revision/target/pullNumber aliases is accepted, but sha/path/number is canonical.",
       "Every observed finding must cite a receipt at the same repositoryId and commitSha; never invent issue numbers or test results.",
-      "update/comment drafts must target an issue already listed in the finding's existingIssueMatches; update drafts must also carry beforeHash from that issue's body receipt. Create drafts must not duplicate an existing issue.",
+      "update/comment drafts must target an issue already listed in the finding's existingIssueMatches. For an update, copy beforeHash from the typed issue detail receipt. If the receipt has no beforeHash, do not draft an update. Create drafts must not duplicate an existing issue.",
       "Issue drafts are proposals only. This task cannot write to GitHub, and the program derives their idempotency key.",
       "For typed reads, add githubClaim entries with kind=github_typed:",
       '{"githubClaims":[{"kind":"github_typed","repo":"owner/name","projectKey":"key","operation":"file","revision":"<40-hex>","target":"docs/plan.md","field":"exists","value":true},',
