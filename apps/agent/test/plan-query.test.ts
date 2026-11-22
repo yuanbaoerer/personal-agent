@@ -155,6 +155,34 @@ describe("plan progress queries", () => {
     );
   });
 
+  it("redirects a misrouted plan decision for a state question", async () => {
+    const services = createServices({ now: () => NOW });
+    const parent = services.tasks.insert({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "plan-draft-redirect",
+      goal: "redirect target",
+      completionCriteria: "provide a checked result",
+      mandate: { resources: ["chat"], tools: [] },
+      createdAt: NOW.toISOString(),
+    }).task;
+    services.model.push({
+      action: "draft_plan",
+      text: "",
+      taskId: parent.id,
+      plan: { steps: steps() },
+    });
+
+    await sendText(services, "现在有哪些任务", "evt_plan_redirect");
+
+    assert.equal(
+      services.planService.list(services.owner.id, { parentTaskId: parent.id }).length,
+      0,
+    );
+    assert.match(lastOutbox(services), /任务/);
+    assert.ok(!lastOutbox(services).includes("计划草稿"));
+  });
+
   it("does not expose another conversation's plan", async () => {
     const { services } = setup();
     await services.ingress.accept(
