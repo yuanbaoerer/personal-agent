@@ -509,7 +509,7 @@ export class PlanService {
     this.#assertTaskOpen(task);
     // A revision must never silently reset or widen the stored budget.
     const spec = resolvePlanSpec(
-      { steps: input.steps, budget: input.budget ?? source.budget },
+      { steps: input.steps, budget: { ...source.budget, ...input.budget } },
       task,
       this.#capabilities,
     );
@@ -527,9 +527,7 @@ export class PlanService {
     const planVersion = (latest?.planVersion ?? source.planVersion) + 1;
 
     const view = this.#store.db.transaction(() => {
-      if (source.status !== "superseded") {
-        this.#plans.setPlanStatus(source.id, ["draft", "active", "paused"], "superseded", now);
-      }
+      this.#plans.setPlanStatus(source.id, ["draft", "paused"], "superseded", now);
       const plan = this.#plans.insertPlan({
         ownerId,
         parentTaskId: task.id,
@@ -609,7 +607,7 @@ export class PlanService {
     this.#assertNoRunningVersions(task.id, source.id);
     this.#assertNoInFlightActions(task.id);
     const spec = resolvePlanSpec(
-      { steps: input.steps, budget: input.budget ?? source.budget },
+      { steps: input.steps, budget: { ...source.budget, ...input.budget } },
       task,
       this.#capabilities,
     );

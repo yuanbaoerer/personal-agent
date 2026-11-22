@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { isPlanProgressQuery } from "../src/coordinator/router.ts";
+import { taskFocusKey } from "../src/coordinator/state-query.ts";
 import type { PlanStepSpec, TaskRecord } from "../src/domain/types.ts";
 import { createServices, sendText, type TestServices } from "./services.ts";
 import { inbound } from "./helpers.ts";
@@ -344,6 +345,14 @@ describe("plan progress queries", () => {
       createdAt: NOW.toISOString(),
     }).task;
     services.planService.create(services.owner.id, parent.id, { steps: steps() });
+    const otherConversation = services.store.upsertConversation({
+      ownerId: services.owner.id,
+      channel: "feishu",
+      accountId: services.conversation.accountId,
+      platformConversationId: "oc_other_revise",
+      kind: "p2p",
+      createdAt: NOW.toISOString(),
+    });
     services.model.push({
       action: "revise_plan",
       text: "",
@@ -359,10 +368,15 @@ describe("plan progress queries", () => {
     );
     await services.effectDispatcher.drain(20);
 
-    assert.match(lastOutbox(services), /不属于当前会话/);
+    assert.match(lastOutbox(services), /当前会话没有匹配这个任务|不属于当前会话/);
     assert.equal(
       services.planService.list(services.owner.id, { parentTaskId: parent.id }).length,
       1,
+    );
+    // The refused task must not become this conversation's deictic focus.
+    assert.equal(
+      services.store.metaGet(taskFocusKey(otherConversation.id)),
+      undefined,
     );
   });
 
@@ -388,6 +402,24 @@ describe("plan progress queries", () => {
     await sendText(services, "改一下草稿", "evt_multiple_drafts");
 
     assert.match(lastOutbox(services), /多个计划草稿/);
+    assert.equal(
+      services.planService.list(services.owner.id, { parentTaskId: parent.id }).length,
+      2,
+    );
+  });
+
+  it("asks when a task has both a draft and an active plan", async () => {
+    const { services, parent } = setup();
+    services.planService.create(services.owner.id, parent.id, { steps: steps() });
+    services.model.push({
+      action: "revise_plan",
+      text: "",
+      taskId: parent.id,
+      plan: { steps: steps() },
+    });
+    await sendText(services, "改一下草稿", "evt_draft_and_active");
+
+    assert.match(lastOutbox(services), /同时有计划 .* 在执行/);
     assert.equal(
       services.planService.list(services.owner.id, { parentTaskId: parent.id }).length,
       2,
@@ -420,6 +452,31 @@ describe("plan progress queries", () => {
       services.planService.list(services.owner.id, { parentTaskId: parent.id }).length,
       1,
     );
+  });
+
+  it("replans via /plan replan only after confirmation", async () => {
+    const { services, parent, planId } = setup();
+    services.planService.pause(services.owner.id, planId);
+
+    await sendText(services, `/plan replan ${planId}`, "evt_replan_ask");
+    assert.match(lastOutbox(services), /confirm/);
+    assert.equal(
+      services.planService.list(services.owner.id, { parentTaskId: parent.id }).length,
+      1,
+    );
+
+    await sendText(services, `/plan replan ${planId} confirm`, "evt_replan_do");
+    const plans = services.planService.list(services.owner.id, {
+      parentTaskId: parent.id,
+    });
+    assert.deepEqual(
+      plans.map((plan) => [plan.planVersion, plan.status]),
+      [
+        [2, "active"],
+        [1, "superseded"],
+      ],
+    );
+    assert.equal(services.tasks.get(parent.id)?.planId, plans[0]?.id);
   });
 
   it("refuses to revise an active plan through chat", async () => {
