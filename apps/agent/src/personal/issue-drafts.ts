@@ -97,18 +97,6 @@ export class IssueDraftService {
     const writeCredentialRef =
       this.#writeCredentialRef ?? binding.credentialRef;
     const credential = this.#credentials?.status(writeCredentialRef);
-    const evidenceVersions = input.actions
-      .map((action) => action.evidence?.credentialVersion)
-      .filter(
-        (version): version is number =>
-          typeof version === "number" &&
-          Number.isSafeInteger(version) &&
-          version > 0,
-      );
-    // Bind the draft to the credential epoch that actually produced the
-    // evidence. If it rotated mid-review, approval will supersede it.
-    const evidenceVersion =
-      evidenceVersions.length === 0 ? undefined : Math.min(...evidenceVersions);
     const supersededForRevision = this.#drafts.supersedeForTask(
       input.task.id,
       input.task.revision,
@@ -210,11 +198,9 @@ export class IssueDraftService {
         payloadHash,
         idempotencyKey: draft.idempotencyKey,
         credentialRef: writeCredentialRef,
-        ...(evidenceVersion !== undefined
-          ? { credentialVersion: evidenceVersion }
-          : credential === undefined
-            ? {}
-            : { credentialVersion: credential.version }),
+        ...(credential === undefined
+          ? {}
+          : { credentialVersion: credential.version }),
         status: "pending_approval",
         createdAt: at,
         expiresAt,

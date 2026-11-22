@@ -6,7 +6,7 @@
 
 > **当前优先交付（2026-11-19）：MVP Functional Ready**。在 v0.2 Reliable Core 主线内先实现可持续私有自用的主体功能，见 [21 · MVP 实施纲领](docs/21-mvp-functional-ready.md)、[22 · 验收 Runbook](docs/22-mvp-acceptance-runbook.md)、[23 · 安全威胁模型](docs/23-security-redteam.md) 与 [#41 总任务](https://github.com/yuanbaoerer/personal-agent/issues/41)。MVP-01 [#38 状态感知](https://github.com/yuanbaoerer/personal-agent/issues/38) 与 MVP-02 [#39 自然语言主入口](https://github.com/yuanbaoerer/personal-agent/issues/39) 代码已合并；真实 E3/M02 仍待 owner 在飞书客户端实际键入；下一步按 #41 在 #10/#7 中选择，真实 GitHub、常驻 Node、主动工作、预算安全与 14 条验收继续保留。现有 CLI/TUI 保留，暂停扩建非阻断能力。D19/D20 已记录部分真实飞书/模型/短提醒成功及状态类任务的语义缺陷；完整 G1–G3/E3/E4 和长期证明仍待验收。本文历史段落的 pending 以对应时点理解，不把 275 个确定性测试当真实业务通过。
 
-> **2026-11-22 L2 进度**：L2R-01/02 与 L2W-01/02 已合并到 `main`（PR #95–#98，后续 #99–#101）；main 当前 `1297ff2`，**515 tests passed**。真实模型 + 真实 GitHub 只读评估在 `19427b0` 通过 `project-review` Verifier（repoId 1445007789，3 observed findings，3 pending drafts，`externalFactsVerified=false`：引用/claim 已核验、叙述结论未独立验证）。真实飞书收件与真实 Issue 写入仍 **BLOCKED**（需 owner 环境/隔离仓库与独立 Issues-write 凭据），未标记 E3。
+> **2026-11-22 L2 进度**：L2R-01/02 与 L2W-01/02 已合并到 `main`（PR #95–#98，后续 #99–#101）；main 当前 `1297ff2`，**516 tests passed**。真实模型 + 真实 GitHub 只读评估在 `19427b0` 通过 `project-review` Verifier（repoId 1445007789，3 observed findings，3 pending drafts，`externalFactsVerified=false`：引用/claim 已核验、叙述结论未独立验证）。真实飞书收件与真实 Issue 写入仍 **BLOCKED**（需 owner 环境/隔离仓库与独立 Issues-write 凭据），未标记 E3。
 >
 > **多端与跨平台规划（2026-11-14，2026-11-19 更新）**：长期支持 macOS（Apple Silicon / Intel）和 Windows 11 x64 的 CLI / TUI / Desktop，采用一个 Agent Core + 统一 Client API。**本地 Node 的最小 Client API / `pa` CLI / `pa tui` 已实现（E1）**；远程设备鉴权/TLS、SSE 重连与 WebSocket、真实 Terminal 验收和 Desktop 仍 pending。详见 [10 · 跨平台客户端规划](docs/10-client-platforms.md) 与 [20 · 本地 Client API](docs/20-local-client-api.md)。
 
@@ -140,7 +140,7 @@ curl -fsS http://127.0.0.1:8787/healthz
 - `pa_memories` 增加 `project` 作用域（空为全局）；`/remember [--project=名称] key=value`、`/memory [--project=名称]`、`/forget [--project=名称] key`；同一 key 可在不同项目并存。
 - Worker prompt 只注入全局 + 当前 Task `mandate.project` 的记忆，最多 20 条/每条 1000 字符，不注入其他项目；Router 不注入记忆。项目名只允许 1–64 位字母/数字/点/下划线/连字符。
 - 模型 `save_memory` 可带 project，确认卡显示项目后再写入；`/confirm` 仍按项目隔离复核。
-- `npm test`：515 个确定性测试通过（当前）；`npm run install:smoke` 在临时干净副本通过。包含 Client API/CLI/TUI 契约、插件 catalog/lifecycle、SKILL.md loader、ExtensionPolicy、MCP host/只读契约、ProjectBinding 与 GitHub typed read 负例；2026-11-21 GitHub Actions 已恢复，main run `44889097865` 的 test/macos/windows/install-smoke 全部通过；此前 #74–#78 的 run 因账单未启动，合并依据仅为本地验证。SSE child/main SIGKILL/重启测试通过。
+- `npm test`：516 个确定性测试通过（当前）；`npm run install:smoke` 在临时干净副本通过。包含 Client API/CLI/TUI 契约、插件 catalog/lifecycle、SKILL.md loader、ExtensionPolicy、MCP host/只读契约、ProjectBinding 与 GitHub typed read 负例；2026-11-21 GitHub Actions 已恢复，main run `44889097865` 的 test/macos/windows/install-smoke 全部通过；此前 #74–#78 的 run 因账单未启动，合并依据仅为本地验证。SSE child/main SIGKILL/重启测试通过。
 - 证据边界：E1；真实模型误触发/提示注入负例、语义检索与项目权限模型仍 pending。
 
 **2026-11-18 验证（PA-07 部分）：**

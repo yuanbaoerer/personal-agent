@@ -90,7 +90,7 @@ class GitHubIssueWriteTool implements ActionTool {
     this.#config = config;
     this.name = `github.issue.${operation}`;
     this.timeoutMs = config.timeoutMs ?? 15_000;
-    this.#maxBytes = config.maxBytes ?? 1_000_000;
+    this.#maxBytes = config.maxBytes ?? 5_000_000;
     this.#allowed = new Set(
       config.allowedRepos.map((repo) => repo.toLowerCase()),
     );
@@ -225,10 +225,6 @@ class GitHubIssueWriteTool implements ActionTool {
     ) {
       throw new ToolRejectedError("comment requires body and no title");
     }
-    const notBefore =
-      this.#operation === "comment" || this.#operation === "create"
-        ? optionalNotBefore(args.notBefore)
-        : undefined;
     if (
       this.#operation === "update" &&
       body === undefined &&
@@ -254,7 +250,6 @@ class GitHubIssueWriteTool implements ActionTool {
       ...(targetIssue === undefined ? {} : { targetIssue }),
       ...(title === undefined ? {} : { title }),
       ...(body === undefined ? {} : { body }),
-      ...(notBefore === undefined ? {} : { notBefore }),
     };
   }
 
@@ -267,6 +262,7 @@ class GitHubIssueWriteTool implements ActionTool {
     await this.#ensureRepositoryIdentity(canonical, credential);
     const repo = canonical.repo as string;
     const key = canonical.idempotencyKey as string;
+    const payloadHash = canonical.payloadHash as string;
     const body = canonical.body as string | undefined;
     const title = canonical.title as string | undefined;
     const targetIssue = canonical.targetIssue as number | undefined;
@@ -276,7 +272,7 @@ class GitHubIssueWriteTool implements ActionTool {
         repo,
         credential,
         key,
-        typeof args.notBefore === "string" ? args.notBefore : undefined,
+        payloadHash,
       );
       if (existing !== undefined) {
         return this.#success(existing, canonical);
@@ -287,14 +283,14 @@ class GitHubIssueWriteTool implements ActionTool {
         credential,
         {
           title: title as string,
-          body: `${marker(key)}${body as string}`,
+          body: `${marker(key, payloadHash)}${body as string}`,
         },
       );
       const issue = parseIssue(created);
       const verified = await this.#readIssue(repo, issue.number, credential);
       if (
         verified === undefined ||
-        !verified.body.includes(key) ||
+        !verified.body.includes(marker(key, payloadHash)) ||
         !verified.body.includes(body as string)
       ) {
         throw new ToolUnknownError(
@@ -310,7 +306,7 @@ class GitHubIssueWriteTool implements ActionTool {
         targetIssue as number,
         credential,
         key,
-        typeof args.notBefore === "string" ? args.notBefore : undefined,
+        payloadHash,
       );
       if (existing !== undefined) {
         return this.#successComment(existing, canonical);
@@ -330,13 +326,13 @@ class GitHubIssueWriteTool implements ActionTool {
         "POST",
         `/repos/${repo}/issues/${targetIssue}/comments`,
         credential,
-        { body: `${body as string}${marker(key)}` },
+        { body: `${body as string}${marker(key, payloadHash)}` },
       );
       const comment = parseComment(created);
       const verified = await this.#readComment(repo, comment.id, credential);
       if (
         verified === undefined ||
-        !verified.body.includes(key) ||
+        !verified.body.includes(marker(key, payloadHash)) ||
         !verified.body.includes(body as string)
       ) {
         throw new ToolUnknownError(
@@ -422,7 +418,7 @@ class GitHubIssueWriteTool implements ActionTool {
         repo,
         credential,
         canonical.idempotencyKey as string,
-        typeof canonical.notBefore === "string" ? canonical.notBefore : undefined,
+        canonical.payloadHash as string,
       );
       return existing === undefined
         ? { satisfied: false, evidence: { verified: false } }
@@ -434,6 +430,7 @@ class GitHubIssueWriteTool implements ActionTool {
         canonical.targetIssue as number,
         credential,
         canonical.idempotencyKey as string,
+        canonical.payloadHash as string,
       );
       return existing === undefined
         ? { satisfied: false, evidence: { verified: false } }
@@ -538,11 +535,12 @@ class GitHubIssueWriteTool implements ActionTool {
     repo: string,
     credential: ResolvedCredential,
     idempotencyKey: string,
-    notBefore?: string,
+    payloadHash: string,
   ): Promise<IssueRecord | undefined> {
-    // The marker is prepended to the body so it survives evidence truncation.
-    // Scan bounded pages since the draft was created; if the page budget is
-    // exhausted without a match, fail closed instead of risking a duplicate.
+    // The marker is prepended to the body so it survives evidence truncation
+    // and includes the payload hash so a stale same-key artifact cannot
+    // satisfy this approval. Scan bounded newest-first pages and fail closed
+    // if the page budget is exhausted without a match.
     for (let page = 1; page <= 3; page += 1) {
       const params = new URLSearchParams({
         state: "all",
@@ -551,9 +549,6 @@ class GitHubIssueWriteTool implements ActionTool {
         per_page: "100",
         page: String(page),
       });
-      if (notBefore !== undefined) {
-        params.set("since", notBefore);
-      }
       const response = await this.#request(
         "GET",
         `/repos/${repo}/issues?${params.toString()}`,
@@ -562,7 +557,10 @@ class GitHubIssueWriteTool implements ActionTool {
       const items = Array.isArray(response.body) ? response.body : [];
       for (const item of items) {
         const issue = parseIssue(item);
-        if (!issue.isPullRequest && issue.body.includes(idempotencyKey)) {
+        if (
+          !issue.isPullRequest &&
+          issue.body.includes(marker(idempotencyKey, payloadHash))
+        ) {
           return issue;
         }
       }
@@ -580,19 +578,15 @@ class GitHubIssueWriteTool implements ActionTool {
     issueNumber: number,
     credential: ResolvedCredential,
     idempotencyKey: string,
-    notBefore?: string,
+    payloadHash: string,
   ): Promise<CommentRecord | undefined> {
-    // GitHub returns comments in ascending id order. Scan bounded pages,
-    // optionally starting after the draft creation time, so a lost POST on a
-    // busy issue is still found instead of being repeated.
+    // GitHub returns comments in ascending id order. Scan bounded pages so a
+    // lost POST on a busy issue is still found instead of being repeated.
     for (let page = 1; page <= 5; page += 1) {
       const params = new URLSearchParams({
         per_page: "100",
         page: String(page),
       });
-      if (notBefore !== undefined) {
-        params.set("since", notBefore);
-      }
       const response = await this.#request(
         "GET",
         `/repos/${repo}/issues/${issueNumber}/comments?${params.toString()}`,
@@ -601,7 +595,7 @@ class GitHubIssueWriteTool implements ActionTool {
       const items = Array.isArray(response.body) ? response.body : [];
       for (const item of items) {
         const comment = parseComment(item);
-        if (comment.body.includes(idempotencyKey)) {
+        if (comment.body.includes(marker(idempotencyKey, payloadHash))) {
           return comment;
         }
       }
@@ -801,8 +795,8 @@ export function createGitHubIssueWriteTools(
   );
 }
 
-function marker(idempotencyKey: string): string {
-  return `<!-- ${MARKER}:${idempotencyKey} -->\n\n`;
+function marker(idempotencyKey: string, payloadHash: string): string {
+  return `<!-- ${MARKER}:${idempotencyKey}:${payloadHash} -->\n\n`;
 }
 
 function hash(value: string): string {
@@ -823,15 +817,6 @@ function optionalBody(value: unknown): string | undefined {
   return value;
 }
 
-function optionalNotBefore(value: unknown): string | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) {
-    throw new ToolRejectedError("notBefore must be an ISO timestamp");
-  }
-  return new Date(value).toISOString();
-}
 
 function optionalTitle(value: unknown): string | undefined {
   if (value === undefined) {

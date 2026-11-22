@@ -236,13 +236,27 @@ export class IssueDraftApprovalBridge {
     ) {
       // A crash after approval but before the draft status update is
       // recoverable: keep the same action, mark the draft executing.
-      this.#drafts.updateStatus(
+      const claimed = this.#drafts.updateStatus(
         draft.id,
         "executing",
         this.#now().toISOString(),
         { writeTaskId: task.id, writeActionId: proposed.action.id },
         ["pending_approval"],
       );
+      if (claimed === undefined) {
+        this.#actionService.revokeApproval(
+          proposed.action.id,
+          "draft_changed",
+          input.actorId,
+        );
+        return {
+          ok: false,
+          reason: "draft_changed",
+          draft: this.#draftService.get(input.ownerId, draft.id),
+          action: proposed.action,
+          taskId: task.id,
+        };
+      }
       return {
         ok: true,
         draft: this.#draftService.get(input.ownerId, draft.id),
@@ -268,6 +282,11 @@ export class IssueDraftApprovalBridge {
       expectedTaskRevision: proposed.action.taskRevision,
     });
     if (!approved.ok) {
+      this.#actionService.revokeApproval(
+        proposed.action.id,
+        "approval_failed",
+        input.actorId,
+      );
       this.#taskService.finishExternalAction(task.id, {
         status: "failed",
         summary: `动作批准失败：${approved.reason ?? "unknown"}`,
@@ -288,6 +307,22 @@ export class IssueDraftApprovalBridge {
       { writeTaskId: task.id, writeActionId: proposed.action.id },
       ["pending_approval"],
     );
+    if (updated === undefined) {
+      // The owner rejected/expired the draft between validation and approval.
+      // Withdraw the fresh action before the dispatcher can execute it.
+      this.#actionService.revokeApproval(
+        proposed.action.id,
+        "draft_changed",
+        input.actorId,
+      );
+      return {
+        ok: false,
+        reason: "draft_changed",
+        draft: this.#draftService.get(input.ownerId, draft.id),
+        action: proposed.action,
+        taskId: task.id,
+      };
+    }
     this.#store.recordAudit({
       actorId: input.actorId,
       event: "issue_draft.approved",
@@ -463,7 +498,6 @@ function actionArgs(draft: IssueDraftSnapshot): Record<string, unknown> {
       ...base,
       title: draft.title,
       body: draft.body,
-      notBefore: draft.createdAt,
     };
   }
   if (draft.action === "comment") {
@@ -471,7 +505,6 @@ function actionArgs(draft: IssueDraftSnapshot): Record<string, unknown> {
       ...base,
       targetIssue: draft.targetIssue,
       body: draft.body,
-      notBefore: draft.createdAt,
     };
   }
   return {

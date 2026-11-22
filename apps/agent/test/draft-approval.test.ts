@@ -801,3 +801,36 @@ describe("approval crash recovery", () => {
     );
   });
 });
+
+describe("approval withdrawal", () => {
+  it("withdraws an approved action before it can execute", async () => {
+    const { services, fake } = setup();
+    const { draft, payloadHash } = seedDraft(services, { key: "2" });
+    const approved = await services.issueDraftApproval?.approve({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      draftId: draft.id,
+      payloadHash,
+      actorId: services.owner.id,
+    });
+    assert.equal(approved?.ok, true);
+    assert.ok(approved?.action);
+    assert.equal(
+      services.actionService.revokeApproval(
+        approved.action.id,
+        "test",
+        services.owner.id,
+      ),
+      true,
+    );
+    await services.effectDispatcher.drain(10);
+    assert.equal(
+      fake.requests.filter((request) => request.method === "POST").length,
+      0,
+    );
+    assert.equal(
+      services.issueDrafts.get(services.owner.id, draft.id)?.status,
+      "superseded",
+    );
+  });
+});

@@ -165,6 +165,27 @@ export class ActionService {
     return { action, created };
   }
 
+  /**
+   * Withdraw an approval that has not started executing. Used when a draft
+   * lost a race with rejection/expiry after the action was approved.
+   */
+  revokeApproval(actionId: string, reason: string, actorId: string): boolean {
+    const action = this.#actions.get(actionId);
+    if (
+      action === undefined ||
+      (action.status !== "proposed" && action.status !== "approved")
+    ) {
+      return false;
+    }
+    const now = this.#now().toISOString();
+    if (!this.#actions.supersede(actionId, reason, now)) {
+      return false;
+    }
+    this.#auditAction(action, "action.superseded", { reason, actorId });
+    this.#reply(action, "failure", "草稿状态已变化，审批已撤销，未执行。", "superseded");
+    return true;
+  }
+
   install(dispatcher: EffectDispatcher): void {
     dispatcher.register("action.execute", (effect) => this.handleExecute(effect.payload));
     dispatcher.register("action.reconcile", (effect) =>
