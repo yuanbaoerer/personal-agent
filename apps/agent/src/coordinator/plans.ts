@@ -822,6 +822,33 @@ export class PlanService {
     return this.#transition(ownerId, planId, ["paused"], "active", "plan.resumed");
   }
 
+  /**
+   * Clear running/ready step statuses before an owner replan. The caller is
+   * responsible for stopping the corresponding child tasks first.
+   */
+  cancelOpenSteps(ownerId: string, planId: string): void {
+    const plan = this.#ownedPlan(ownerId, planId);
+    if (plan.status !== "active" && plan.status !== "paused") {
+      throw new PlanError("invalid_transition", `cannot cancel steps of a ${plan.status} plan`);
+    }
+    const open = this.#plans
+      .listSteps(plan.id)
+      .filter((step) => step.status === "running" || step.status === "ready");
+    if (open.length === 0) {
+      return;
+    }
+    const now = this.#now().toISOString();
+    this.#plans.setStepsStatus(
+      plan.id,
+      open.map((step) => step.key),
+      "cancelled",
+      now,
+    );
+    this.#audit("plan.steps_cancelled", plan, {
+      steps: open.map((step) => step.key),
+    });
+  }
+
   cancel(ownerId: string, planId: string): PlanView {
     const plan = this.#ownedPlan(ownerId, planId);
     if (plan.status === "completed" || plan.status === "cancelled") {

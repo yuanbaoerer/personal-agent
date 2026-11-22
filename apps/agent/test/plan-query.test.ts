@@ -368,12 +368,84 @@ describe("plan progress queries", () => {
     );
     await services.effectDispatcher.drain(20);
 
-    assert.match(lastOutbox(services), /当前会话没有匹配这个任务|不属于当前会话/);
+    assert.match(lastOutbox(services), /当前会话没有(?:匹配)?这个任务|不属于当前会话/);
     assert.equal(
       services.planService.list(services.owner.id, { parentTaskId: parent.id }).length,
       1,
     );
     // The refused task must not become this conversation's deictic focus.
+    assert.equal(
+      services.store.metaGet(taskFocusKey(otherConversation.id)),
+      undefined,
+    );
+  });
+
+  it("resolves a natural taskRef for revise_plan through conversation focus", async () => {
+    const services = createServices({ now: () => NOW });
+    const parent = services.tasks.insert({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "plan-natural-task-ref",
+      goal: "natural task ref target",
+      completionCriteria: "provide a checked result",
+      mandate: { resources: ["chat"], tools: [] },
+      createdAt: NOW.toISOString(),
+    }).task;
+    services.planService.create(services.owner.id, parent.id, { steps: steps() });
+    services.store.metaSet(taskFocusKey(services.conversation.id), parent.id);
+    services.model.push({
+      action: "revise_plan",
+      text: "",
+      taskRef: "刚才那个任务",
+      plan: {
+        steps: steps().map((step) =>
+          step.key === "C" ? { ...step, goal: "task ref revision" } : step,
+        ),
+      },
+    });
+    await sendText(services, "改一下刚才那个任务的计划", "evt_natural_task_ref");
+    assert.match(lastOutbox(services), /计划草稿已更新为 v2/);
+  });
+
+  it("does not create a plan for another conversation's task", async () => {
+    const services = createServices({ now: () => NOW });
+    const parent = services.tasks.insert({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "plan-draft-cross-chat",
+      goal: "draft cross chat",
+      completionCriteria: "provide a checked result",
+      mandate: { resources: ["chat"], tools: [] },
+      createdAt: NOW.toISOString(),
+    }).task;
+    const otherConversation = services.store.upsertConversation({
+      ownerId: services.owner.id,
+      channel: "feishu",
+      accountId: services.conversation.accountId,
+      platformConversationId: "oc_draft_other",
+      kind: "p2p",
+      createdAt: NOW.toISOString(),
+    });
+    services.model.push({
+      action: "draft_plan",
+      text: "",
+      taskId: parent.id,
+      plan: { steps: steps() },
+    });
+    await services.ingress.accept(
+      inbound({
+        platformEventId: "evt_draft_cross_chat",
+        platformConversationId: "oc_draft_other",
+        text: "给另一个会话的任务做计划",
+      }),
+    );
+    await services.effectDispatcher.drain(20);
+
+    assert.match(lastOutbox(services), /当前会话没有这个任务/);
+    assert.equal(
+      services.planService.list(services.owner.id, { parentTaskId: parent.id }).length,
+      0,
+    );
     assert.equal(
       services.store.metaGet(taskFocusKey(otherConversation.id)),
       undefined,
@@ -430,6 +502,115 @@ describe("plan progress queries", () => {
     );
   });
 
+  it("replans an active plan by stopping its running step", async () => {
+    const { services, parent, planId } = setup();
+    const child = services.tasks.insert({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "plan-replan-child",
+      goal: "running child",
+      completionCriteria: "provide a checked result",
+      mandate: { resources: ["chat"], tools: [] },
+      planId,
+      planStepKey: "A",
+      createdAt: NOW.toISOString(),
+    }).task;
+    assert.ok(services.plans.bindStepTask(planId, "A", child.id, NOW.toISOString()));
+
+    await sendText(services, `/plan replan ${planId} confirm`, "evt_replan_running");
+    const plans = services.planService.list(services.owner.id, {
+      parentTaskId: parent.id,
+    });
+    assert.deepEqual(
+      plans.map((plan) => [plan.planVersion, plan.status]),
+      [
+        [2, "active"],
+        [1, "superseded"],
+      ],
+    );
+    assert.notEqual(services.tasks.get(child.id)?.status, "queued");
+    assert.equal(
+      services.plans.listSteps(planId)[0]?.status,
+      "cancelled",
+    );
+  });
+
+  it("replans a paused plan with a running step and preserves completed work/budget", async () => {
+    const services = createServices({ now: () => NOW });
+    const parent = services.tasks.insert({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "plan-replan-paused",
+      goal: "paused replan parent",
+      completionCriteria: "provide a checked result",
+      mandate: { resources: ["chat"], tools: [] },
+      createdAt: NOW.toISOString(),
+    }).task;
+    const plan = services.planService.create(services.owner.id, parent.id, {
+      steps: steps(),
+      budget: { maxToolCalls: 1 },
+    });
+    services.planService.activate(services.owner.id, plan.plan.id);
+    assert.ok(services.plans.bindStepTask(plan.plan.id, "A", "done-child", NOW.toISOString()));
+    services.plans.setStepOutcome(
+      plan.plan.id,
+      "A",
+      "completed",
+      ["task:done-child"],
+      undefined,
+      NOW.toISOString(),
+    );
+    const running = services.tasks.insert({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "plan-replan-paused-child",
+      goal: "running child",
+      completionCriteria: "provide a checked result",
+      mandate: { resources: ["chat"], tools: [] },
+      planId: plan.plan.id,
+      planStepKey: "B",
+      createdAt: NOW.toISOString(),
+    }).task;
+    services.plans.setStepsStatus(
+      plan.plan.id,
+      ["B"],
+      "ready",
+      NOW.toISOString(),
+    );
+    assert.ok(
+      services.plans.bindStepTask(
+        plan.plan.id,
+        "B",
+        running.id,
+        NOW.toISOString(),
+      ),
+    );
+    services.planService.pause(services.owner.id, plan.plan.id);
+
+    await sendText(
+      services,
+      `/plan replan ${plan.plan.id} confirm`,
+      "evt_replan_paused_running",
+    );
+    const replanned = services.planService.list(services.owner.id, {
+      parentTaskId: parent.id,
+    })[0];
+    assert.equal(replanned?.status, "active");
+    assert.equal(replanned?.budget.maxToolCalls, 1);
+    const replannedSteps = services.planService.get(
+      services.owner.id,
+      replanned?.id ?? "",
+    )?.steps;
+    assert.equal(
+      replannedSteps?.find((step) => step.key === "A")?.status,
+      "completed",
+    );
+    assert.equal(
+      replannedSteps?.find((step) => step.key === "A")?.taskId,
+      "done-child",
+    );
+  });
+
   it("asks when a task has both a draft and an active plan", async () => {
     const { services, parent } = setup();
     services.planService.create(services.owner.id, parent.id, { steps: steps() });
@@ -441,7 +622,7 @@ describe("plan progress queries", () => {
     });
     await sendText(services, "改一下草稿", "evt_draft_and_active");
 
-    assert.match(lastOutbox(services), /同时有计划 .* 在执行/);
+    assert.match(lastOutbox(services), /同时有执行中计划 .* 和可修改的草稿/);
     assert.equal(
       services.planService.list(services.owner.id, { parentTaskId: parent.id }).length,
       2,

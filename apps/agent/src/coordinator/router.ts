@@ -1048,7 +1048,7 @@ export class Router implements InboundHandler {
           this.#reply(context, "请提供 3–5 个步骤的计划草稿。", "status");
           return { status: "done" };
         }
-        const target = this.#resolveDecisionTask(context, decision);
+        const target = this.#resolveConversationTask(context, decision);
         if (target === undefined) {
           return { status: "done" };
         }
@@ -1137,7 +1137,7 @@ export class Router implements InboundHandler {
           if (active !== undefined && drafts.length + pausedPlans.length > 0) {
             this.#reply(
               context,
-              `这个任务同时有计划 ${active.id.slice(0, 8)} 在执行；请用 /plan <id> 指定要修改的草稿，或先 /plan pause ${active.id.slice(0, 8)}。`,
+              `这个任务同时有执行中计划 ${active.id.slice(0, 8)} 和可修改的草稿/暂停版本；请在消息中指明要修改的计划 id，或先 /plan pause ${active.id.slice(0, 8)}。`,
               "clarify",
             );
             return { status: "done" };
@@ -1156,7 +1156,7 @@ export class Router implements InboundHandler {
           } else if (active !== undefined) {
             this.#reply(
               context,
-              `计划 ${active.id.slice(0, 8)} 正在执行，不能直接改；先用 /plan pause ${active.id.slice(0, 8)}，再用 /plan replan ${active.id.slice(0, 8)} confirm。`,
+              `计划 ${active.id.slice(0, 8)} 正在执行；/plan replan ${active.id.slice(0, 8)} confirm 会停止当前步骤并重新激活，改步骤用 pa plans replan --file。`,
               "clarify",
             );
             return { status: "done" };
@@ -1194,7 +1194,7 @@ export class Router implements InboundHandler {
           const short = source.id.slice(0, 8);
           const guidance =
             source.status === "active"
-              ? `计划 ${short} 正在执行，不能直接改；先用 /plan pause ${short}，再用 /plan replan ${short} confirm。`
+              ? `计划 ${short} 正在执行；/plan replan ${short} confirm 会停止当前步骤并重新激活，改步骤用 pa plans replan --file。`
               : source.status === "paused"
                 ? this.#pausedPlanGuidance(source)
                 : source.status === "completed"
@@ -2348,39 +2348,54 @@ export class Router implements InboundHandler {
     context: { ownerId: string; conversationId: string; inboxId: string },
     decision: RouterDecision,
   ): TaskRecord | undefined {
-    const scoped = this.#tasks
-      .listByOwner(context.ownerId, 50)
-      .filter((task) => task.conversationId === context.conversationId);
-    const ref = decision.taskId ?? decision.taskRef;
-    if (ref !== undefined) {
-      const exact = scoped.find((task) => task.id === ref);
-      if (exact !== undefined) {
-        return exact;
+    if (decision.taskId !== undefined) {
+      // Exact ids bypass the 50-task scan; the conversation check prevents a
+      // cross-chat task from becoming selectable.
+      const task = this.#tasks.get(decision.taskId);
+      if (
+        task !== undefined &&
+        task.ownerId === context.ownerId &&
+        task.conversationId === context.conversationId
+      ) {
+        return task;
       }
-      const matches = scoped.filter((task) => task.id.startsWith(ref));
-      if (matches.length === 1) {
-        return matches[0];
-      }
-      if (matches.length > 1) {
-        this.#reply(
-          context,
-          `任务引用不唯一：${matches
-            .map((task) => task.id.slice(0, 8))
-            .join(", ")}。请使用更长的 id。`,
-          "clarify",
-        );
-        return undefined;
-      }
-      this.#reply(context, "当前会话没有匹配这个任务；请指定当前会话的任务 id。", "failure");
+      this.#reply(
+        context,
+        "当前会话没有这个任务；请指定当前会话的任务 id 或引用。",
+        "failure",
+      );
       return undefined;
     }
     const focus = this.#store.metaGet(taskFocusKey(context.conversationId));
-    const focused =
-      focus === undefined ? undefined : scoped.find((task) => task.id === focus);
-    if (focused !== undefined) {
-      return focused;
+    const resolution = resolveTaskReference(
+      context.ownerId,
+      context.conversationId,
+      decision.taskRef,
+      this.#tasks,
+      { preferredTaskId: focus },
+    );
+    if (resolution.status === "ok") {
+      if (resolution.task.conversationId !== context.conversationId) {
+        this.#reply(
+          context,
+          "该任务不属于当前会话；请指定当前会话的任务或计划 id。",
+          "failure",
+        );
+        return undefined;
+      }
+      return resolution.task;
     }
-    this.#reply(context, "请指定当前会话的任务 id。", "clarify");
+    if (resolution.status === "ambiguous") {
+      this.#reply(
+        context,
+        `任务引用不唯一：${resolution.candidates
+          .map((task) => task.id.slice(0, 8))
+          .join(", ")}。请使用更长的 id。`,
+        "clarify",
+      );
+      return undefined;
+    }
+    this.#reply(context, resolution.reason, "failure");
     return undefined;
   }
 
@@ -2593,6 +2608,23 @@ export class Router implements InboundHandler {
         return [{ purpose: "failure", text: "计划不存在。" }];
       }
       try {
+        // Replan is the explicit retry path: stop any running child and
+        // clear running/ready step statuses before creating the new version.
+        for (const step of view.steps) {
+          if (step.status !== "running" || step.taskId === undefined) {
+            continue;
+          }
+          const child = this.#tasks.get(step.taskId);
+          if (
+            child !== undefined &&
+            child.status !== "succeeded" &&
+            child.status !== "failed" &&
+            child.status !== "cancelled"
+          ) {
+            this.#taskService.cancel(child.id);
+          }
+        }
+        this.#plans.cancelOpenSteps(ownerId, resolved.id);
         const replanned = this.#plans.replan(ownerId, resolved.id, {
           budget: view.plan.budget,
           steps: view.steps.map((step) => ({
@@ -2773,7 +2805,7 @@ export class Router implements InboundHandler {
     if (parent?.status === "failed") {
       return `计划 ${short} 已暂停（父任务失败）；用 /plan replan ${short} confirm 重新激活，或 /plan cancel ${short} confirm。`;
     }
-    return `计划 ${short} 已暂停；请等运行中步骤结束/取消后，用 /plan replan ${short} confirm 修改（保留已完成步骤、预算只能缩小），用 /plan resume ${short} 继续，或 /plan cancel ${short} confirm。`;
+    return `计划 ${short} 已暂停；/plan replan ${short} confirm 会停止当前步骤并重新激活（保留已完成步骤、预算不扩张）；改步骤用 pa plans replan --file。也可 /plan resume ${short} 继续，或 /plan cancel ${short} confirm。`;
   }
 
   #planDiffText(diff: PlanDiff): string {
