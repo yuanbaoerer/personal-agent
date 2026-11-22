@@ -55,6 +55,9 @@ const TERMINAL_TASK_STATUSES: ReadonlySet<TaskRecord["status"]> = new Set([
   "succeeded",
   "failed",
   "cancelled",
+  // Acknowledgement is the only exit from needs_review; a plan must not
+  // resurrect or re-execute work whose result is already delivered.
+  "needs_review",
 ]);
 
 const STEP_KEY_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{0,31}$/;
@@ -543,6 +546,19 @@ export class PlanService {
     const plan = this.#ownedPlan(ownerId, planId);
     const task = this.#task(ownerId, plan.parentTaskId);
     this.#assertFresh(plan, task);
+    if (this.#plans.activeForTask(task.id) !== undefined) {
+      throw new PlanError("conflict_active_plan", "another plan version is already active");
+    }
+    // The catalog can change without a task revision; re-check the steps
+    // against the live mandate/capabilities before making them runnable.
+    resolvePlanSpec(
+      {
+        steps: planStepsToSpecs(this.#plans.listSteps(plan.id)),
+        budget: plan.budget,
+      },
+      task,
+      this.#capabilities,
+    );
     return this.#transition(ownerId, planId, ["paused"], "active", "plan.resumed");
   }
 

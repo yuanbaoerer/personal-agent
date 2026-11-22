@@ -354,6 +354,69 @@ describe("plan lifecycle", () => {
     );
   });
 
+  it("treats needs_review as a closed parent task", () => {
+    const { store, owner, task, service } = setup();
+    const draft = service.create(owner.id, task.id, { steps: steps() });
+    new TaskRepository(store.db).updateTask(task.id, task.revision, {
+      status: "needs_review",
+      updatedAt: NOW,
+    });
+    assert.equal(
+      codeOf(() => service.activate(owner.id, draft.plan.id)),
+      "task_terminal",
+    );
+    assert.equal(
+      codeOf(() => service.create(owner.id, task.id, { steps: steps() })),
+      "task_terminal",
+    );
+  });
+
+  it("refuses to resume one version while another is active", () => {
+    const { owner, task, service } = setup();
+    const first = service.create(owner.id, task.id, { steps: steps() });
+    service.activate(owner.id, first.plan.id);
+    service.pause(owner.id, first.plan.id);
+
+    const second = service.create(owner.id, task.id, { steps: steps() });
+    service.activate(owner.id, second.plan.id);
+    assert.equal(
+      codeOf(() => service.resume(owner.id, first.plan.id)),
+      "conflict_active_plan",
+    );
+  });
+
+  it("revalidates live capabilities before resuming", () => {
+    const store = createStore();
+    const owner = bindOwner(store, "ou_owner");
+    const conv = conversation(store, owner);
+    const task = makeTask(store, owner, conv);
+    let tools = ["github.read", "state.summary"];
+    const liveCapabilities: CapabilityView = {
+      generation: () => 1,
+      toolNames: () => tools,
+      resources: () => ["chat", "github", "state"],
+      resourceForTool: (name) =>
+        name === "github.read" ? "github" : name === "state.summary" ? "state" : undefined,
+      toolInfo: () => undefined,
+    };
+    const service = new PlanService({
+      store,
+      plans: new PlanRepository(store.db),
+      tasks: new TaskRepository(store.db),
+      capabilities: liveCapabilities,
+      now: () => new Date(NOW),
+    });
+    const draft = service.create(owner.id, task.id, { steps: steps() });
+    service.activate(owner.id, draft.plan.id);
+    service.pause(owner.id, draft.plan.id);
+
+    tools = ["state.summary"];
+    assert.equal(
+      codeOf(() => service.resume(owner.id, draft.plan.id)),
+      "invalid_plan",
+    );
+  });
+
   it("keeps plans owner-scoped and survives a service restart", () => {
     const { store, owner, task, service } = setup();
     const draft = service.create(owner.id, task.id, { steps: steps() });
