@@ -801,6 +801,7 @@ export type RouterAction =
   | "reply"
   | "create_task"
   | "draft_plan"
+  | "revise_plan"
   | "supplement_task"
   | "revise_task"
   | "cancel_task"
@@ -835,6 +836,10 @@ export interface RouterDecision {
   taskRef?: string;
   /** Model-proposed 3–5 step plan; always validated by PlanService. */
   plan?: { steps: PlanStepSpec[] };
+  /** Exact/prefixed plan id when the model is revising an existing draft. */
+  planId?: string;
+  /** Natural reference to a plan; resolved inside the conversation. */
+  planRef?: string;
   /** Changes for an existing task; a revision bump invalidates old work. */
   changes?: {
     goal?: string;

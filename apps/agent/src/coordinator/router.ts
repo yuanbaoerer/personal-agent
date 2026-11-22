@@ -141,6 +141,7 @@ const REMIND_TIME_HINT =
   /(?:\d{1,2}\s*[点:：时]|今天|明天|后天|大后天|下周|上午|下午|中午|晚上|早上)/;
 const REDIRECTABLE_CONTROL_ACTIONS: ReadonlySet<RouterDecision["action"]> = new Set([
   "draft_plan",
+  "revise_plan",
   "supplement_task",
   "revise_task",
   "cancel_task",
@@ -1064,6 +1065,77 @@ export class Router implements InboundHandler {
           this.#reply(
             context,
             `计划草稿未创建：${error instanceof Error ? error.message : String(error)}`,
+            "failure",
+          );
+        }
+        return { status: "done" };
+      }
+      case "revise_plan": {
+        if (this.#plans === undefined) {
+          this.#reply(context, "计划能力当前未启用。", "failure");
+          return { status: "done" };
+        }
+        if (decision.plan === undefined || decision.plan.steps.length === 0) {
+          this.#reply(context, "请提供修改后的完整 3–5 步计划。", "status");
+          return { status: "done" };
+        }
+        let source: PlanRecord | undefined;
+        const ref = decision.planId ?? decision.planRef;
+        if (ref !== undefined) {
+          const resolved = this.#resolvePlan(
+            context.ownerId,
+            context.conversationId,
+            ref,
+          );
+          if ("error" in resolved) {
+            this.#reply(context, resolved.error, "failure");
+            return { status: "done" };
+          }
+          source = this.#plans.get(context.ownerId, resolved.id)?.plan ?? resolved;
+        } else {
+          const target = this.#resolveDecisionTask(context, decision);
+          if (target === undefined) {
+            return { status: "done" };
+          }
+          source = this.#plans
+            .list(context.ownerId, { parentTaskId: target.id, limit: 10 })
+            .find((plan) => plan.status === "draft" || plan.status === "paused");
+          if (source === undefined) {
+            this.#reply(
+              context,
+              "这个任务当前没有可修改的草稿或暂停计划；请先让我生成草稿。",
+              "status",
+            );
+            return { status: "done" };
+          }
+        }
+        if (source.status !== "draft" && source.status !== "paused") {
+          this.#reply(
+            context,
+            "执行中或已结束的计划不能直接改；请先暂停，再用 replan 处理正在执行的计划。",
+            "clarify",
+          );
+          return { status: "done" };
+        }
+        try {
+          const revised = this.#plans.revise(context.ownerId, source.id, {
+            steps: decision.plan.steps,
+          });
+          const diff = this.#plans.diff(
+            context.ownerId,
+            revised.plan.id,
+            source.planVersion,
+            revised.plan.planVersion,
+          );
+          this.#reply(
+            context,
+            `计划草稿已更新为 v${revised.plan.planVersion}（未执行）。\n${this.#planDiffText(diff)}`,
+            "status",
+          );
+        } catch (error) {
+          this.#reply(
+            context,
+            `计划修改失败：${error instanceof Error ? error.message : String(error)}`,
             "failure",
           );
         }

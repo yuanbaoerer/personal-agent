@@ -183,6 +183,79 @@ describe("plan progress queries", () => {
     assert.ok(!lastOutbox(services).includes("计划草稿"));
   });
 
+  it("revises a draft plan into a new version with a PlanDiff", async () => {
+    const services = createServices({ now: () => NOW });
+    const parent = services.tasks.insert({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "plan-revision",
+      goal: "revision target",
+      completionCriteria: "provide a checked result",
+      mandate: { resources: ["chat"], tools: [] },
+      createdAt: NOW.toISOString(),
+    }).task;
+    services.model.push({
+      action: "draft_plan",
+      text: "",
+      taskId: parent.id,
+      plan: { steps: steps() },
+    });
+    await sendText(services, "先给我三步计划", "evt_revise_1");
+    const first = services.planService.list(services.owner.id, {
+      parentTaskId: parent.id,
+    })[0];
+    assert.equal(first?.planVersion, 1);
+
+    services.model.push({
+      action: "revise_plan",
+      text: "",
+      taskId: parent.id,
+      plan: {
+        steps: steps().map((step) =>
+          step.key === "B" ? { ...step, goal: "read-only analysis" } : step,
+        ),
+      },
+    });
+    await sendText(services, "第二步改成只读评估，先给我 diff", "evt_revise_2");
+
+    const plans = services.planService.list(services.owner.id, {
+      parentTaskId: parent.id,
+    });
+    assert.deepEqual(
+      plans.map((plan) => [plan.planVersion, plan.status]),
+      [
+        [2, "draft"],
+        [1, "superseded"],
+      ],
+    );
+    assert.match(lastOutbox(services), /计划草稿已更新为 v2/);
+    assert.match(lastOutbox(services), /PlanDiff v1 -> v2/);
+    assert.match(lastOutbox(services), /~ B\s+changed: goal/);
+    assert.equal(
+      services.tasks
+        .listByOwner(services.owner.id, 20)
+        .filter((task) => task.planStepKey !== undefined).length,
+      0,
+    );
+  });
+
+  it("refuses to revise an active plan through chat", async () => {
+    const { services, parent, planId } = setup();
+    services.model.push({
+      action: "revise_plan",
+      text: "",
+      taskId: parent.id,
+      planId,
+      plan: { steps: steps() },
+    });
+    await sendText(services, "改一下刚才的计划", "evt_revise_active");
+    assert.match(lastOutbox(services), /暂停|replan/);
+    assert.equal(
+      services.planService.get(services.owner.id, planId)?.plan.status,
+      "active",
+    );
+  });
+
   it("does not expose another conversation's plan", async () => {
     const { services } = setup();
     await services.ingress.accept(
