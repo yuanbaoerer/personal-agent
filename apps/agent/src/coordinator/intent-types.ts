@@ -1,3 +1,5 @@
+import type { OutboxPurpose } from "../domain/types.ts";
+
 export interface IntentContext {
   ownerId: string;
   conversationId: string;
@@ -7,7 +9,7 @@ export interface IntentContext {
 
 export interface IntentReply {
   text: string;
-  purpose: "ack" | "status" | "failure";
+  purpose: OutboxPurpose;
 }
 
 export interface IntentOutcome {

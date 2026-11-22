@@ -181,8 +181,14 @@ describe("multi-turn conversation E1", () => {
     assert.ok(
       model.inputs[3]?.conversationWindow?.turns.some((turn) => /细化/.test(turn.text)),
     );
+    acceptPendingOutbox(services);
 
     await sendText(services, "补充：只读", "evt_5");
+    assert.ok(
+      model.inputs[4]?.conversationWindow?.turns.some(
+        (turn) => turn.role === "assistant" && /已接单/.test(turn.text),
+      ),
+    );
     await sendText(services, "继续", "evt_6");
 
     // A second chat with the same owner must not see the first chat.
@@ -205,6 +211,24 @@ describe("multi-turn conversation E1", () => {
     const secondInput = model.inputs.at(-1);
     assert.equal(secondInput?.conversationId, second.id);
     assert.deepEqual(secondInput?.conversationWindow?.turns, []);
+  });
+
+  it("keeps personal-intent clarifications in the next turn's window", async () => {
+    const model = new RecordingRouterModel([
+      { action: "save_memory", text: "" },
+      { action: "reply", replyKind: "chat", text: "好的。" },
+    ]);
+    const services = createServices({ routerModel: model });
+    await sendText(services, "帮我记住", "evt_memory_1");
+    acceptPendingOutbox(services);
+    await sendText(services, "我的编辑器是 vim", "evt_memory_2");
+
+    assert.ok(
+      model.inputs[1]?.conversationWindow?.turns.some(
+        (turn) =>
+          turn.role === "assistant" && /请提供要记住的 key 和 value/.test(turn.text),
+      ),
+    );
   });
 
   it("restores the window from the store after a restart", async () => {

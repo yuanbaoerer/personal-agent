@@ -58,8 +58,11 @@ export interface PersonalIntentDeps {
 
 function reply(
   text: string,
-  purpose: IntentReply["purpose"] = "ack",
+  purpose: IntentReply["purpose"] = "result",
 ): IntentOutcome {
+  // These messages answer the owner (clarify/status/failure), so they belong
+  // in the durable conversation window. The bare ingress ack stays "ack" and
+  // is intentionally excluded from history.
   return { replies: [{ text, purpose }] };
 }
 

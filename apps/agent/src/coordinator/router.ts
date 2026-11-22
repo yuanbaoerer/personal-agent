@@ -854,7 +854,7 @@ export class Router implements InboundHandler {
       }
       case "create_task": {
         if (decision.task === undefined || decision.task.goal.trim().length === 0) {
-          this.#reply(context, "请补充任务目标和完成条件。");
+          this.#reply(context, "请补充任务目标和完成条件。", "clarify");
           return { status: "done" };
         }
         const ownerProject = extractProjectFlag(context.text);
@@ -1003,6 +1003,7 @@ export class Router implements InboundHandler {
           mandate.project === undefined
             ? ack
             : `${ack}\n项目：${mandate.project}`,
+          "status",
         );
         void this.#wake.wake();
         return { status: "done" };
