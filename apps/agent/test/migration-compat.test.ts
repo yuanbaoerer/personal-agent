@@ -201,8 +201,8 @@ describe("legacy schema migration", () => {
     }
   });
 
-  it("upgrades a schema-23 database that predates the budget key", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "pa-migrate-23-"));
+  it("upgrades the migration before the budget key when the column is absent", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pa-migrate-budget-absent-"));
     const path = join(directory, "agent.sqlite");
     try {
       // Build the previous tip, then remove the column and roll the version
@@ -213,7 +213,7 @@ describe("legacy schema migration", () => {
       legacy.exec(`
         DROP INDEX IF EXISTS pa_tasks_budget_idx;
         ALTER TABLE pa_tasks DROP COLUMN budget_key;
-        UPDATE pa_meta SET value = '23' WHERE key = 'schema_version';
+        UPDATE pa_meta SET value = '${LATEST_SCHEMA_VERSION - 1}' WHERE key = 'schema_version';
       `);
       legacy.close();
 
@@ -260,8 +260,8 @@ describe("legacy schema migration", () => {
     }
   });
 
-  it("upgrades a schema-23 database that already has budget_key and backfills children", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "pa-migrate-23b-"));
+  it("upgrades the migration before the budget key when the column exists and backfills children", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pa-migrate-budget-present-"));
     const path = join(directory, "agent.sqlite");
     try {
       const created = openStore(path);
@@ -320,11 +320,13 @@ describe("legacy schema migration", () => {
       }
 
       const legacy = new DatabaseSync(path);
-      legacy.exec("UPDATE pa_meta SET value = '23' WHERE key = 'schema_version'");
+      legacy.exec(
+        `UPDATE pa_meta SET value = '${LATEST_SCHEMA_VERSION - 1}' WHERE key = 'schema_version'`,
+      );
       legacy.close();
 
-      // The 1f971e8 shape already has the column; reopening must not try to
-      // add it again, and the existing plan child must be backfilled.
+      // The column already exists (an intermediate branch shape); reopening
+      // must not add it again, and the existing plan child must be backfilled.
       const upgraded = openStore(path);
       try {
         const columns = upgraded.db
