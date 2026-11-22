@@ -90,7 +90,7 @@ class GitHubIssueWriteTool implements ActionTool {
     this.#config = config;
     this.name = `github.issue.${operation}`;
     this.timeoutMs = config.timeoutMs ?? 15_000;
-    this.#maxBytes = config.maxBytes ?? 200_000;
+    this.#maxBytes = config.maxBytes ?? 1_000_000;
     this.#allowed = new Set(
       config.allowedRepos.map((repo) => repo.toLowerCase()),
     );
@@ -226,7 +226,9 @@ class GitHubIssueWriteTool implements ActionTool {
       throw new ToolRejectedError("comment requires body and no title");
     }
     const notBefore =
-      this.#operation === "comment" ? optionalNotBefore(args.notBefore) : undefined;
+      this.#operation === "comment" || this.#operation === "create"
+        ? optionalNotBefore(args.notBefore)
+        : undefined;
     if (
       this.#operation === "update" &&
       body === undefined &&
@@ -270,7 +272,12 @@ class GitHubIssueWriteTool implements ActionTool {
     const targetIssue = canonical.targetIssue as number | undefined;
 
     if (this.#operation === "create") {
-      const existing = await this.#findByMarker(repo, credential, key);
+      const existing = await this.#findByMarker(
+        repo,
+        credential,
+        key,
+        typeof args.notBefore === "string" ? args.notBefore : undefined,
+      );
       if (existing !== undefined) {
         return this.#success(existing, canonical);
       }
@@ -280,7 +287,7 @@ class GitHubIssueWriteTool implements ActionTool {
         credential,
         {
           title: title as string,
-          body: `${body as string}${marker(key)}`,
+          body: `${marker(key)}${body as string}`,
         },
       );
       const issue = parseIssue(created);
@@ -415,6 +422,7 @@ class GitHubIssueWriteTool implements ActionTool {
         repo,
         credential,
         canonical.idempotencyKey as string,
+        typeof canonical.notBefore === "string" ? canonical.notBefore : undefined,
       );
       return existing === undefined
         ? { satisfied: false, evidence: { verified: false } }
@@ -530,20 +538,41 @@ class GitHubIssueWriteTool implements ActionTool {
     repo: string,
     credential: ResolvedCredential,
     idempotencyKey: string,
+    notBefore?: string,
   ): Promise<IssueRecord | undefined> {
-    const response = await this.#request(
-      "GET",
-      `/repos/${repo}/issues?state=all&sort=created&direction=desc&per_page=100`,
-      credential,
-    );
-    const items = Array.isArray(response.body) ? response.body : [];
-    for (const item of items) {
-      const issue = parseIssue(item);
-      if (!issue.isPullRequest && issue.body.includes(idempotencyKey)) {
-        return issue;
+    // The marker is prepended to the body so it survives evidence truncation.
+    // Scan bounded pages since the draft was created; if the page budget is
+    // exhausted without a match, fail closed instead of risking a duplicate.
+    for (let page = 1; page <= 3; page += 1) {
+      const params = new URLSearchParams({
+        state: "all",
+        sort: "created",
+        direction: "desc",
+        per_page: "100",
+        page: String(page),
+      });
+      if (notBefore !== undefined) {
+        params.set("since", notBefore);
+      }
+      const response = await this.#request(
+        "GET",
+        `/repos/${repo}/issues?${params.toString()}`,
+        credential,
+      );
+      const items = Array.isArray(response.body) ? response.body : [];
+      for (const item of items) {
+        const issue = parseIssue(item);
+        if (!issue.isPullRequest && issue.body.includes(idempotencyKey)) {
+          return issue;
+        }
+      }
+      if (items.length < 100) {
+        return undefined;
       }
     }
-    return undefined;
+    throw new ToolUnknownError(
+      "too many issues to prove create idempotency; reconcile manually",
+    );
   }
 
   async #findComment(
@@ -773,7 +802,7 @@ export function createGitHubIssueWriteTools(
 }
 
 function marker(idempotencyKey: string): string {
-  return `\n\n<!-- ${MARKER}:${idempotencyKey} -->`;
+  return `<!-- ${MARKER}:${idempotencyKey} -->\n\n`;
 }
 
 function hash(value: string): string {

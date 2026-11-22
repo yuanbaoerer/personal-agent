@@ -764,3 +764,40 @@ describe("approval bridge Feishu delivery", () => {
     );
   });
 });
+
+describe("approval crash recovery", () => {
+  it("resumes an already-approved action without creating another", async () => {
+    const { services, fake } = setup();
+    const { draft, payloadHash } = seedDraft(services, { key: "1" });
+    const first = await services.issueDraftApproval?.approve({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      draftId: draft.id,
+      payloadHash,
+      actorId: services.owner.id,
+    });
+    assert.equal(first?.ok, true, JSON.stringify(first));
+    const actionCount = services.actions.listByTask(first?.taskId ?? "").length;
+    services.store.db.run(
+      "UPDATE pa_issue_drafts SET status = 'pending_approval' WHERE id = ?",
+      draft.id,
+    );
+    const second = await services.issueDraftApproval?.approve({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      draftId: draft.id,
+      payloadHash,
+      actorId: services.owner.id,
+    });
+    assert.equal(second?.ok, true);
+    assert.equal(
+      services.actions.listByTask(first?.taskId ?? "").length,
+      actionCount,
+    );
+    await services.effectDispatcher.drain(10);
+    assert.equal(
+      fake.requests.filter((request) => request.method === "POST").length,
+      1,
+    );
+  });
+});

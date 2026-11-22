@@ -6,7 +6,12 @@ import { CredentialBroker } from "../src/actions/credentials.ts";
 import { FeishuAdapter } from "../src/channels/feishu/adapter.ts";
 import { OutboxDispatcher } from "../src/delivery/outbox.ts";
 import { assignDraftKeys } from "../src/coordinator/project-review.ts";
-import type { ProjectBinding, TaskRecord } from "../src/domain/types.ts";
+import type {
+  ActionRecord,
+  AssignmentRecord,
+  ProjectBinding,
+  TaskRecord,
+} from "../src/domain/types.ts";
 import { createServices, type TestServices } from "./services.ts";
 import { inbound } from "./helpers.ts";
 
@@ -845,5 +850,152 @@ describe("read-only project review E2E (fake GitHub API)", () => {
       assert.equal(current?.status, "needs_review");
       assert.match(current?.verification?.missing.join(",") ?? "", scenario.missing);
     }
+  });
+});
+
+describe("draft pre-state fidelity", () => {
+  it("keeps the verifier's full-title beforeHash instead of re-hashing a truncated title", () => {
+    const { services } = setup();
+    const task = services.taskService.createExternalActionTask({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "draft:long-title",
+      goal: "review",
+      completionCriteria: "done",
+      mandate: {
+        resources: ["chat"],
+        tools: [],
+        project: PROJECT_KEY,
+        skills: ["github.project-review"],
+      },
+    });
+    const longTitle = `T${"i".repeat(240)}`;
+    const body = "old body";
+    const fullHash = createHash("sha256")
+      .update(`${longTitle}\n${body}`)
+      .digest("hex");
+    const action = {
+      tool: "github.read",
+      status: "succeeded",
+      args: { operation: "issue", repo: REPO, number: 60 },
+      evidence: {
+        item: {
+          number: 60,
+          title: `${longTitle.slice(0, 200)}…`,
+          body,
+          beforeHash: fullHash,
+        },
+      },
+    } as unknown as ActionRecord;
+    const result = services.issueDrafts.recordVerified({
+      task,
+      assignment: { id: "assignment:long-title" } as AssignmentRecord,
+      findings: [
+        {
+          id: "f1",
+          requirementRef: "GH-04",
+          classification: "observed",
+          severity: "high",
+          repositoryId: REPOSITORY_ID,
+          commitSha: MAIN_SHA,
+          evidenceRefs: [],
+          expected: "x",
+          actual: "y",
+          impact: "z",
+          existingIssueMatches: [60],
+          suggestedAction: "update",
+        },
+      ],
+      drafts: [
+        {
+          action: "update",
+          targetIssue: 60,
+          title: "new title",
+          body: "new body",
+          findingIds: ["f1"],
+          beforeHash: fullHash,
+          idempotencyKey: "e".repeat(32),
+          requiresOwnerApproval: true,
+        },
+      ],
+      actions: [action],
+    });
+    assert.equal(result.recorded[0]?.beforeHash, fullHash);
+    assert.equal(result.recorded[0]?.beforeSummary, body);
+  });
+});
+
+describe("draft credential epoch binding", () => {
+  it("stores the epoch used by evidence and supersedes after a later rotation", () => {
+    const { services, credentials } = setup();
+    const task = services.taskService.createExternalActionTask({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "draft:credential-epoch",
+      goal: "review",
+      completionCriteria: "done",
+      mandate: {
+        resources: ["chat"],
+        tools: [],
+        project: PROJECT_KEY,
+        skills: ["github.project-review"],
+      },
+    });
+    const action = {
+      tool: "github.read",
+      status: "succeeded",
+      args: { operation: "file", repo: REPO, sha: MAIN_SHA, path: PLAN_PATH },
+      evidence: {
+        operation: "file",
+        commitSha: MAIN_SHA,
+        repositoryId: REPOSITORY_ID,
+        permanentUrl: `https://github.com/${REPO}/blob/${MAIN_SHA}/${PLAN_PATH}`,
+        credentialVersion: 1,
+        item: { type: "file", path: PLAN_PATH },
+      },
+    } as unknown as ActionRecord;
+    const recorded = services.issueDrafts.recordVerified({
+      task,
+      assignment: { id: "assignment:credential-epoch" } as AssignmentRecord,
+      findings: [
+        {
+          id: "f1",
+          requirementRef: "GH-04",
+          classification: "observed",
+          severity: "high",
+          repositoryId: REPOSITORY_ID,
+          commitSha: MAIN_SHA,
+          evidenceRefs: [String(action.evidence?.permanentUrl)],
+          expected: "x",
+          actual: "y",
+          impact: "z",
+          existingIssueMatches: [],
+          suggestedAction: "create",
+        },
+      ],
+      drafts: [
+        {
+          action: "create",
+          title: "Epoch bound draft",
+          body: "body",
+          findingIds: ["f1"],
+          idempotencyKey: "a".repeat(31) + "1",
+          requiresOwnerApproval: true,
+        },
+      ],
+      actions: [action],
+    });
+    assert.equal(recorded.recorded[0]?.credentialVersion, 1);
+    credentials.rotate("github:default", {
+      token: "project-token-2",
+      scopes: ["repository.read"],
+      ownerId: services.owner.id,
+      repositoryIds: [REPOSITORY_ID],
+    });
+    assert.equal(
+      services.issueDrafts.get(services.owner.id, recorded.recorded[0]?.id ?? "")
+        ?.status,
+      "superseded",
+    );
   });
 });

@@ -318,12 +318,18 @@ export class GitHubReadTool implements ActionTool {
     const repo = canonical.repo as string;
     const limit = canonical.limit as number;
     const deadline = Date.now() + this.#config.timeoutMs;
-    const token = await this.#resolveToken(canonical, operation, deadline, context);
+    const { token, credentialVersion } = await this.#resolveToken(
+      canonical,
+      operation,
+      deadline,
+      context,
+    );
     const projectEvidence =
       typeof canonical.projectKey === "string"
         ? {
             projectKey: canonical.projectKey,
             repositoryId: canonical.repositoryId,
+            ...(credentialVersion === undefined ? {} : { credentialVersion }),
           }
         : {};
     const externalRef = `https://github.com/${repo}`;
@@ -418,7 +424,7 @@ export class GitHubReadTool implements ActionTool {
     operation: GitHubOperation,
     deadline: number,
     context?: ToolExecutionContext,
-  ): Promise<string> {
+  ): Promise<{ token: string; credentialVersion?: number }> {
     if (
       canonical.projectKey !== undefined &&
       this.#config.credentials !== undefined
@@ -469,7 +475,10 @@ export class GitHubReadTool implements ActionTool {
         credential,
         deadline,
       );
-      return credential.token;
+      return {
+        token: credential.token,
+        credentialVersion: credential.version,
+      };
     }
 
     const token =
@@ -481,7 +490,7 @@ export class GitHubReadTool implements ActionTool {
         "github token is not configured or OAuth is not connected",
       );
     }
-    return token;
+    return { token };
   }
 
   async #ensureRepositoryIdentity(
@@ -1092,7 +1101,7 @@ function mapIssue(record: Record<string, unknown>): Record<string, unknown> {
     beforeHash:
       body !== undefined && body.length <= 4_000 && record.pull_request === undefined
         ? createHash("sha256")
-            .update(`${firstLine(stringValue(record.title))}\n${body}`)
+            .update(`${stringValue(record.title) ?? ""}\n${body}`)
             .digest("hex")
         : undefined,
     labels,
