@@ -185,3 +185,8 @@ sqlite3 data/agent.sqlite "select event,after_json from pa_audit where event lik
 6. 记录总模型/工具次数、成本、用户纠正、错误自动建任务、被核验证据数、最终消息收件与耗时（C12）。
 
 记录形式：commit SHA、Plan/Step/Task/Action/Receipt/Trace IDs、model/provider、输入与预期、actual/权限/budget、E1/E3/E4、用户真实飞书入站/出站消息 ID（脱敏）、PASS/FAIL/PARTIAL/BLOCKED。只有 Mock 或 Fake Runtime 的步骤**不能**标记真实 E3 通过。Owner 未明确授予写权限/付费无人值守时仅允许已授权只读测试。
+
+### 9.1 当前证据（2026-11-22）
+
+- E1：CX-01/PL-01/PL-02 的确定性测试与逐用例状态见 [2026-11-22 · Conversational & Autonomous Planning E1 record](acceptance/2026-11-22-conversational-planning-e1.md)。
+- E3/E4：**BLOCKED**。尚无真实 Feishu 入站/出站、真实模型 Worker、授权项目 GitHub 读取或受控重启证据；C05 进度追问与 C07 外部错误重规划也仍未实现。不得据 E1 结果宣称 Pilot 通过。

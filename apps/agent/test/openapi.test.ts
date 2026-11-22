@@ -32,6 +32,14 @@ const expected: Record<string, string[]> = {
   "/plugins/{id}/enable": ["post"],
   "/plugins/{id}/disable": ["post"],
   "/skills": ["get"],
+  "/plans": ["get", "post"],
+  "/plans/{id}": ["get"],
+  "/plans/{id}/revise": ["post"],
+  "/plans/{id}/activate": ["post"],
+  "/plans/{id}/pause": ["post"],
+  "/plans/{id}/resume": ["post"],
+  "/plans/{id}/cancel": ["post"],
+  "/plans/{id}/diff": ["get"],
 };
 
 describe("OpenAPI contract", () => {
