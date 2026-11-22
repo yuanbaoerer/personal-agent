@@ -426,6 +426,10 @@ describe("read-only GitHub connector", () => {
       number: 12,
     });
     assert.equal((issue.evidence.item as Record<string, unknown>).title, "Typed reads");
+    assert.equal(
+      (issue.evidence.item as Record<string, unknown>).beforeHash,
+      "d9fbbc91492fbb3ba8e57ca15b039134e7098030a89578315a4c354f9117ccf2",
+    );
 
     const files = await tool.execute({
       operation: "pull_files",
@@ -560,6 +564,13 @@ describe("read-only GitHub connector", () => {
           { ownerId: "owner-1", project: "other-project" },
         ),
       /task mandate project/,
+    );
+    await assert.rejects(
+      () => tool.execute(
+        { operation: "file", projectKey: BINDING.projectKey, sha, path: "README.md" },
+        { ownerId: "owner-1", taskId: "unscoped-task" },
+      ),
+      /require a task mandate project/,
     );
     await assert.rejects(
       () =>
@@ -816,7 +827,7 @@ describe("read-only GitHub connector", () => {
 
     const result = await tool.execute(
       { operation: "commits", repo: "owner/repo" },
-      { ownerId: "owner-1", project: BINDING.projectKey },
+      { ownerId: "owner-1", project: "Personal-Agent" },
     );
     assert.equal(result.evidence.projectKey, BINDING.projectKey);
     assert.equal(result.evidence.repositoryId, BINDING.repositoryId);
@@ -870,6 +881,34 @@ describe("read-only GitHub connector", () => {
     );
     assert.equal(pullReads, 3);
     assert.equal(fileReads, 2);
+  });
+
+  it("retries the PR file list when only the base moves and reports partial coverage", async () => {
+    const head = "a".repeat(40);
+    const oldBase = "b".repeat(40);
+    const newBase = "c".repeat(40);
+    let pullReads = 0;
+    let fileReads = 0;
+    const tool = new GitHubReadTool({
+      token: "test-token",
+      allowedRepos: ["owner/repo"],
+      resolveProject,
+      fetch: async (input) => {
+        if (new URL(String(input)).pathname.endsWith("/files")) {
+          fileReads += 1;
+          return jsonResponse([{ filename: fileReads === 1 ? "old.ts" : "new.ts" }, { filename: "extra.ts" }]);
+        }
+        return jsonResponse({ head: { sha: head }, base: { sha: pullReads++ === 0 ? oldBase : newBase } });
+      },
+    });
+    const { evidence } = await tool.execute({
+      operation: "pull_files", projectKey: BINDING.projectKey, number: 7, limit: 1,
+    });
+    assert.equal(fileReads, 2);
+    assert.equal(evidence.baseSha, newBase);
+    assert.equal(evidence.stale, false);
+    assert.equal(evidence.coverage, "partial");
+    assert.equal((evidence.items as Array<{ filename: string }>)[0]?.filename, "new.ts");
   });
 
   it("reports commit-status coverage gaps instead of hiding them", async () => {
