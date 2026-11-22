@@ -25,7 +25,7 @@ These branches are not merged. A real acceptance run must record the actual depl
 | `feat/plan-01-store` | `npm run typecheck` | pass |
 | `feat/plan-01-store` | `npm test` | 536 tests pass |
 | `feat/plan-02-executor` | `npm run typecheck` | pass |
-| `feat/plan-02-executor` | `npm test` | 556 tests pass |
+| `feat/plan-02-executor` | `npm test` | 560 tests pass |
 | all | `node --test apps/agent/test/plans.test.ts apps/agent/test/plan-executor.test.ts apps/agent/test/plans-api.test.ts` | 21 tests pass |
 
 Environment: macOS x64, local Node, `:memory:` SQLite for tests, `FakeRuntime` for model answers. No provider call, no Feishu send, no GitHub request.
@@ -67,6 +67,8 @@ No `.env`, token, chat text or provider response is recorded here.
 - Ready steps dispatch as child Tasks under the global Worker cap; the tests exercise dependent chains, not parallel-ready-step contention end-to-end.
 - Review hardening added: stable parent-task budget lineage, ExtensionPolicy inheritance, activation/revise guards, final-step parent mandate, stale-tick fail-closed, and atomic/sweep-repaired settlement. These are E1-only until a real run repeats them.
 - The final step always uses the parent completion criteria; a plan without a final step that can prove them settles `needs_review`.
+- The final step deliberately runs with the parent mandate so the parent verifier cannot be weakened; a final step declared with no tools may therefore invoke parent read tools. External writes still require ActionService approval.
+- Migration compatibility is covered from schema 18 and from schema 23 (the shipped PL-02 migration adds `budget_key` in a new entry).
 
 ## Next evidence step
 
