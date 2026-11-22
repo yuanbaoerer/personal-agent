@@ -1,5 +1,7 @@
 # 07 · Personal Agent 长期产品与工程路线图
 
+> **2026-11-21 产品能力补充**：私有 MVP 增加 [28 · 自然对话与自主规划执行](28-conversational-planning-mvp.md)：#89 多轮会话、#90 持久 Plan、#91 有界执行与动态重规划、#92 真实交互黄金场景。此为与可靠 Core 同属 MVP P0 的**尚未实施**能力，GitHub [#65](https://github.com/yuanbaoerer/personal-agent/issues/65) 是首个验证场景；不能只做 GitHub 专用 Planner，也不要求同步做完整 Organization Mode/SDK/市场。发布门槛和 #41 M01–M14 不降低。
+
 > **2026-11-20 架构升级**：[25 · Extension Platform](25-extension-platform.md) / [#73](https://github.com/yuanbaoerer/personal-agent/issues/73) 为一级必选长期模块。One Core + WorkProfile × ExecutionStrategy × ModelPolicy + ExtensionPolicy（扩展选择与约束，不另造权限）。V1 内置插件、凭据/MCP/Skills；V2 SDK 与第三方隔离；V3 可信 Registry、分发和社区。此前暂缓通用插件市场指近期范围，不再是永久非目标。#65 GitHub 首插件、Coding Runtime 第二类；保留 #41 及原正式发布门槛。
 
 > **2026-11-20 垂直产品交付**：在既有 Reliable Core / #41 门槛之上，采用 [24 · GitHub Project Management MVP 与 Development Orchestrator](24-github-project-management.md)（[#65](https://github.com/yuanbaoerer/personal-agent/issues/65)）定义首个实际业务场景：GH-00/01 真实验收及安全前置 → GH-02 项目与证据读取 → GH-03/04 审批式 Issue 管理与项目评估 → GH-05/06 单 Coding adapter、Draft PR、独立 Review 与主动只读报告。不是平行 Core，不改变正式版本门槛，保留 WorkProfile × ExecutionStrategy × ModelPolicy 长期架构。
@@ -114,6 +116,7 @@ Personal Agent 是一个单用户优先、自主部署、可扩展、能够长�
 
 ### v0.3 Useful Personal Agent
 - G1–G3 在真实环境可执行；GitHub 只读输出有真实来源，计划任务获得主人显式授权。
+- **新增 MVP 产品要求**：在 #41 原安全与真实验收上，完成 [#92 C01–C12](https://github.com/yuanbaoerer/personal-agent/issues/92) 的自然多轮对话、计划草稿/修订、3+ 步有界只读执行、进度询问、有限重规划、跨重启恢复及权限/预算测试；不允许用模型输出计划文本代替持久执行事实。
 - 至少 7 天实际自用，留下带日期、模型版本、结果、失败、干预和花费的运行台账。
 - 为文本任务/工具任务定义不同完成验收判据；完整 40 场景集与代表真实模型重复运行报告。
 - 不依赖人工改 DB 才能恢复已知故障。
