@@ -1,20 +1,20 @@
 # 2026-11-22 · Conversational & Autonomous Planning runbook execution
 
 > Scope: execute `docs/22-mvp-acceptance-runbook.md` §9 against merged main and record exactly how far the real E3/E4 path could proceed.
-> **Result: prerequisites PASS; C01–C03 are E3 PASS; C05–C10 remain pending; C04/C11/C12 and E4 remain BLOCKED.** No mock, injected Feishu event, or synthetic owner message was used. This record must not be read as a full Pilot pass.
+> **Result: prerequisites PASS; C01–C03 are E3 PASS; C04 is PARTIAL (A/B real GitHub reads verified, final synthesis failed); C11 is PARTIAL; C05–C10 remain pending; C12 and E4 remain BLOCKED.** No mock, injected Feishu event, or synthetic owner message was used. This record must not be read as a full Pilot pass.
 
 ## Environment
 
 | Field | Value |
 | --- | --- |
-| main | `cd4cb16` (all CX/PL/CX-02 work merged; docs-only merge after `acc5bd6`) |
+| main | `015de75` (verifier CJK URL fix merged; run used the fix on top of `fcdd278`) |
 | Service | `npm start`, long connection, health OK |
 | Model | `opencode-go/deepseek-v4.1-flash` |
 | Feishu | app credentials configured; event mode `long_connection`; owner bound |
 | Database | live `data/agent.sqlite`, schema `17 → 25` after restart; backup taken before migration |
-| GitHub plugin | `disabled`, connection `unconfigured` (`no allowed repositories`) |
-| ProjectBinding | none |
-| Writes | none |
+| GitHub plugin | `enabled`, generation 2, connection `connected`, `activeTools=["github.read"]` |
+| ProjectBinding | `personal-agent → yuanbaoerer/personal-agent`, repoId `1445007789`, branch `main`, credential `github:default` |
+| Writes | none; all GitHub actions were `github.read` GETs |
 
 ## Executed
 
@@ -35,8 +35,8 @@
 | C02 three-step plan draft, non-executing | **PASS (E3)** | Real Feishu turn produced a 3-step A→B→C draft with deps/tools/resources/verifier and 0 actions; parent task remained queued. Evidence below |
 | C03 revise draft + PlanDiff | **PASS (E3)** | Follow-up turn produced v2 draft, v1 superseded, persisted `PlanDiff v1 -> v2` (A unchanged, B/C goal changed), 0 actions. Evidence below |
 | C05–C10 remaining chat cases | PENDING | Require further owner Feishu turns (progress, pause/replan, restart, isolation) |
-| C04 bounded read-only execution | BLOCKED | No GitHub ProjectBinding / allowed repo / credential; state-only plan execution was not substituted for the runbook |
-| C11 real GitHub project review | BLOCKED | `github` plugin disabled and unconfigured; `GITHUB_ALLOWED_REPOS` empty; no binding |
+| C04 bounded read-only execution | **PARTIAL (E3)** | Plan `e1ba272e` v1 on parent `543a1221`; A `a4d5f457` PASS `github-read`; B `90438db5` PASS `github-read` with 14 structured claims; C `2cc28839` FAILED after 3 attempts. 23 `github.read` GET receipts, 0 POST. Details below |
+| C11 real GitHub project review | **PARTIAL** | Real issues/pulls/checks/file reads succeeded and B verified; no final review report because C failed. Not a C11 PASS |
 | C12 cost/effects baseline | BLOCKED | No real conversation/plan run; no token/latency data to record |
 | E4 plan recovery | NOT TESTED | Service restart succeeded, but no active plan/step existed to recover |
 
@@ -62,17 +62,34 @@ The parent task `9c5bb3d0-6025-4453-ad41-b27adec69750` was created as a **queued
 | C02 | `0cc951ef-444b` | `f581ead0` | `om_x100b7f1ad0a1` | plan `5b1373e9` v1 draft, 3 steps A→B→C, deps `[]/["A"]/["B"]`, tools `[]`, resources `["chat"]`, verifier `structural`, all blocked |
 | C03 | `af7639d3-85a7` | `a7f9b394` | `om_x100b7f1ad118` | plan `e51e3a07` v2 draft, v1 superseded, `PlanDiff v1 -> v2`: A unchanged, B/C goal changed |
 
-At check time: `pa_actions=0`; the only non-old task is the queued parent; no child task was created because the plan was never activated. C02/C03 are E3 PASS for plan draft/PlanDiff UX; plan execution remains C04 (blocked on GitHub/state setup).
+At check time: `pa_actions=0`; the only non-old task is the queued parent; no child task was created because the plan was never activated. C02/C03 are E3 PASS for plan draft/PlanDiff UX; plan execution was attempted later as C04 (PARTIAL, below).
 
-Only C01–C03 are claimed E3 PASS. C04–C12 and E4 are not. The run also proved that merged main starts on the existing live database, migrates it, and exposes the plan/status surfaces.
+### C04/C11 evidence (2026-11-22T16:26:22Z–16:30:39Z)
+
+Plan `e1ba272e-8df6-40a3-a331-fb823907de3b` v1, parent `543a1221-8dbd-4f79-9fff-34baf261064a`, project `personal-agent`, budget 3 steps / 1 attempt / 300s, approved scope `task:543a1221...:rev:1:plan:1`.
+
+| Step | Task | Result |
+| --- | --- | --- |
+| A | `a4d5f457` | **PASS** `github-read`; file receipts for `docs/24` and `docs/21` at `fcdd278...` with source URLs |
+| B | `90438db5` | **PASS** `github-read`; issues + pulls receipts, 14 structured claims matched |
+| C | `2cc28839` | **FAILED** after 3 attempts; checks `a02a53d0`, `9ceeaf34` and pull-files `16c922e3` succeeded, but the worker exhausted attempts before a verifier-ready synthesis |
+
+All 23 actions on this plan were `github.read`; the receipt set contains `ref`, `file`, `issues`, `pulls`, `checks`, `pull_files`. No write tool, POST, issue/comment, or merge was proposed or executed. Parent `543a1221` failed with plan verdict `step C failed after 1 attempt(s)`; plan `e1ba272e` is paused.
+
+The run also found and fixed a verifier defect: source URLs followed by Chinese punctuation (for example `source=https://github.com/owner/repo，返回`) were not recognized because the URL regex stopped only at ASCII whitespace/quotes. PR #119 (`fix(verifier): parse GitHub source URLs before CJK punctuation`) adds the parser fix and a regression test; it is merged in `015de75`.
+
+C04 is **PARTIAL**, not PASS: A/B prove the real read-only plan path and verifier, but C did not produce the final review. C11 is likewise PARTIAL because no final project review was delivered.
+
+Only C01–C03 are claimed E3 PASS; C04/C11 are PARTIAL. C05–C12 and E4 are not claimed.
 
 ## Owner prerequisites for the next run
 
-1. Configure a read-only GitHub repository allowlist and credential, then bind a project (per runbook §6), or explicitly accept that C04/C11 stay blocked.
-2. C01 is complete; next send the C02/C03 plan-draft/revision sequence in the owner Feishu private chat.
-3. Approve one read-only plan for C04, then exercise progress/pause/resume/replan for C05–C07.
-4. Perform the controlled restart for C08 and record Plan/Step/Outbox ids before/after.
-5. Record Feishu message ids, Task/Step/Action ids, model/cost, and the actual commit in this file; only then move rows to E3/E4.
+1. GitHub is configured and bound; keep the read-only PAT scoped to `yuanbaoerer/personal-agent` and rotate it after acceptance.
+2. C01–C03 are complete.
+3. C04/C11 need a simplified final synthesis step: one read-only receipt followed by an immediate `ready` report with source URLs and claims, without extra exploratory reads. A/B are already PASS; only C remains.
+4. Then exercise progress/pause/resume/replan for C05–C07.
+5. Perform the controlled restart for C08 and record Plan/Step/Outbox ids before/after.
+6. Record Feishu message ids, Task/Step/Action ids, model/cost, and the actual commit in this file; only then move rows to E3/E4.
 
 ## Service state after the run
 
