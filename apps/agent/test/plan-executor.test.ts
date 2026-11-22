@@ -193,6 +193,63 @@ describe("plan executor", () => {
     );
   });
 
+  it("shares the plan tool-call budget across step children", () => {
+    const services = createServices({ now: () => NOW });
+    const parent = services.tasks.insert({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "plan-tool-budget",
+      goal: "tool budget parent",
+      completionCriteria: "provide a checked result",
+      mandate: { resources: ["chat", "state"], tools: ["state.summary"] },
+      createdAt: NOW.toISOString(),
+    }).task;
+    const plan = services.planService.create(services.owner.id, parent.id, {
+      steps: steps().map((step) => ({
+        ...step,
+        tools: ["state.summary"],
+        resources: ["state"],
+        verifierId: "state-read",
+      })),
+      budget: { maxToolCalls: 1 },
+    });
+    services.planService.activate(services.owner.id, plan.plan.id);
+    const createChild = (key: string) =>
+      services.taskService.create({
+        ownerId: services.owner.id,
+        conversationId: services.conversation.id,
+        sourceKey: `plan-tool-budget:${key}`,
+        goal: `child ${key}`,
+        completionCriteria: '{"verifier":"state-read","requiredEvidenceKinds":["state_snapshot"]}',
+        mandate: { resources: ["state"], tools: ["state.summary"] },
+        planId: plan.plan.id,
+        planStepKey: key,
+        budgetKey: `plan:${parent.id}`,
+        dispatch: false,
+      });
+    createChild("A");
+    createChild("B");
+
+    const firstClaim = services.tasks.claimNext(NOW.toISOString(), 60_000, 2);
+    assert.ok(firstClaim);
+    const first = services.actionService.proposeForReport(
+      firstClaim.task,
+      firstClaim.assignment,
+      [{ tool: "state.summary", args: {} }],
+    );
+    assert.equal(first.count, 1);
+
+    const secondClaim = services.tasks.claimNext(NOW.toISOString(), 60_000, 2);
+    assert.ok(secondClaim);
+    const second = services.actionService.proposeForReport(
+      secondClaim.task,
+      secondClaim.assignment,
+      [{ tool: "state.summary", args: {} }],
+    );
+    assert.equal(second.count, 0);
+    assert.ok(second.rejected > 0);
+  });
+
   it("cancels remaining steps and the parent when the plan is cancelled", async () => {
     const { services, parent, advance } = setup();
     const plan = services.planService.create(services.owner.id, parent.id, {
