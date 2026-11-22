@@ -284,7 +284,7 @@ describe("typed GitHub issue writes", () => {
     }));
     fake.comments[110] = {
       id: 111,
-      body: `older replay </function_call> ${"c".repeat(32)} marker`,
+      body: `<!-- personal-agent:${"c".repeat(32)}:${"a".repeat(64)} -->\n\nolder replay`,
       html_url: `https://github.com/${REPO}/issues/7#issuecomment-111`,
     };
     const paginated = await tool.execute(
@@ -438,6 +438,38 @@ describe("issue write idempotency robustness", () => {
     assert.ok(String(issue.body).endsWith(body));
     const replay = await tool.execute(args, context);
     assert.equal(replay.evidence.issueNumber, first.evidence.issueNumber);
+    assert.equal(
+      fake.requests.filter(
+        (request) => request.method === "POST" && request.path.endsWith("/issues"),
+      ).length,
+      1,
+    );
+  });
+});
+
+describe("marker payload binding", () => {
+  it("does not reuse an artifact with the same key but a different payload", async () => {
+    const { fake, byName, context, version } = fixture();
+    const key = "7".repeat(32);
+    fake.issues.push({
+      number: 99,
+      id: 990,
+      title: "Old artifact",
+      body: `<!-- personal-agent:${key}:${"0".repeat(64)} -->\n\nold payload`,
+      state: "open",
+      html_url: `https://github.com/${REPO}/issues/99`,
+    });
+    const tool = byName.get("github.issue.create");
+    assert.ok(tool);
+    const result = await tool.execute(
+      base(version, {
+        title: "New payload",
+        body: "new payload",
+        idempotencyKey: key,
+      }),
+      context,
+    );
+    assert.notEqual(result.evidence.issueNumber, 99);
     assert.equal(
       fake.requests.filter(
         (request) => request.method === "POST" && request.path.endsWith("/issues"),
