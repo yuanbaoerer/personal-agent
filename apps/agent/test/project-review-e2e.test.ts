@@ -3,6 +3,8 @@ import { createHash } from "node:crypto";
 import { describe, it } from "node:test";
 
 import { CredentialBroker } from "../src/actions/credentials.ts";
+import { FeishuAdapter } from "../src/channels/feishu/adapter.ts";
+import { OutboxDispatcher } from "../src/delivery/outbox.ts";
 import { assignDraftKeys } from "../src/coordinator/project-review.ts";
 import type { ProjectBinding, TaskRecord } from "../src/domain/types.ts";
 import { createServices, type TestServices } from "./services.ts";
@@ -18,6 +20,87 @@ const PR_BASE = "c".repeat(40);
 const PLAN_PATH = "docs/24-github-project-management.md";
 const SOURCE_PATH = "apps/agent/src/actions/github.ts";
 const ISSUE_BODY = "Existing GH-02 evidence body";
+const FEISHU_CONFIG = {
+  appId: "app_1",
+  appSecret: "secret",
+  verificationToken: "token",
+  apiBase: "https://feishu.test",
+};
+
+function feishuEvent(text: string, messageId: string) {
+  const adapter = new FeishuAdapter(FEISHU_CONFIG, { now: () => START });
+  const parsed = adapter.parseRequest({
+    headers: {},
+    rawBody: JSON.stringify({
+      header: {
+        token: "token",
+        app_id: "app_1",
+        event_type: "im.message.receive_v1",
+        event_id: `event-${messageId}`,
+      },
+      event: {
+        sender: {
+          sender_id: { open_id: "ou_owner" },
+          sender_type: "user",
+        },
+        message: {
+          chat_id: "oc_1",
+          chat_type: "p2p",
+          message_id: messageId,
+          message_type: "text",
+          content: JSON.stringify({ text }),
+          create_time: String(START.getTime()),
+        },
+      },
+    }),
+  });
+  assert.equal(parsed.kind, "event");
+  return parsed.kind === "event" ? parsed.event : undefined;
+}
+
+async function deliverFeishu(services: TestServices): Promise<string[]> {
+  const sent: string[] = [];
+  let message = 0;
+  const adapter = new FeishuAdapter(FEISHU_CONFIG, {
+    now: () => START,
+    fetch: (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/tenant_access_token/internal")) {
+        return jsonResponse({
+          code: 0,
+          tenant_access_token: "tenant-token",
+          expire: 7200,
+        });
+      }
+      const body = JSON.parse(String(init?.body ?? "{}")) as {
+        content?: string;
+      };
+      try {
+        const content = JSON.parse(body.content ?? "{}") as { text?: string };
+        if (typeof content.text === "string") {
+          sent.push(content.text);
+        }
+      } catch {
+        sent.push("");
+      }
+      message += 1;
+      return jsonResponse({
+        code: 0,
+        data: { message_id: `om_review_${message}` },
+      });
+    }) as typeof fetch,
+  });
+  const dispatcher = new OutboxDispatcher({
+    store: services.store,
+    channel: adapter,
+    now: () => START,
+    leaseMs: 1_000,
+    maxAttempts: 3,
+  });
+  const result = await dispatcher.drain(100);
+  assert.ok(result.accepted > 0);
+  return sent;
+}
 
 function jsonResponse(value: unknown, status = 200): Response {
   return new Response(JSON.stringify(value), {
@@ -260,12 +343,12 @@ async function runReview(options: FakeGitHubOptions = {}) {
   const fixture = setup(options);
   const { services } = fixture;
   enqueueReviewDecision(services);
-  await services.ingress.accept(
-    inbound({
-      text: REVIEW_TEXT,
-      platformEventId: `evt_project_review_${Math.random().toString(36).slice(2)}`,
-    }),
+  const event = feishuEvent(
+    REVIEW_TEXT,
+    `om_project_review_${Math.random().toString(36).slice(2)}`,
   );
+  assert.ok(event);
+  await services.ingress.accept(event);
   // Process only the Router effect; the task dispatch stays queued so the
   // test can claim the assignment deterministically.
   await services.effectDispatcher.drain(1);
@@ -374,7 +457,9 @@ function reviewReport(services: TestServices, task: TaskRecord) {
         title: "GH-02 evidence",
         body: "补充固定 SHA 与凭据 epoch 的只读评估证据。",
         findingIds: ["f1"],
-        beforeHash: createHash("sha256").update(ISSUE_BODY).digest("hex"),
+        beforeHash: createHash("sha256")
+          .update(`GH-02 evidence\n${ISSUE_BODY}`)
+          .digest("hex"),
         requiresOwnerApproval: true as const,
       },
       {
@@ -427,6 +512,26 @@ describe("read-only project review E2E (fake GitHub API)", () => {
     assert.match(resultText, /approval required/);
     assert.match(resultText, /GH-02 evidence/);
 
+    // Full Feishu delivery E1: raw Feishu event → adapter parse → Router →
+    // project review → Outbox → Feishu send API with a real message id.
+    const delivered = await deliverFeishu(services);
+    assert.ok(
+      delivered.some(
+        (text) =>
+          text.includes("项目评估（已核对证据引用，结论为模型分析）") &&
+          text.includes("待办草稿"),
+      ),
+    );
+    const accepted = services.store
+      .listRecentOutbox(50)
+      .filter((row) => row.status === "accepted");
+    assert.ok(accepted.some((row) => row.text.includes("项目评估")));
+    assert.ok(
+      accepted
+        .filter((row) => row.text.includes("项目评估"))
+        .every((row) => row.platformMessageId !== undefined),
+    );
+
     const persisted = services.issueDrafts.list(services.owner.id);
     assert.equal(persisted.length, 2);
     assert.ok(persisted.every((draft) => draft.status === "pending_approval"));
@@ -440,7 +545,7 @@ describe("read-only project review E2E (fake GitHub API)", () => {
     assert.equal(updateDraft.targetIssue, 60);
     assert.equal(
       updateDraft.beforeHash,
-      createHash("sha256").update(ISSUE_BODY).digest("hex"),
+      createHash("sha256").update(`GH-02 evidence\n${ISSUE_BODY}`).digest("hex"),
     );
     assert.match(updateDraft.beforeSummary ?? "", /Existing GH-02 evidence body/);
     const createDraft = persisted.find((draft) => draft.action === "create");
@@ -559,6 +664,18 @@ describe("read-only project review E2E (fake GitHub API)", () => {
     assert.ok(
       credential.services.issueDrafts
         .list(credential.services.owner.id)
+        .every((draft) => draft.status === "superseded"),
+    );
+
+    const explicit = await completeReview();
+    const count = explicit.services.issueDrafts.supersedeForCredential(
+      explicit.services.owner.id,
+      "github:default",
+    );
+    assert.equal(count, 2);
+    assert.ok(
+      explicit.services.issueDrafts
+        .list(explicit.services.owner.id)
         .every((draft) => draft.status === "superseded"),
     );
   });

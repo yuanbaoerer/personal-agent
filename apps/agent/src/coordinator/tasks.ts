@@ -16,6 +16,7 @@ import type {
   TaskExtensionSnapshot,
   TaskRecord,
   TaskStatus,
+  TaskVerification,
   WorkerReport,
 } from "../domain/types.ts";
 import type { CapabilityView } from "../plugins/fence.ts";
@@ -113,6 +114,8 @@ export interface CreateTaskInput {
   deadline?: string;
   schedulePolicyId?: string;
   extensionPolicy?: ExtensionPolicy;
+  /** False for tasks whose authority is an already-approved external action. */
+  dispatch?: boolean;
 }
 
 const DEFAULT_MANDATE = {
@@ -163,7 +166,7 @@ export class TaskService {
     this.#leaseMs = deps.assignmentLeaseMs ?? 120_000;
     this.#maxAssignmentLifetimeMs =
       deps.assignmentMaxLifetimeMs ?? 10 * 60_000;
-    this.#maxTaskAttempts = deps.maxTaskAttempts ?? 6;
+    this.#maxTaskAttempts = deps.maxTaskAttempts ?? 3;
     this.#budget = deps.budget;
     this.#completion =
       deps.completionVerifier ??
@@ -224,8 +227,10 @@ export class TaskService {
         traceId: `task:${task.id}`,
         occurredAt: now,
       });
-      this.#enqueueDispatch(task, now);
-    } else if (task.status === "queued") {
+      if (input.dispatch !== false) {
+        this.#enqueueDispatch(task, now);
+      }
+    } else if (task.status === "queued" && input.dispatch !== false) {
       // A crash can land between the task INSERT and the dispatch enqueue.
       // Replaying the same decision must repair the missing effect; the
       // business key keeps this idempotent when the effect already exists.
@@ -233,6 +238,81 @@ export class TaskService {
     }
 
     return task;
+  }
+
+  /**
+   * Creates a task that exists only as the authority anchor for one already
+   * owner-approved external action. It never dispatches a Worker; the draft
+   * approval bridge settles it from the action result.
+   */
+  createExternalActionTask(input: Omit<CreateTaskInput, "dispatch">): TaskRecord {
+    const task = this.create({ ...input, dispatch: false });
+    const waiting = this.#tasks.updateTask(task.id, task.revision, {
+      status: "waiting_user",
+      updatedAt: this.#now().toISOString(),
+    });
+    return waiting ?? task;
+  }
+
+  /** Settles a bridge-owned task after its approved action has finished. */
+  finishExternalAction(
+    taskId: string,
+    outcome: {
+      status: "succeeded" | "failed" | "needs_review";
+      summary: string;
+      verification: TaskVerification;
+      resultRef?: string;
+    },
+  ): TaskRecord | undefined {
+    const task = this.#tasks.get(taskId);
+    if (task === undefined || isTerminal(task.status)) {
+      return task;
+    }
+    const at = this.#now().toISOString();
+    const updated = this.#tasks.updateTask(taskId, task.revision, {
+      status: outcome.status,
+      resultRef: outcome.resultRef ?? outcome.summary,
+      verification: outcome.verification,
+      lastError: outcome.status === "failed" ? outcome.summary : undefined,
+      updatedAt: at,
+    });
+    if (updated === undefined) {
+      return undefined;
+    }
+    this.#store.recordAudit({
+      event: "task.external_action_settled",
+      subjectType: "task",
+      subjectId: taskId,
+      after: {
+        status: outcome.status,
+        verifier: outcome.verification.verifier,
+        verdict: outcome.verification.verdict,
+      },
+      traceId: `task:${taskId}`,
+      occurredAt: at,
+    });
+    this.#reply(
+      updated,
+      outcome.status === "succeeded" ? "result" : "failure",
+      outcome.status === "succeeded"
+        ? `外部动作已完成并核对：${outcome.summary}`
+        : `外部动作需要处理：${outcome.summary}`,
+      `external:${outcome.verification.verifier}:${outcome.verification.verdict}`,
+    );
+    return updated;
+  }
+
+  /**
+   * A read-only project review legitimately needs several tool rounds before
+   * it can report findings. Grant a bounded extra allowance only for that
+   * skill; other tasks keep the configured attempt budget.
+   */
+  #attemptLimit(task: TaskRecord): number {
+    const reviewExtra =
+      task.mandate.skills?.includes("github.project-review") === true ? 3 : 0;
+    return (
+      this.#maxTaskAttempts + reviewExtra + this.#tasks.countInputs(task.id)
+    );
   }
 
   #activePluginIds(): string[] {
@@ -547,7 +627,7 @@ export class TaskService {
       // task; requeueing it again would redispatch forever. Each accepted
       // owner input grants one additional work round, so a long task that is
       // supplemented is not failed as if the supplements were retries.
-      if (task.attempts >= this.#maxTaskAttempts + this.#tasks.countInputs(task.id)) {
+      if (task.attempts >= this.#attemptLimit(task)) {
         const failed = this.#tasks.updateTask(task.id, task.revision, {
           status: "failed",
           lastError: `assignment lease expired after ${task.attempts} attempt(s)`,
@@ -633,8 +713,7 @@ export class TaskService {
       };
     }
 
-    const attemptLimit =
-      this.#maxTaskAttempts + this.#tasks.countInputs(claimed.task.id);
+    const attemptLimit = this.#attemptLimit(claimed.task);
     if (claimed.task.attempts > attemptLimit) {
       const at = this.#now().toISOString();
       this.#tasks.markAssignmentExpired(claimed.assignment.id, at);
@@ -1341,7 +1420,7 @@ export class TaskService {
       case "working": {
         if (
           task.attempts >=
-          this.#maxTaskAttempts + this.#tasks.countInputs(task.id)
+          this.#attemptLimit(task)
         ) {
           this.#tasks.updateTask(task.id, task.revision, {
             status: "failed",
@@ -1654,7 +1733,8 @@ function workerPrompt(
     lines.push(
       "Project review output must be structured; prose alone is not verified:",
       '{"findings":[{"id":"f1","requirementRef":"plan section","classification":"observed|inferred|unknown","severity":"critical|high|medium|low","repositoryId":123,"commitSha":"<40-hex or unknown for a gap>","evidenceRefs":["<source URL or path from an action receipt>"],"expected":"...","actual":"...","impact":"...","existingIssueMatches":[60],"suggestedAction":"...","evidenceGap":"required for unknown","coverage":"complete|partial|unknown","truncated":false}]}',
-      '{"issueDrafts":[{"action":"create|update|comment","targetIssue":60,"title":"...","body":"...","findingIds":["f1"],"beforeHash":"<beforeHash from issue detail receipt, for updates>","requiresOwnerApproval":true}]}',
+      '{"issueDrafts":[{"action":"create|update|comment","targetIssue":60,"title":"...","body":"...","findingIds":["f1"],"beforeHash":"<sha256 of title + newline + body from the issue detail receipt, for updates>","requiresOwnerApproval":true}]}',
+      "Stop gathering after at most two rounds of typed reads. One plan file, one or two source files, PR files, checks and the issue list are enough; then set status=ready and emit findings/issueDrafts. Do not read every issue or file.",
       "Start with a repo read to obtain the immutable repositoryId, then a ref read to resolve the branch to a fixed commit SHA before typed file/tree/checks reads.",
       "Typed read args (use exactly these field names; limit is 1..20):",
       '{"operation":"ref","projectKey":"<key>","repo":"owner/name","ref":"heads/main"}',
@@ -1665,9 +1745,15 @@ function workerPrompt(
       '{"operation":"issue","projectKey":"<key>","repo":"owner/name","number":62}',
       '{"operation":"issues","repo":"owner/name","limit":20}',
       "Do not invent placeholder SHAs: copy the 40-hex sha from the ref or file receipt. A read with revision/target/pullNumber aliases is accepted, but sha/path/number is canonical.",
+      "Every observed finding must cite at least one revision-pinned receipt (file/tree/checks/pull_files) whose commitSha or headSha exactly equals the finding.commitSha. Issue and PR metadata are mutable and cannot support an observed finding at a commit.",
+      "For a pull_files receipt, set the finding.commitSha to that receipt's headSha. Do not mix a main-branch file URL into a PR-head finding.",
       "Every observed finding must cite a receipt at the same repositoryId and commitSha; never invent issue numbers or test results.",
-      "update/comment drafts must target an issue already listed in the finding's existingIssueMatches. For an update, copy beforeHash from the typed issue detail receipt. If the receipt has no beforeHash, do not draft an update. Create drafts must not duplicate an existing issue.",
-      "Issue drafts are proposals only. This task cannot write to GitHub, and the program derives their idempotency key.",
+      "update/comment drafts must target an issue already listed in the finding's existingIssueMatches; update drafts must also carry beforeHash = SHA-256 of title, a newline, then body from that issue's receipt. Create drafts must not duplicate an existing issue.",
+      "If the issue detail receipt is body-truncated it has no beforeHash; do not draft an update from it.",
+      "Issue drafts are proposals only. This task cannot write to GitHub. Omit idempotencyKey entirely; the host computes it and rejects model-supplied values.",
+      "One draft may link only findings with the same repositoryId and commitSha. Split drafts by revision.",
+      "If any cited receipt is truncated, set the finding's truncated=true and coverage=partial or unknown; otherwise do not cite that receipt.",
+      "A pull_files receipt is truncated whenever `truncated:true` or fewer files were returned than the PR changed. Use limit=100 for PR files and check the receipt flag before claiming complete coverage; never pair a truncated PR-files receipt with coverage=complete.",
       "For typed reads, add githubClaim entries with kind=github_typed:",
       '{"githubClaims":[{"kind":"github_typed","repo":"owner/name","projectKey":"key","operation":"file","revision":"<40-hex>","target":"docs/plan.md","field":"exists","value":true},',
       '{"kind":"github_typed","repo":"owner/name","projectKey":"key","operation":"checks","revision":"<40-hex>","target":"ci","field":"conclusion","value":"success"}]}',
@@ -2057,12 +2143,14 @@ function parseToolCallBlocks(text: string): ProposedAction[] | undefined {
     const tool = record.name ?? record.tool;
     const args = record.arguments ?? record.args;
     if (
-      typeof tool === "string" &&
-      tool.trim().length > 0 &&
+      tool === "github.read" &&
       typeof args === "object" &&
       args !== null &&
       !Array.isArray(args)
     ) {
+      // Only the read-only GitHub tool is recoverable from this format.
+      // An injected block can never propose a write; writes must be explicit
+      // structured reports and still require owner approval.
       calls.push({ tool, args: args as Record<string, unknown> });
     }
   }

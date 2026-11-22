@@ -313,3 +313,27 @@ describe("schedule policy commands", () => {
     assert.equal(wakeCalls.at(-1), undefined);
   });
 });
+
+describe("unattended budget gate", () => {
+  it("does not fire a schedule when the daily model budget is unknown", () => {
+    const time = clock();
+    const github = githubFixture();
+    const services = createServices({
+      now: time.now,
+      github: {
+        token: "secret",
+        allowedRepos: ["owner/repo"],
+        fetch: github.fetch,
+      },
+      unattendedBudgetKnown: false,
+    });
+    createConfirmed(services);
+    time.set("2026-01-01T09:00:00.000Z");
+    assert.equal(services.schedulePolicy.fireDue(), 0);
+    assert.equal(services.tasks.listByOwner(services.owner.id).length, 0);
+    const events = services.store
+      .listAuditAfter(0, 100)
+      .filter((item) => item.event === "schedule_policy.skipped");
+    assert.equal(events.length, 1);
+  });
+});

@@ -48,6 +48,7 @@ export class IssueDraftService {
   readonly #projects: ProjectRepository;
   readonly #tasks: TaskRepository;
   readonly #credentials?: CredentialBroker;
+  readonly #writeCredentialRef?: string;
   readonly #now: () => Date;
   readonly #ttlMs: number;
 
@@ -57,6 +58,8 @@ export class IssueDraftService {
     projects: ProjectRepository;
     tasks: TaskRepository;
     credentials?: CredentialBroker;
+    /** Separate Issues-write ref; never the binding's read credential. */
+    writeCredentialRef?: string;
     now?: () => Date;
     ttlMs?: number;
   }) {
@@ -65,6 +68,7 @@ export class IssueDraftService {
     this.#projects = deps.projects;
     this.#tasks = deps.tasks;
     this.#credentials = deps.credentials;
+    this.#writeCredentialRef = deps.writeCredentialRef;
     this.#now = deps.now ?? (() => new Date());
     this.#ttlMs = deps.ttlMs ?? DEFAULT_TTL_MS;
   }
@@ -90,7 +94,9 @@ export class IssueDraftService {
     const now = this.#now();
     const at = now.toISOString();
     const expiresAt = new Date(now.getTime() + this.#ttlMs).toISOString();
-    const credential = this.#credentials?.status(binding.credentialRef);
+    const writeCredentialRef =
+      this.#writeCredentialRef ?? binding.credentialRef;
+    const credential = this.#credentials?.status(writeCredentialRef);
     const supersededForRevision = this.#drafts.supersedeForTask(
       input.task.id,
       input.task.revision,
@@ -131,7 +137,7 @@ export class IssueDraftService {
       const beforeHash =
         before === undefined
           ? draft.beforeHash
-          : createHash("sha256").update(before).digest("hex");
+          : issueBeforeHash(before.title, before.body);
       if (draft.action === "update" && beforeHash === undefined) {
         continue;
       }
@@ -186,12 +192,12 @@ export class IssueDraftService {
         ...(beforeHash === undefined ? {} : { beforeHash }),
         ...(before === undefined
           ? {}
-          : { beforeSummary: truncate(before, MAX_BEFORE_SUMMARY) }),
+          : { beforeSummary: truncate(before.body, MAX_BEFORE_SUMMARY) }),
         title: draft.title,
         body: draft.body,
         payloadHash,
         idempotencyKey: draft.idempotencyKey,
-        credentialRef: binding.credentialRef,
+        credentialRef: writeCredentialRef,
         ...(credential === undefined
           ? {}
           : { credentialVersion: credential.version }),
@@ -249,7 +255,13 @@ export class IssueDraftService {
       return { ok: false, reason: `draft_${draft.status}`, draft };
     }
     const at = this.#now().toISOString();
-    const updated = this.#drafts.updateStatus(draft.id, "rejected", at);
+    const updated = this.#drafts.updateStatus(
+      draft.id,
+      "rejected",
+      at,
+      {},
+      ["draft", "pending_approval"],
+    );
     if (updated === undefined) {
       return { ok: false, reason: "draft_not_found" };
     }
@@ -343,13 +355,28 @@ export class IssueDraftService {
     ) {
       return supersede("source_task_changed");
     }
+    if (draft.writeTaskId !== undefined) {
+      const writeTask = this.#tasks.get(draft.writeTaskId);
+      if (
+        writeTask === undefined ||
+        // The bridge creates the write task at revision 1; any revise means
+        // it no longer authorizes the approved action.
+        writeTask.revision !== 1 ||
+        writeTask.status === "cancelled" ||
+        writeTask.status === "cancelling" ||
+        writeTask.status === "failed"
+      ) {
+        return supersede("write_task_changed");
+      }
+    }
     const binding = this.#projects.findActiveByKey(ownerId, draft.projectKey);
     if (
       binding === undefined ||
       binding.repositoryId !== draft.repositoryId ||
       binding.repositoryFullName.toLowerCase() !==
         draft.repositoryFullName.toLowerCase() ||
-      binding.credentialRef !== draft.credentialRef
+      (this.#writeCredentialRef !== undefined &&
+        this.#writeCredentialRef !== draft.credentialRef)
     ) {
       return supersede("project_binding_changed");
     }
@@ -392,6 +419,12 @@ export class IssueDraftService {
   }
 }
 
+/** The approved pre-image of an issue update. Title is included so a title
+ * edit after review also invalidates the approval. */
+export function issueBeforeHash(title: string, body: string): string {
+  return createHash("sha256").update(`${title}\n${body}`).digest("hex");
+}
+
 /** Deterministic payload identity shown to the owner and bound on approval. */
 export function issueDraftPayloadHash(input: {
   repositoryId: number;
@@ -425,8 +458,10 @@ function stableJson(value: Record<string, unknown>): string {
   );
 }
 
-function issueBodies(actions: readonly ActionRecord[]): Map<number, string> {
-  const bodies = new Map<number, string>();
+function issueBodies(
+  actions: readonly ActionRecord[],
+): Map<number, { title: string; body: string }> {
+  const bodies = new Map<number, { title: string; body: string }>();
   for (const action of actions) {
     if (action.status !== "succeeded" || action.tool !== "github.read") {
       continue;
@@ -452,9 +487,10 @@ function issueBodies(actions: readonly ActionRecord[]): Map<number, string> {
         typeof record.number === "number" &&
         Number.isSafeInteger(record.number) &&
         typeof record.body === "string" &&
+        typeof record.title === "string" &&
         !bodies.has(record.number)
       ) {
-        bodies.set(record.number, record.body);
+        bodies.set(record.number, { title: record.title, body: record.body });
       }
     }
   }

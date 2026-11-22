@@ -65,6 +65,8 @@ export {
 import type { InboundHandler } from "./responder.ts";
 import type { WakeScheduler } from "../runtime/types.ts";
 import type { CapabilityView } from "../plugins/fence.ts";
+import type { IssueDraftService, IssueDraftView } from "../personal/issue-drafts.ts";
+import type { IssueDraftApprovalBridge } from "../personal/draft-approval.ts";
 
 export interface RouterModel {
   decide(input: RouterInput, capabilities?: CapabilityView): Promise<RouterDecision>;
@@ -118,6 +120,9 @@ export interface RouterDeps {
   capabilities?: CapabilityView;
   /** Owner project bindings used to resolve projectKeys deterministically. */
   projects?: ProjectCatalog;
+  /** Persisted verifier-approved drafts and the approval-to-write bridge. */
+  issueDrafts?: IssueDraftService;
+  issueDraftApproval?: IssueDraftApprovalBridge;
 }
 
 const GITHUB_REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -337,6 +342,12 @@ export function resolveProjectMention(input: {
         projectKeys: [mentioned.projectKey, project.projectKey].sort(),
       };
     }
+    const namedRepo = extractGithubRepo(input.text);
+    if (mentioned === undefined && namedRepo !== undefined) {
+      // The owner named a repository that is not an active binding; the
+      // model's project must not override that explicit mention.
+      return { status: "missing", requested: namedRepo, projectKeys };
+    }
     return { status: "resolved", project };
   }
 
@@ -506,6 +517,8 @@ export class Router implements InboundHandler {
   readonly #timezone: string;
   readonly #capabilities?: CapabilityView;
   readonly #projects?: ProjectCatalog;
+  readonly #issueDrafts?: IssueDraftService;
+  readonly #issueDraftApproval?: IssueDraftApprovalBridge;
 
   constructor(deps: RouterDeps) {
     this.#store = deps.store;
@@ -527,6 +540,8 @@ export class Router implements InboundHandler {
     this.#timezone = deps.defaultTimezone ?? "Asia/Shanghai";
     this.#capabilities = deps.capabilities;
     this.#projects = deps.projects;
+    this.#issueDrafts = deps.issueDrafts;
+    this.#issueDraftApproval = deps.issueDraftApproval;
     this.#stateQuery = new StateQueryHandler({
       tasks: deps.tasks,
       state: deps.state,
@@ -1636,6 +1651,18 @@ export class Router implements InboundHandler {
       return result.ok ? [] : [{ purpose: "failure", text: result.reason }];
     }
 
+    const draftCommand =
+      /^\/(?:draft|drafts)\s+(list|show|approve|reject)(?:\s+(\S+))?(?:\s+(\S+))?$/i.exec(
+        text,
+      );
+    if (draftCommand !== null) {
+      return this.#handleDraftCommand(
+        draftCommand,
+        ownerId,
+        conversationId,
+      );
+    }
+
     const approve =
       /^\/(?:approve|批准)\s+(\S+)\s+(\S+)(?:\s+(\S+)\s+(\d+))?$/.exec(text);
     if (approve !== null) {
@@ -1912,6 +1939,98 @@ export class Router implements InboundHandler {
     return true;
   }
 
+  async #handleDraftCommand(
+    match: RegExpExecArray,
+    ownerId: string,
+    conversationId: string,
+  ): Promise<ReplyDraft[]> {
+    if (this.#issueDrafts === undefined) {
+      return [{ purpose: "failure", text: "还没有持久化的 Issue 草稿。" }];
+    }
+    const sub = match[1]?.toLowerCase();
+    const id = match[2];
+    if (sub === "list") {
+      const drafts = this.#issueDrafts.list(ownerId, {
+        status: "pending_approval",
+        limit: 10,
+      });
+      if (drafts.length === 0) {
+        return [{ purpose: "status", text: "没有待批准的 Issue 草稿。" }];
+      }
+      return [
+        {
+          purpose: "status",
+          text: [
+            "待批准的 Issue 草稿：",
+            ...drafts.map((draft) => formatDraftSummary(draft)),
+            "查看：/draft show <id>",
+            "批准：/draft approve <id> <payloadHash>",
+            "拒绝：/draft reject <id>",
+          ].join("\n"),
+        },
+      ];
+    }
+    if (id === undefined) {
+      return [{ purpose: "failure", text: "请提供 draft id。" }];
+    }
+    const draft = this.#issueDrafts.get(ownerId, id);
+    if (draft === undefined) {
+      return [{ purpose: "failure", text: "找不到属于你的该草稿。" }];
+    }
+    if (sub === "show") {
+      return [{ purpose: "status", text: formatDraftDetail(draft) }];
+    }
+    if (sub === "reject") {
+      const result = this.#issueDrafts.reject(ownerId, id, ownerId);
+      return result.ok
+        ? [{ purpose: "status", text: `已拒绝草稿 ${id.slice(0, 8)}，不会写入 GitHub。` }]
+        : [{ purpose: "failure", text: `无法拒绝：${result.reason ?? "unknown"}` }];
+    }
+    if (sub === "approve") {
+      const payloadHash = match[3];
+      if (this.#issueDraftApproval === undefined) {
+        return [
+          {
+            purpose: "failure",
+            text: "Issue 写能力未启用：需要 owner 配置独立的 Issues-write 凭据与写白名单。",
+          },
+        ];
+      }
+      if (payloadHash === undefined) {
+        return [
+          {
+            purpose: "failure",
+            text: "批准必须包含完整的 payloadHash（见 /draft show）。",
+          },
+        ];
+      }
+      const result = await this.#issueDraftApproval.approve({
+        ownerId,
+        conversationId,
+        draftId: id,
+        payloadHash,
+        actorId: ownerId,
+      });
+      if (!result.ok) {
+        return [
+          {
+            purpose: "failure",
+            text: `无法批准：${result.reason ?? "unknown"}。未执行任何 GitHub 写入。`,
+          },
+        ];
+      }
+      return [
+        {
+          purpose: "status",
+          text:
+            `已批准草稿 ${id.slice(0, 8)}，提交受控写入。` +
+            "写入完成后会执行写后读取核对；结果未知时不会自动重复 POST。",
+        },
+      ];
+    }
+    return [{ purpose: "failure", text: "draft 子命令应为 list/show/approve/reject。" }];
+  }
+
   #rememberTaskFocus(conversationId: string, taskId: string): void {
     this.#store.metaSet(taskFocusKey(conversationId), taskId);
   }
@@ -2060,4 +2179,35 @@ export class Router implements InboundHandler {
       traceId: `inbox:${context.inboxId}`,
     });
   }
+}
+
+
+function formatDraftSummary(draft: IssueDraftView): string {
+  const target = draft.targetIssue === undefined ? "" : ` #${draft.targetIssue}`;
+  return (
+    `- ${draft.id.slice(0, 8)} ${draft.action}${target} ${draft.title.slice(0, 80)}` +
+    ` (payload ${draft.payloadHash.slice(0, 12)}…, expires ${draft.expiresAt})`
+  );
+}
+
+function formatDraftDetail(draft: IssueDraftView): string {
+  const target = draft.targetIssue === undefined ? "" : ` #${draft.targetIssue}`;
+  const before =
+    draft.beforeSummary === undefined
+      ? "-"
+      : draft.beforeSummary.replace(/[\r\n\t]+/g, " ").slice(0, 500);
+  const after = draft.body.replace(/[\r\n\t]+/g, " ").slice(0, 800);
+  return [
+    `草稿 ${draft.id}`,
+    `动作：${draft.action}${target}  状态：${draft.status}/${draft.validity}`,
+    `仓库：${draft.repositoryFullName} (repoId ${draft.repositoryId})`,
+    `来源：task ${draft.sourceTaskId} rev ${draft.sourceTaskRevision} commit ${draft.commitSha}`,
+    `凭据：${draft.credentialRef} v${draft.credentialVersion ?? "?"}`,
+    `标题：${draft.title}`,
+    `修改前：${before}`,
+    `拟写入：${after}`,
+    `payloadHash：${draft.payloadHash}`,
+    `过期：${draft.expiresAt}`,
+    `批准：/draft approve ${draft.id} ${draft.payloadHash}`,
+  ].join("\n");
 }

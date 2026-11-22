@@ -1091,7 +1091,9 @@ function mapIssue(record: Record<string, unknown>): Record<string, unknown> {
     bodyTruncated: body !== undefined && body.length > 4_000,
     beforeHash:
       body !== undefined && body.length <= 4_000 && record.pull_request === undefined
-        ? createHash("sha256").update(body).digest("hex")
+        ? createHash("sha256")
+            .update(`${firstLine(stringValue(record.title))}\n${body}`)
+            .digest("hex")
         : undefined,
     labels,
     isPullRequest: record.pull_request !== undefined,

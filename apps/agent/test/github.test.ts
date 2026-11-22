@@ -428,7 +428,7 @@ describe("read-only GitHub connector", () => {
     assert.equal((issue.evidence.item as Record<string, unknown>).title, "Typed reads");
     assert.equal(
       (issue.evidence.item as Record<string, unknown>).beforeHash,
-      "d9fbbc91492fbb3ba8e57ca15b039134e7098030a89578315a4c354f9117ccf2",
+      "7b436f2fbb00d65e4b18b6b57bb31a63373f0ae0cd8f2e998e38923817a1494c",
     );
 
     const files = await tool.execute({

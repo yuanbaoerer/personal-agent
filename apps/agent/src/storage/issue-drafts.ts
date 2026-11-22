@@ -146,24 +146,38 @@ export class IssueDraftRepository {
     return row === undefined ? undefined : mapDraft(row);
   }
 
+  findByActionId(actionId: string): IssueDraftSnapshot | undefined {
+    const row = this.#db.all<IssueDraftRow>(
+      "SELECT * FROM pa_issue_drafts WHERE write_action_id = ? ORDER BY created_at DESC LIMIT 1",
+      actionId,
+    )[0];
+    return row === undefined ? undefined : mapDraft(row);
+  }
+
   updateStatus(
     id: string,
     status: IssueDraftStatus,
     at: string,
     extra: { writeTaskId?: string; writeActionId?: string } = {},
+    fromStatuses?: readonly IssueDraftStatus[],
   ): IssueDraftSnapshot | undefined {
+    const allowed =
+      fromStatuses === undefined || fromStatuses.length === 0
+        ? ""
+        : ` AND status IN (${fromStatuses.map(() => "?").join(", ")})`;
     const row = this.#db.all<IssueDraftRow>(
       `UPDATE pa_issue_drafts
        SET status = ?, updated_at = ?,
            write_task_id = COALESCE(?, write_task_id),
            write_action_id = COALESCE(?, write_action_id)
-       WHERE id = ?
+       WHERE id = ?${allowed}
        RETURNING *`,
       status,
       at,
       extra.writeTaskId ?? null,
       extra.writeActionId ?? null,
       id,
+      ...(fromStatuses ?? []),
     )[0];
     return row === undefined ? undefined : mapDraft(row);
   }

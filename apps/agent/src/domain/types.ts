@@ -517,6 +517,8 @@ export interface ActionRecord {
   pluginVersion?: string;
   pluginDigest?: string;
   catalogGeneration?: number;
+  /** Stable proposal origin; draft bridge writes must start with `draft:`. */
+  sourceKey?: string;
   createdAt: string;
   updatedAt: string;
 }

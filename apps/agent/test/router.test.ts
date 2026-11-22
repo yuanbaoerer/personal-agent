@@ -548,6 +548,19 @@ describe("project mention resolution", () => {
     });
     assert.equal(conflict.status, "ambiguous");
 
+    const modelOverride = resolveProjectMention({
+      text: "检查 https://github.com/other/private 的实施情况",
+      ownerId: "owner-1",
+      requested: "docs-site",
+      projects: catalog([project, other]),
+      requireProject: true,
+    });
+    assert.equal(modelOverride.status, "missing");
+    assert.equal(
+      modelOverride.status === "missing" ? modelOverride.requested : "",
+      "other/private",
+    );
+
     const unboundRepo = resolveProjectMention({
       text: "检查 github.com/other/private 项目的实施情况",
       ownerId: "owner-1",

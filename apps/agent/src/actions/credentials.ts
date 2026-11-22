@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import type { CredentialRepository } from "../storage/credentials.ts";
 
 const CREDENTIAL_REF = /^[a-z][a-z0-9._:-]{0,127}$/;
@@ -79,6 +81,7 @@ interface CredentialEntry {
   expiresAt?: string;
   status: "active" | "revoked";
   version: number;
+  secretFingerprint?: string;
 }
 
 /**
@@ -107,6 +110,9 @@ export class CredentialBroker {
           ...(metadata.account === undefined ? {} : { account: metadata.account }),
           repositoryIds: [...metadata.repositoryIds],
           ...(metadata.expiresAt === undefined ? {} : { expiresAt: metadata.expiresAt }),
+          ...(metadata.secretFingerprint === undefined
+            ? {}
+            : { secretFingerprint: metadata.secretFingerprint }),
           status: metadata.status,
           version: metadata.version,
         });
@@ -292,6 +298,9 @@ export class CredentialBroker {
       ...(entry.pluginId === undefined ? {} : { pluginId: entry.pluginId }),
       ...(entry.account === undefined ? {} : { account: entry.account }),
       ...(entry.expiresAt === undefined ? {} : { expiresAt: entry.expiresAt }),
+      ...(entry.secretFingerprint === undefined
+        ? {}
+        : { secretFingerprint: entry.secretFingerprint }),
       updatedAt: (at ?? this.#now()).toISOString(),
     });
   }
@@ -316,6 +325,14 @@ function normalizeInput(input: CredentialInput): CredentialEntry {
     ...(input.account === undefined ? {} : { account: input.account }),
     repositoryIds: normalizeRepositoryIds(input.repositoryIds),
     ...(input.expiresAt === undefined ? {} : { expiresAt: input.expiresAt }),
+    ...(input.token === undefined
+      ? {}
+      : {
+          secretFingerprint: createHash("sha256")
+            .update(input.token)
+            .digest("hex")
+            .slice(0, 16),
+        }),
     status: "active",
     version: 0,
   };
@@ -347,6 +364,7 @@ function sameMetadata(left: CredentialEntry, right: CredentialEntry): boolean {
     left.pluginId === right.pluginId &&
     left.account === right.account &&
     left.expiresAt === right.expiresAt &&
+    left.secretFingerprint === right.secretFingerprint &&
     sameList(left.scopes, right.scopes) &&
     sameList(left.repositoryIds, right.repositoryIds)
   );

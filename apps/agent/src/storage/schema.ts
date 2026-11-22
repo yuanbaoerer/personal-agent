@@ -542,6 +542,11 @@ const migrations: readonly (readonly string[])[] = [
     `CREATE INDEX pa_issue_drafts_project_idx
        ON pa_issue_drafts (owner_id, project_key, repository_id, status)`,
   ],
+  [
+    // A one-way fingerprint of a static secret detects env-token rotation
+    // across restarts without storing the token itself.
+    `ALTER TABLE pa_credential_refs ADD COLUMN secret_fingerprint TEXT`,
+  ],
 ];
 
 /** Highest schema version this build can read/migrate. */

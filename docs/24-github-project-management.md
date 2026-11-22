@@ -140,8 +140,8 @@ L2 需 GH01–06 与相关 GH09；L3 pilot 需 GH07–10 与相应 #41 原验收
 - 修复复合请求守卫：显式 `只读`/`不要修改 GitHub` 的项目评估不再被误判为“状态查询 + 变更操作”。
 - receipt 截断检测下沉到嵌套字段（file content、issue body、patch、check output）；引用截断来源却声明 `coverage=complete` 会被 Verifier 拒绝。
 - 安全负例：错误 projectKey、task mandate 不符、跨 owner、绑定撤销、缺失/撤销凭据、repositoryId 不匹配、PR head 漂移、跨 revision finding、settled action 重放；均在任何 fetch 前或 Verifier 处失败。
-- E1：`project-review-e2e.test.ts` 5 场景；全量 471 tests passed。
-- 真实 E3 尚未通过真实飞书入站；owner 步骤见 [22 · Runbook](22-mvp-acceptance-runbook.md) §6。无 owner 凭据时保持 BLOCKED。
+- E1：`project-review-e2e.test.ts` 覆盖 raw Feishu 事件 → FeishuAdapter.parseRequest → Ingress → Router → ProjectBinding → typed reads → findings/drafts → Verifier → Outbox → Feishu send API（fake HTTP，含 platform message id）；真实飞书 E3 仍 BLOCKED。
+- 真实模型 + 真实 GitHub 只读取证已通过（repoId 1445007789，main 345faacf...，最终代码运行 3 observed findings、3 pending drafts、Verifier succeeded；此前的截断误报被 Verifier 拒绝）；记录见 [docs/acceptance/2026-11-22-real-project-review.md](acceptance/2026-11-22-real-project-review.md)。真实飞书入站/收件仍是 BLOCKED，不能据此标记 A5/E3 完成。
 
 ## 9. 2026-11-22 L2W-01：DraftSnapshot 生命周期
 
@@ -155,3 +155,35 @@ L2 需 GH01–06 与相关 GH09；L3 pilot 需 GH07–10 与相应 #41 原验收
 - API/CLI：`GET /api/v1/drafts`、`GET /api/v1/drafts/:id`、`POST /api/v1/drafts/:id/reject`；`pa drafts list|show|reject`，展示目标 repo/Issue、来源、before/after、payloadHash 与过期时间。
 - E1：全量 480 tests passed，覆盖持久化、去重、reject、revision/binding/credential 失效、expiry 与 API/CLI 权限。
 - 未实现（L2W-02）：owner approve 命令、写入 Action、GitHub API 调用。当前没有任何写路径。
+
+## 10. 2026-11-22 L2W-02：Approval Bridge 与受控 Issue 写入
+
+**状态：CODE_COMPLETE + E1_PASS；真实写 E3 BLOCKED（需 owner 指定隔离测试仓库与 Issues-write 凭据）。**
+
+- Typed Actions：`github.issue.create`、`github.issue.update`、`github.issue.comment`。只允许这三种；不存在 merge/push/delete/settings/branch-protection/MCP 写路径。
+- 每个 Action 绑定：owner、projectKey、active ProjectBinding、immutable repositoryId/full name、独立 write credentialRef 版本、`repository.read` + `issues.write` scope、task revision、plugin generation/version、target issue、payloadHash、idempotencyKey、Action TTL。
+- 写凭据必须由 owner 显式配置 `GITHUB_ISSUE_WRITE_TOKEN` + `GITHUB_ISSUE_WRITE_REPOS`，注册为独立 ref（默认 `github:issues`）；ProjectBinding 的 `credentialRef` 继续只用于只读读取。只读 PAT/OAuth 不会自动获得写权限，写入 token 也不会被读取路径复用。Token 仅存于内存/OAuth vault，action/task/log 不出现 token。
+- Owner 审批：`/draft list|show <id>|approve <id> <payloadHash>|reject <id>`。批准命令绑定 draft payloadHash；兼容 `pa drafts`/`/api/v1/drafts`。批准前还会读取当前 default branch ref，要求仍等于 draft 的 `commitSha`；仓库已前进则旧草稿 superseded。
+- Bridge 在批准时重新校验：draft validity、task revision、binding、credential epoch、write capability、payloadHash；随后创建专用 external-action Task（不派发 Worker）→ 生成 typed Action → 使用 ActionService 现有 approve/execute/reconcile 链路执行。
+- 写前：update/comment 先 GET issue，拒绝 PR-as-issue；update 比较 `beforeHash = sha256(title + "\n" + body)`，标题或正文被人工修改都立即失败并要求重新批准；不声称 GitHub 提供原子 CAS。
+- 幂等：create/comment 使用持久 idempotency marker；comment reconcile 按 `since` + 分页扫描，避免翻页盲区重复 POST；update 在写前发现已是目标状态则 no-op。title-only update 必须实际 PATCH，不允许假成功。
+- 写后：GET 资源核对 issue/comment id、URL、正文/marker；失败或超时标记 unknown 并先 reconcile，绝不盲目重试 POST；ActionService 的 lease/revision/plugin/credential fence 继续生效。结算只允许从 `executing` 迁移，写入期间被 binding/credential/task 失效的草稿不会被“复活”为 approved，write task 进入 needs_review。
+- E1：`github-issue.test.ts` 覆盖 create/update/comment、重复、scope/owner/repoId/allowlist/epoch、lost POST、conflict、429；`draft-approval.test.ts` 覆盖 approve/replay/reject/binding revoke/credential rotation/unknown reconcile/update conflict/comment/429/重启后 reconcile。全量 509 tests passed。
+- 真实写验收未执行：没有 owner 指定的隔离测试仓库与 Issues-write 凭据；不得在业务仓库试故障或写入。具体 owner 操作与预期证据见 [docs/acceptance/2026-11-22-l2-blocked.md](acceptance/2026-11-22-l2-blocked.md)。
+
+
+## 11. 2026-11-22 Stage D：无人值守预算 fail-closed
+
+- `SchedulePolicyService` 在 `BUDGET_MAX_MODEL_CALLS_PER_DAY` 未配置时拒绝触发周期任务：记录 `schedule_policy.skipped(reason=budget_unknown)` 并推进下一次 occurrence，不创建 Task、不调用模型。
+- 配置每日模型请求上限后才允许无人值守周期任务；单任务请求上限仍由 CallBudget 持久计数。
+- 本轮不自动启用周期项目写入；L2W 写入只能由 owner `/draft approve` 触发。
+- 仍缺真实 token/费用采集与 owner 确认的成本阈值；不宣称 #7 完全关闭。
+
+
+## 12. 2026-11-22 L2W-04：Feishu 全链路 E1
+
+- 写路径 Feishu E1：`/draft approve` → 受控写入 → 写后核对 → 审批 Task 结算 → Outbox → Feishu send（fake HTTP，断言 issue URL 与 platform message id）。
+- 新增确定性全链路回归：构造 Feishu 2.0 原始事件（`im.message.receive_v1`，owner p2p），经 `FeishuAdapter.parseRequest` 校验 token/app_id → Ingress → Router → ProjectBinding → Task → GitHub typed reads → findings/drafts → `project-review` Verifier → OutboxDispatcher → `FeishuAdapter.send`。
+- Fake Feishu HTTP 返回 tenant token 与 `data.message_id`；断言 Outbox 行 `accepted`、platform message id 存在、实际发送文本包含“项目评估（结构化证据已核对）”和“待办草稿”。
+- 取消 write task、write task revision 变化、approval 后禁用插件均不会产生 GitHub 写请求；草稿进入 superseded。
+- 这不是 E3：没有真实 Feishu 客户端入站/收件；真实 E3 仍按 [blocked record](acceptance/2026-11-22-l2-blocked.md) 由 owner 执行。
