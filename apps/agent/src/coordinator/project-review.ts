@@ -696,7 +696,7 @@ function evidenceIsTruncated(
       return true;
     }
     if (Array.isArray(value)) {
-      for (const item of value.slice(0, 50)) {
+      for (const item of value) {
         if (
           item !== null &&
           typeof item === "object" &&

@@ -336,13 +336,30 @@ export class IssueDraftService {
     }
     const at = this.#now().toISOString();
     const supersede = (reason: string): IssueDraftView => {
-      const updated = this.#drafts.updateStatus(draft.id, "superseded", at) ?? draft;
+      const updated =
+        this.#drafts.updateStatus(
+          draft.id,
+          "superseded",
+          at,
+          {},
+          [draft.status],
+        ) ?? draft;
       this.#audit("issue_draft.superseded", updated, { reason });
       return { ...updated, validity: "superseded" };
     };
     if (draft.expiresAt <= at) {
-      const updated = this.#drafts.updateStatus(draft.id, "expired", at) ?? draft;
-      return { ...updated, validity: "expired" };
+      const updated =
+        this.#drafts.updateStatus(
+          draft.id,
+          "expired",
+          at,
+          {},
+          [draft.status],
+        ) ?? draft;
+      return {
+        ...updated,
+        validity: updated.status === "expired" ? "expired" : "inactive",
+      };
     }
     const task = this.#tasks.get(draft.sourceTaskId);
     if (

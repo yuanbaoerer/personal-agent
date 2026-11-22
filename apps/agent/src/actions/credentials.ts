@@ -221,6 +221,12 @@ export class CredentialBroker {
           `credential ${ref} is not owned by the requesting owner`,
         );
       }
+    } else if (options.ownerId !== undefined) {
+      // Project reads always pass an owner. An unscoped legacy ref must not
+      // become a cross-owner credential just because it has no owner field.
+      throw new CredentialScopeError(
+        `credential ${ref} is not bound to an owner`,
+      );
     }
     if (
       entry.repositoryIds.length > 0 &&

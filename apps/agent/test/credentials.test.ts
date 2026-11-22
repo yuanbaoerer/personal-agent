@@ -103,6 +103,19 @@ describe("CredentialBroker", () => {
     );
   });
 
+  it("does not let an unscoped credential satisfy an owner-scoped read", async () => {
+    const broker = new CredentialBroker(() => NOW);
+    broker.register("github:legacy", {
+      token: "legacy-secret",
+      scopes: ["repository.read"],
+    });
+    assert.equal((await broker.resolve("github:legacy"))?.token, "legacy-secret");
+    await assert.rejects(
+      () => broker.resolve("github:legacy", ["repository.read"], { ownerId: OWNER }),
+      /not bound to an owner/,
+    );
+  });
+
   it("binds credentials to an owner and immutable repository ids", async () => {
     const broker = new CredentialBroker(() => NOW);
     broker.register("github:project", {
