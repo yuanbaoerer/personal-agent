@@ -25,7 +25,7 @@ These branches are not merged. A real acceptance run must record the actual depl
 | `feat/plan-01-store` | `npm run typecheck` | pass |
 | `feat/plan-01-store` | `npm test` | 536 tests pass |
 | `feat/plan-02-executor` | `npm run typecheck` | pass |
-| `feat/plan-02-executor` | `npm test` | 547 tests pass |
+| `feat/plan-02-executor` | `npm test` | 555 tests pass |
 | all | `node --test apps/agent/test/plans.test.ts apps/agent/test/plan-executor.test.ts apps/agent/test/plans-api.test.ts` | 21 tests pass |
 
 Environment: macOS x64, local Node, `:memory:` SQLite for tests, `FakeRuntime` for model answers. No provider call, no Feishu send, no GitHub request.
@@ -64,9 +64,10 @@ No `.env`, token, chat text or provider response is recorded here.
 - Router has no `propose_plan` → persisted `PlanService.create` bridge; `plan_proposal` is still text-only.
 - Automatic replan on an external 429/403/head-drift is not implemented; the owner triggers a bounded replan after the plan pauses.
 - Plan progress is deterministic chat/API output; it is not a model-generated conversational answer (intentionally avoids inventing state).
-- Steps are dispatched sequentially through child Tasks; parallel ready steps are bounded by TaskService capacity, not asserted end-to-end.
+- Ready steps dispatch as child Tasks under the global Worker cap; the tests exercise dependent chains, not parallel-ready-step contention end-to-end.
+- Review hardening added: stable parent-task budget lineage, ExtensionPolicy inheritance, activation/revise guards, final-step parent mandate, stale-tick fail-closed, and atomic/sweep-repaired settlement. These are E1-only until a real run repeats them.
 - The final step always uses the parent completion criteria; a plan without a final step that can prove them settles `needs_review`.
-- Tool-call budget is shared by `ActionRepository.countByPlan`, but has no dedicated executor test yet.
+- Tool-call budget is shared by `ActionRepository.countByBudgetKey`, but has no dedicated executor test yet.
 
 ## Next evidence step
 
