@@ -305,13 +305,14 @@ export function resolveTaskReference(
     if (ordinal === undefined || ordinal < 1) {
       return { status: "not_found", reason: "无法理解任务序号。" };
     }
-    if (ordinal > all.length) {
+    const base = scoped.length > 0 ? scoped : all;
+    if (ordinal > base.length) {
       return {
         status: "not_found",
-        reason: `当前只有 ${all.length} 个任务，找不到第 ${ordinal} 个。`,
+        reason: `当前会话只有 ${base.length} 个任务，找不到第 ${ordinal} 个。`,
       };
     }
-    return { status: "ok", task: all[ordinal - 1] as TaskRecord };
+    return { status: "ok", task: base[ordinal - 1] as TaskRecord };
   }
 
   const prefer = (candidates: TaskRecord[]): TaskReferenceResolution | undefined => {

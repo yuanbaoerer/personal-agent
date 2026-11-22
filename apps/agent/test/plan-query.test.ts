@@ -452,6 +452,47 @@ describe("plan progress queries", () => {
     );
   });
 
+  it("resolves an ordinal taskRef inside the conversation", async () => {
+    const services = createServices({ now: () => NOW });
+    const older = services.tasks.insert({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "plan-ordinal-older",
+      goal: "older task",
+      completionCriteria: "provide a checked result",
+      mandate: { resources: ["chat"], tools: [] },
+      createdAt: "2026-01-01T00:00:00.000Z",
+    }).task;
+    services.tasks.insert({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "plan-ordinal-newer",
+      goal: "newer task",
+      completionCriteria: "provide a checked result",
+      mandate: { resources: ["chat"], tools: [] },
+      createdAt: "2026-01-01T00:00:01.000Z",
+    });
+    services.planService.create(services.owner.id, older.id, { steps: steps() });
+    services.model.push({
+      action: "revise_plan",
+      text: "",
+      taskRef: "第二个",
+      plan: {
+        steps: steps().map((step) =>
+          step.key === "C" ? { ...step, goal: "ordinal revision" } : step,
+        ),
+      },
+    });
+    await sendText(services, "改第二个任务的计划", "evt_ordinal_task_ref");
+
+    assert.match(lastOutbox(services), /计划草稿已更新为 v2/);
+    assert.equal(
+      services.planService.list(services.owner.id, { parentTaskId: older.id })[0]
+        ?.planVersion,
+      2,
+    );
+  });
+
   it("asks for an id when a task has multiple drafts", async () => {
     const services = createServices({ now: () => NOW });
     const parent = services.tasks.insert({
@@ -532,6 +573,35 @@ describe("plan progress queries", () => {
     assert.equal(
       services.plans.listSteps(planId)[0]?.status,
       "cancelled",
+    );
+  });
+
+  it("leaves a plan untouched when replan validation fails", async () => {
+    const { services, parent, planId } = setup();
+    const child = services.tasks.insert({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "plan-replan-stale-child",
+      goal: "running child",
+      completionCriteria: "provide a checked result",
+      mandate: { resources: ["chat"], tools: [] },
+      planId,
+      planStepKey: "A",
+      createdAt: NOW.toISOString(),
+    }).task;
+    assert.ok(services.plans.bindStepTask(planId, "A", child.id, NOW.toISOString()));
+    services.tasks.revise(parent.id, { goal: "changed parent" }, NOW.toISOString());
+
+    await sendText(services, `/plan replan ${planId} confirm`, "evt_replan_stale");
+
+    assert.match(lastOutbox(services), /replan 失败/);
+    const view = services.planService.get(services.owner.id, planId);
+    assert.equal(view?.plan.status, "active");
+    assert.equal(view?.steps[0]?.status, "running");
+    assert.equal(services.tasks.get(child.id)?.status, "queued");
+    assert.equal(
+      services.planService.list(services.owner.id, { parentTaskId: parent.id }).length,
+      1,
     );
   });
 

@@ -1052,6 +1052,14 @@ export class Router implements InboundHandler {
         if (target === undefined) {
           return { status: "done" };
         }
+        if (!this.#isPlanEditableTask(target)) {
+          this.#reply(
+            context,
+            "该任务已结束或待确认，不能生成新计划；请先处理该任务或创建新任务。",
+            "failure",
+          );
+          return { status: "done" };
+        }
         try {
           const view = this.#plans.create(context.ownerId, target.id, {
             steps: decision.plan.steps,
@@ -2348,10 +2356,16 @@ export class Router implements InboundHandler {
     context: { ownerId: string; conversationId: string; inboxId: string },
     decision: RouterDecision,
   ): TaskRecord | undefined {
-    if (decision.taskId !== undefined) {
+    const exactId =
+      decision.taskId ??
+      (decision.taskRef !== undefined &&
+      /^[0-9a-f][0-9a-f-]{7,63}$/i.test(decision.taskRef.trim())
+        ? decision.taskRef.trim()
+        : undefined);
+    if (exactId !== undefined) {
       // Exact ids bypass the 50-task scan; the conversation check prevents a
       // cross-chat task from becoming selectable.
-      const task = this.#tasks.get(decision.taskId);
+      const task = this.#tasks.get(exactId);
       if (
         task !== undefined &&
         task.ownerId === context.ownerId &&
@@ -2397,6 +2411,15 @@ export class Router implements InboundHandler {
     }
     this.#reply(context, resolution.reason, "failure");
     return undefined;
+  }
+
+  #isPlanEditableTask(task: TaskRecord): boolean {
+    return (
+      task.status !== "succeeded" &&
+      task.status !== "failed" &&
+      task.status !== "cancelled" &&
+      task.status !== "needs_review"
+    );
   }
 
   #rememberTaskFocus(conversationId: string, taskId: string): void {
@@ -2461,6 +2484,7 @@ export class Router implements InboundHandler {
         const task = this.#tasks.get(explicit.id);
         if (
           task !== undefined &&
+          task.conversationId === context.conversationId &&
           (project === undefined || task.mandate.project === project)
         ) {
           this.#rememberTaskFocus(context.conversationId, task.id);
@@ -2497,6 +2521,14 @@ export class Router implements InboundHandler {
       },
     );
     if (resolution.status === "ok") {
+      if (resolution.task.conversationId !== context.conversationId) {
+        this.#reply(
+          context,
+          "该任务不属于当前会话；请指定当前会话的任务或计划 id。",
+          "failure",
+        );
+        return undefined;
+      }
       this.#rememberTaskFocus(context.conversationId, resolution.task.id);
       return resolution.task;
     }
@@ -2607,38 +2639,46 @@ export class Router implements InboundHandler {
       if (view === undefined) {
         return [{ purpose: "failure", text: "计划不存在。" }];
       }
+      const runningTaskIds = view.steps
+        .filter((step) => step.status === "running" && step.taskId !== undefined)
+        .map((step) => step.taskId as string);
       try {
-        // Replan is the explicit retry path: stop any running child and
-        // clear running/ready step statuses before creating the new version.
-        for (const step of view.steps) {
-          if (step.status !== "running" || step.taskId === undefined) {
+        // Validation and the step-status change happen inside replan's
+        // transaction; child tasks are stopped only after the new version is
+        // durable, so a failed replan leaves the source untouched.
+        const replanned = this.#plans.replan(
+          ownerId,
+          resolved.id,
+          {
+            budget: view.plan.budget,
+            steps: view.steps.map((step) => ({
+              key: step.key,
+              goal: step.goal,
+              dependsOn: step.dependsOn,
+              tools: step.tools,
+              resources: step.resources,
+              verifierId: step.verifierId,
+              completionCriteria: step.completionCriteria,
+              maxAttempts: step.maxAttempts,
+              timeoutMs: step.timeoutMs,
+            })),
+          },
+          { stopOpenSteps: true },
+        );
+        for (const taskId of runningTaskIds) {
+          const child = this.#tasks.get(taskId);
+          if (child === undefined || child.status === "cancelled" || child.status === "succeeded" || child.status === "failed") {
             continue;
           }
-          const child = this.#tasks.get(step.taskId);
-          if (
-            child !== undefined &&
-            child.status !== "succeeded" &&
-            child.status !== "failed" &&
-            child.status !== "cancelled"
-          ) {
+          try {
             this.#taskService.cancel(child.id);
+          } catch (error) {
+            console.warn("plan_replan_child_cancel_failed", {
+              taskId: child.id,
+              message: error instanceof Error ? error.message : String(error),
+            });
           }
         }
-        this.#plans.cancelOpenSteps(ownerId, resolved.id);
-        const replanned = this.#plans.replan(ownerId, resolved.id, {
-          budget: view.plan.budget,
-          steps: view.steps.map((step) => ({
-            key: step.key,
-            goal: step.goal,
-            dependsOn: step.dependsOn,
-            tools: step.tools,
-            resources: step.resources,
-            verifierId: step.verifierId,
-            completionCriteria: step.completionCriteria,
-            maxAttempts: step.maxAttempts,
-            timeoutMs: step.timeoutMs,
-          })),
-        });
         return [
           {
             purpose: "status",
