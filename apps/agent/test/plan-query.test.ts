@@ -122,6 +122,39 @@ describe("plan progress queries", () => {
     );
   });
 
+  it("persists a model-proposed plan as a non-executing draft", async () => {
+    const services = createServices({ now: () => NOW });
+    const parent = services.tasks.insert({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "plan-draft-from-model",
+      goal: "plan target",
+      completionCriteria: "provide a checked result",
+      mandate: { resources: ["chat"], tools: [] },
+      createdAt: NOW.toISOString(),
+    }).task;
+    services.model.push({
+      action: "draft_plan",
+      text: "",
+      taskId: parent.id,
+      plan: { steps: steps() },
+    });
+
+    await sendText(services, "先给我这个任务的三步计划，不要执行", "evt_plan_draft");
+
+    const plans = services.planService.list(services.owner.id, {
+      parentTaskId: parent.id,
+    });
+    assert.equal(plans.length, 1);
+    assert.equal(plans[0]?.status, "draft");
+    assert.match(lastOutbox(services), /计划草稿 v1（未执行）/);
+    assert.equal(
+      services.tasks.listByOwner(services.owner.id, 20).filter((task) => task.planStepKey !== undefined)
+        .length,
+      0,
+    );
+  });
+
   it("does not expose another conversation's plan", async () => {
     const { services } = setup();
     await services.ingress.accept(

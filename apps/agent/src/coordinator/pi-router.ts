@@ -1,5 +1,6 @@
 import type {
   Mandate,
+  PlanStepSpec,
   RouterDecision,
   RouterInput,
   ScheduleIntent,
@@ -176,6 +177,7 @@ export function routerPrompt(
     '- {"action":"reply","replyKind":"clarify","text":"..."} when a required detail is missing or the owner must choose between readings.',
     '- {"action":"reply","replyKind":"plan_proposal","text":"..."} when outlining a plan for discussion; this is text only: no Task, no Plan record, no approval.',
     '- {"action":"create_task","text":"ack","task":{"goal":"...","completionCriteria":"text or JSON {\"requiredEvidenceKinds\":[\"...\"]}","mandate":{"resources":["chat"],"tools":[]},"priority":0}} for sustained background work.',
+    '- {"action":"draft_plan","taskId":"exact id","taskRef":"optional natural reference","plan":{"steps":[{"key":"A","goal":"...","dependsOn":[],"tools":[],"resources":[],"verifierId":"structural"}]}} to persist a 3-5 step draft plan for an existing task. It never starts work.',
     '- {"action":"supplement_task","taskId":"exact id","taskRef":"optional natural reference","text":"..."} when the owner answers a waiting task question or adds requirements.',
     '- {"action":"revise_task","taskId":"exact id","taskRef":"optional natural reference","changes":{"goal":"...","completionCriteria":"..."}} when the owner explicitly changes an existing task.',
     '- {"action":"cancel_task","taskId":"exact id","taskRef":"optional natural reference"}',
@@ -267,6 +269,7 @@ export function parseRouterDecision(
   if (
     action !== "reply" &&
     action !== "create_task" &&
+    action !== "draft_plan" &&
     action !== "supplement_task" &&
     action !== "revise_task" &&
     action !== "cancel_task" &&
@@ -295,6 +298,12 @@ export function parseRouterDecision(
     decision.replyKind = record.replyKind;
   }
 
+  if (record.plan !== undefined) {
+    const plan = parsePlanProposal(record.plan);
+    if (plan !== undefined) {
+      decision.plan = plan;
+    }
+  }
   if (typeof record.taskId === "string" && record.taskId.trim().length > 0) {
     decision.taskId = record.taskId.trim();
   }
@@ -380,6 +389,65 @@ export function parseRouterDecision(
   }
 
   return decision;
+}
+
+function stringList(value: unknown): string[] | undefined {
+  if (value === undefined) {
+    return [];
+  }
+  if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) {
+    return undefined;
+  }
+  return value.map((item) => item.trim()).filter((item) => item.length > 0);
+}
+
+function parsePlanProposal(value: unknown): { steps: PlanStepSpec[] } | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const steps = (value as Record<string, unknown>).steps;
+  if (!Array.isArray(steps) || steps.length === 0) {
+    return undefined;
+  }
+  const parsed: PlanStepSpec[] = [];
+  for (const raw of steps) {
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+      return undefined;
+    }
+    const step = raw as Record<string, unknown>;
+    if (
+      typeof step.key !== "string" ||
+      typeof step.goal !== "string" ||
+      typeof step.verifierId !== "string"
+    ) {
+      return undefined;
+    }
+    const dependsOn = stringList(step.dependsOn);
+    const tools = stringList(step.tools);
+    const resources = stringList(step.resources);
+    if (dependsOn === undefined || tools === undefined || resources === undefined) {
+      return undefined;
+    }
+    const item: PlanStepSpec = {
+      key: step.key.trim(),
+      goal: step.goal.trim(),
+      dependsOn,
+      tools,
+      resources,
+      verifierId: step.verifierId.trim(),
+    };
+    if (typeof step.completionCriteria === "string") {
+      item.completionCriteria = step.completionCriteria;
+    }
+    if (typeof step.maxAttempts === "number") {
+      item.maxAttempts = step.maxAttempts;
+    }
+    if (typeof step.timeoutMs === "number") {
+      item.timeoutMs = step.timeoutMs;
+    }
+    parsed.push(item);
+  }
+  return { steps: parsed };
 }
 
 function parseScheduleIntent(value: unknown): ScheduleIntent | undefined {

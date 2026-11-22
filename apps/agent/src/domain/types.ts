@@ -800,6 +800,7 @@ export interface ScheduleIntent {
 export type RouterAction =
   | "reply"
   | "create_task"
+  | "draft_plan"
   | "supplement_task"
   | "revise_task"
   | "cancel_task"
@@ -832,6 +833,8 @@ export interface RouterDecision {
   taskId?: string;
   /** Natural task reference; the program resolves it against owner tasks. */
   taskRef?: string;
+  /** Model-proposed 3–5 step plan; always validated by PlanService. */
+  plan?: { steps: PlanStepSpec[] };
   /** Changes for an existing task; a revision bump invalidates old work. */
   changes?: {
     goal?: string;

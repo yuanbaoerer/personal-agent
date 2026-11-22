@@ -140,6 +140,7 @@ const GITHUB_REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const REMIND_TIME_HINT =
   /(?:\d{1,2}\s*[点:：时]|今天|明天|后天|大后天|下周|上午|下午|中午|晚上|早上)/;
 const REDIRECTABLE_CONTROL_ACTIONS: ReadonlySet<RouterDecision["action"]> = new Set([
+  "draft_plan",
   "supplement_task",
   "revise_task",
   "cancel_task",
@@ -1035,6 +1036,37 @@ export class Router implements InboundHandler {
           "status",
         );
         void this.#wake.wake();
+        return { status: "done" };
+      }
+      case "draft_plan": {
+        if (this.#plans === undefined) {
+          this.#reply(context, "计划能力当前未启用。", "failure");
+          return { status: "done" };
+        }
+        if (decision.plan === undefined || decision.plan.steps.length === 0) {
+          this.#reply(context, "请提供 3–5 个步骤的计划草稿。", "status");
+          return { status: "done" };
+        }
+        const target = this.#resolveDecisionTask(context, decision);
+        if (target === undefined) {
+          return { status: "done" };
+        }
+        try {
+          const view = this.#plans.create(context.ownerId, target.id, {
+            steps: decision.plan.steps,
+          });
+          this.#reply(
+            context,
+            `已生成计划草稿 v${view.plan.planVersion}（未执行）。查看：/plan ${view.plan.id.slice(0, 8)}。启动需由主人明确确认。`,
+            "status",
+          );
+        } catch (error) {
+          this.#reply(
+            context,
+            `计划草稿未创建：${error instanceof Error ? error.message : String(error)}`,
+            "failure",
+          );
+        }
         return { status: "done" };
       }
       case "supplement_task": {
