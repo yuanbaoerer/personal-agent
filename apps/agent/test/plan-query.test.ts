@@ -95,6 +95,7 @@ describe("plan progress queries", () => {
     await sendText(services, `/plan ${planId.slice(0, 8)}`, "evt_plan_show");
     assert.match(lastOutbox(services), /v1\s+active/);
 
+    services.planService.pause(services.owner.id, planId);
     const revised = services.planService.revise(services.owner.id, planId, {
       steps: steps().map((step) =>
         step.key === "B" ? { ...step, goal: "analyze more evidence" } : step,
@@ -236,6 +237,188 @@ describe("plan progress queries", () => {
         .listByOwner(services.owner.id, 20)
         .filter((task) => task.planStepKey !== undefined).length,
       0,
+    );
+  });
+
+  it("preserves a non-default source budget during chat revision", async () => {
+    const services = createServices({ now: () => NOW });
+    const parent = services.tasks.insert({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "plan-budget-revision",
+      goal: "budget target",
+      completionCriteria: "provide a checked result",
+      mandate: { resources: ["chat"], tools: [] },
+      createdAt: NOW.toISOString(),
+    }).task;
+    const budget = {
+      maxSteps: 3,
+      maxAttemptsPerStep: 2,
+      timeoutMs: 60_000,
+      maxToolCalls: 1,
+    };
+    const source = services.planService.create(services.owner.id, parent.id, {
+      steps: steps().map((step) => ({ ...step, maxAttempts: 2 })),
+      budget,
+    });
+
+    services.model.push({
+      action: "revise_plan",
+      text: "",
+      taskId: parent.id,
+      plan: {
+        steps: steps().map((step) => ({
+          ...step,
+          maxAttempts: 2,
+          ...(step.key === "B" ? { goal: "budget-safe revision" } : {}),
+        })),
+      },
+    });
+    await sendText(services, "改第二步，预算不能变", "evt_budget_revise");
+
+    const revised = services.planService.list(services.owner.id, {
+      parentTaskId: parent.id,
+    })[0];
+    assert.equal(revised?.planVersion, 2);
+    assert.deepEqual(revised?.budget, source.plan.budget);
+    assert.equal(revised?.budget.maxToolCalls, 1);
+
+    services.model.push({
+      action: "revise_plan",
+      text: "",
+      taskId: parent.id,
+      plan: {
+        steps: steps().map((step) => ({ ...step, maxAttempts: 3 })),
+      },
+    });
+    await sendText(services, "再加一次重试", "evt_budget_revise_reject");
+    assert.match(lastOutbox(services), /计划修改失败/);
+    assert.equal(
+      services.planService.list(services.owner.id, { parentTaskId: parent.id })[0]
+        ?.planVersion,
+      2,
+    );
+  });
+
+  it("resolves a natural planRef to the only draft", async () => {
+    const services = createServices({ now: () => NOW });
+    const parent = services.tasks.insert({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "plan-natural-ref",
+      goal: "natural ref target",
+      completionCriteria: "provide a checked result",
+      mandate: { resources: ["chat"], tools: [] },
+      createdAt: NOW.toISOString(),
+    }).task;
+    services.planService.create(services.owner.id, parent.id, { steps: steps() });
+    services.model.push({
+      action: "revise_plan",
+      text: "",
+      planRef: "刚才那个计划",
+      plan: {
+        steps: steps().map((step) =>
+          step.key === "C" ? { ...step, goal: "natural ref revision" } : step,
+        ),
+      },
+    });
+    await sendText(services, "把刚才那个计划最后一步改一下", "evt_natural_ref");
+
+    assert.match(lastOutbox(services), /计划草稿已更新为 v2/);
+    assert.equal(
+      services.planService.list(services.owner.id, { parentTaskId: parent.id })[0]
+        ?.planVersion,
+      2,
+    );
+  });
+
+  it("does not revise a task's plan from another conversation", async () => {
+    const services = createServices({ now: () => NOW });
+    const parent = services.tasks.insert({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "plan-cross-chat",
+      goal: "cross chat target",
+      completionCriteria: "provide a checked result",
+      mandate: { resources: ["chat"], tools: [] },
+      createdAt: NOW.toISOString(),
+    }).task;
+    services.planService.create(services.owner.id, parent.id, { steps: steps() });
+    services.model.push({
+      action: "revise_plan",
+      text: "",
+      taskId: parent.id,
+      plan: { steps: steps() },
+    });
+    await services.ingress.accept(
+      inbound({
+        platformEventId: "evt_cross_chat_revise",
+        platformConversationId: "oc_other_revise",
+        text: "改一下另一个会话的计划",
+      }),
+    );
+    await services.effectDispatcher.drain(20);
+
+    assert.match(lastOutbox(services), /不属于当前会话/);
+    assert.equal(
+      services.planService.list(services.owner.id, { parentTaskId: parent.id }).length,
+      1,
+    );
+  });
+
+  it("asks for an id when a task has multiple drafts", async () => {
+    const services = createServices({ now: () => NOW });
+    const parent = services.tasks.insert({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "plan-multiple-drafts",
+      goal: "multiple drafts target",
+      completionCriteria: "provide a checked result",
+      mandate: { resources: ["chat"], tools: [] },
+      createdAt: NOW.toISOString(),
+    }).task;
+    services.planService.create(services.owner.id, parent.id, { steps: steps() });
+    services.planService.create(services.owner.id, parent.id, { steps: steps() });
+    services.model.push({
+      action: "revise_plan",
+      text: "",
+      taskId: parent.id,
+      plan: { steps: steps() },
+    });
+    await sendText(services, "改一下草稿", "evt_multiple_drafts");
+
+    assert.match(lastOutbox(services), /多个计划草稿/);
+    assert.equal(
+      services.planService.list(services.owner.id, { parentTaskId: parent.id }).length,
+      2,
+    );
+  });
+
+  it("redirects a misrouted revise_plan for a state question", async () => {
+    const services = createServices({ now: () => NOW });
+    const parent = services.tasks.insert({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "plan-revise-redirect",
+      goal: "redirect target",
+      completionCriteria: "provide a checked result",
+      mandate: { resources: ["chat"], tools: [] },
+      createdAt: NOW.toISOString(),
+    }).task;
+    services.planService.create(services.owner.id, parent.id, { steps: steps() });
+    services.model.push({
+      action: "revise_plan",
+      text: "",
+      taskId: parent.id,
+      plan: { steps: steps() },
+    });
+    await sendText(services, "现在有哪些任务", "evt_revise_redirect");
+
+    assert.match(lastOutbox(services), /任务/);
+    assert.ok(!lastOutbox(services).includes("计划草稿已更新"));
+    assert.equal(
+      services.planService.list(services.owner.id, { parentTaskId: parent.id }).length,
+      1,
     );
   });
 

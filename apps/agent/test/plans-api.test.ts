@@ -93,6 +93,9 @@ describe("plan API", () => {
       ],
     );
 
+    const paused = await call(api, "POST", `/api/v1/plans/${plan.id}/pause`);
+    assert.equal(paused.status, 200);
+
     const revised = await call(api, "POST", `/api/v1/plans/${plan.id}/revise`, {
       body: {
         steps: steps().map((step) =>

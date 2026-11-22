@@ -1080,46 +1080,130 @@ export class Router implements InboundHandler {
           return { status: "done" };
         }
         let source: PlanRecord | undefined;
+        const conversationPlans = this.#conversationPlans(
+          context.ownerId,
+          context.conversationId,
+        );
         const ref = decision.planId ?? decision.planRef;
         if (ref !== undefined) {
-          const resolved = this.#resolvePlan(
-            context.ownerId,
-            context.conversationId,
-            ref,
+          const matches = conversationPlans.filter(
+            (plan) => plan.id === ref || plan.id.startsWith(ref),
           );
-          if ("error" in resolved) {
-            this.#reply(context, resolved.error, "failure");
+          if (matches.length === 1) {
+            source = matches[0];
+          } else if (matches.length > 1) {
+            this.#reply(
+              context,
+              `计划引用不唯一：${matches
+                .map((plan) => `${plan.id.slice(0, 8)}(v${plan.planVersion})`)
+                .join(", ")}。请使用更长的 id。`,
+              "clarify",
+            );
             return { status: "done" };
+          } else if (decision.planId !== undefined) {
+            this.#reply(context, `当前会话没有匹配 ${ref} 的计划。`, "failure");
+            return { status: "done" };
+          } else {
+            // A natural planRef ("刚才那个计划") falls back to the only
+            // editable draft in this conversation.
+            const drafts = conversationPlans.filter(
+              (plan) => plan.status === "draft",
+            );
+            if (drafts.length === 1) {
+              source = drafts[0];
+            } else if (drafts.length > 1) {
+              this.#reply(
+                context,
+                `有多个计划草稿，请指定 id：${drafts
+                  .map((plan) => `${plan.id.slice(0, 8)}(v${plan.planVersion})`)
+                  .join(", ")}。`,
+                "clarify",
+              );
+              return { status: "done" };
+            }
           }
-          source = this.#plans.get(context.ownerId, resolved.id)?.plan ?? resolved;
         } else {
           const target = this.#resolveDecisionTask(context, decision);
           if (target === undefined) {
             return { status: "done" };
           }
-          source = this.#plans
-            .list(context.ownerId, { parentTaskId: target.id, limit: 10 })
-            .find((plan) => plan.status === "draft" || plan.status === "paused");
-          if (source === undefined) {
+          if (target.conversationId !== context.conversationId) {
             this.#reply(
               context,
-              "这个任务当前没有可修改的草稿或暂停计划；请先让我生成草稿。",
-              "status",
+              "该任务不属于当前会话，不能从这里修改它的计划。",
+              "failure",
             );
             return { status: "done" };
           }
+          const plans = this.#plans.list(context.ownerId, {
+            parentTaskId: target.id,
+            limit: 20,
+          });
+          const drafts = plans.filter((plan) => plan.status === "draft");
+          if (drafts.length === 1) {
+            source = drafts[0];
+          } else if (drafts.length > 1) {
+            this.#reply(
+              context,
+              `这个任务有多个计划草稿，请指定 id：${drafts
+                .map((plan) => `${plan.id.slice(0, 8)}(v${plan.planVersion})`)
+                .join(", ")}。`,
+              "clarify",
+            );
+            return { status: "done" };
+          } else {
+            const active = plans.find((plan) => plan.status === "active");
+            const paused = plans.find((plan) => plan.status === "paused");
+            if (active !== undefined) {
+              this.#reply(
+                context,
+                `计划 ${active.id.slice(0, 8)} 正在执行，不能直接改；先用 /plan pause ${active.id.slice(0, 8)}，再用 /plan replan ${active.id.slice(0, 8)}。`,
+                "clarify",
+              );
+            } else if (paused !== undefined) {
+              this.#reply(
+                context,
+                `计划 ${paused.id.slice(0, 8)} 已暂停；请等运行中步骤结束/取消后，用 /plan replan ${paused.id.slice(0, 8)} 修改（保留已完成步骤、预算只能缩小），或 /plan cancel ${paused.id.slice(0, 8)}。`,
+                "clarify",
+              );
+            } else {
+              this.#reply(
+                context,
+                "这个任务当前没有可修改的草稿计划；请先让我生成草稿。",
+                "status",
+              );
+            }
+            return { status: "done" };
+          }
         }
-        if (source.status !== "draft" && source.status !== "paused") {
+        if (source === undefined) {
           this.#reply(
             context,
-            "执行中或已结束的计划不能直接改；请先暂停，再用 replan 处理正在执行的计划。",
-            "clarify",
+            "当前会话没有可修改的计划草稿；请先让我生成草稿。",
+            "status",
           );
+          return { status: "done" };
+        }
+        if (source.status !== "draft") {
+          const short = source.id.slice(0, 8);
+          const guidance =
+            source.status === "active"
+              ? `计划 ${short} 正在执行，不能直接改；先用 /plan pause ${short}，再用 /plan replan ${short}。`
+              : source.status === "paused"
+                ? `计划 ${short} 已暂停；请等运行中步骤结束/取消后，用 /plan replan ${short} 修改（保留已完成步骤、预算只能缩小），或 /plan cancel ${short}。`
+                : source.status === "completed"
+                  ? `计划 ${short} 已完成，不能再修改；请新建草稿。`
+                  : source.status === "cancelled"
+                    ? `计划 ${short} 已取消，不能再修改；请新建草稿。`
+                    : `计划 ${short} 已被新版本替代，不能再修改；请使用最新版本或新建草稿。`;
+          this.#reply(context, guidance, "clarify");
           return { status: "done" };
         }
         try {
           const revised = this.#plans.revise(context.ownerId, source.id, {
             steps: decision.plan.steps,
+            // Never silently reset/widen the stored budget.
+            budget: source.budget,
           });
           const diff = this.#plans.diff(
             context.ownerId,

@@ -499,15 +499,26 @@ export class PlanService {
 
   revise(ownerId: string, planId: string, input: PlanSpecInput): PlanView {
     const source = this.#ownedPlan(ownerId, planId);
-    if (source.status === "completed" || source.status === "cancelled") {
-      throw new PlanError("invalid_transition", `cannot revise a ${source.status} plan`);
+    if (source.status !== "draft" && source.status !== "paused") {
+      throw new PlanError(
+        "invalid_transition",
+        `cannot revise a plan in status ${source.status}; pause and use replan for an active plan`,
+      );
     }
     const task = this.#task(ownerId, source.parentTaskId);
     this.#assertTaskOpen(task);
-    const spec = resolvePlanSpec(input, task, this.#capabilities);
+    // A revision must never silently reset or widen the stored budget.
+    const spec = resolvePlanSpec(
+      { steps: input.steps, budget: input.budget ?? source.budget },
+      task,
+      this.#capabilities,
+    );
     const oldSteps = this.#plans.listSteps(source.id);
     if (oldSteps.some((step) => step.status === "running")) {
-      throw new PlanError("invalid_transition", "pause the plan before revising it");
+      throw new PlanError(
+        "invalid_transition",
+        "a step is still running; wait for it to finish or cancel it before revising",
+      );
     }
     this.#assertNoRunningVersions(task.id, source.id);
     this.#assertNoInFlightActions(task.id);
@@ -597,7 +608,11 @@ export class PlanService {
     }
     this.#assertNoRunningVersions(task.id, source.id);
     this.#assertNoInFlightActions(task.id);
-    const spec = resolvePlanSpec(input, task, this.#capabilities);
+    const spec = resolvePlanSpec(
+      { steps: input.steps, budget: input.budget ?? source.budget },
+      task,
+      this.#capabilities,
+    );
     assertBudgetNotExpanded(spec.budget, source.budget);
 
     for (const step of oldSteps) {

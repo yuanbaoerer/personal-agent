@@ -301,8 +301,12 @@ describe("plan lifecycle", () => {
 
   it("revision supersedes the old version and records a diff", () => {
     const { store, owner, task, service } = setup();
-    const first = service.create(owner.id, task.id, { steps: steps() });
+    const first = service.create(owner.id, task.id, {
+      steps: steps(),
+      budget: { maxSteps: 5 },
+    });
     service.activate(owner.id, first.plan.id);
+    service.pause(owner.id, first.plan.id);
 
     const changed = steps();
     changed[2] = { ...changed[2]!, goal: "summarize with evidence" };
@@ -592,7 +596,10 @@ describe("plan lifecycle", () => {
 describe("plan diff", () => {
   it("detects unchanged, changed, added and removed steps", () => {
     const { owner, task, service } = setup();
-    const first = service.create(owner.id, task.id, { steps: steps() });
+    const first = service.create(owner.id, task.id, {
+      steps: steps(),
+      budget: { maxSteps: 5 },
+    });
     const changed = steps().slice(0, 2);
     changed[0] = { ...changed[0]!, goal: "read more evidence" };
     changed.push({
