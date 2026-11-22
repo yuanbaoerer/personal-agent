@@ -1,6 +1,7 @@
 import type {
   InboxRecord,
   Mandate,
+  OutboxPurpose,
   ProjectBinding,
   ReplyDraft,
   RouterDecision,
@@ -210,6 +211,50 @@ export function isExplicitStateQuery(text: string): boolean {
     return false;
   }
   return STATE_QUERY_PATTERNS.some((pattern) => pattern.test(value));
+}
+
+const EXPLICIT_EXECUTION_PATTERN =
+  /(?:开始执行|执行吧|开始做|现在就(?:开始|做|执行)|立即(?:开始|执行|做)|马上(?:开始|执行|做)|照(?:这个|此|刚才的)(?:方案|计划)?(?:执行|做)|按(?:这个|此|刚才的)(?:方案|计划)?(?:执行|做)|确认(?:执行|开始)|创建任务|开工|去做吧)/;
+const REQUEST_VERB_PATTERN =
+  /(?:帮我|给我|替我|麻烦你|请(?:你)?|做一下|执行|开始做|创建|新建|检查|分析|评估|查一下|看一下|写一|整理|生成|跑一下|启动)/;
+const HYPOTHETICAL_PATTERN =
+  /(?:^|[，。！？；、\s])(?:如果|假如|假设|要是|万一|倘若)/;
+const CAPABILITY_QUESTION_PATTERN =
+  /(?:能不能|可不可以|会不会|是否|要不要|该不该|值不值得|行不行|有没有必要)/;
+const DISCUSSION_PATTERN =
+  /(?:(?:先|我们|咱们)?(?:讨论|聊聊|商量|想想|考虑)(?:一下)?|头脑风暴)/;
+const NEGATED_ACTION_PATTERN =
+  /(?:不要|别|不用|不必|不|先不|暂时不|先别|无需|勿)(?:帮我|给我|去|现在|马上|直接)?(?:执行|开始|创建|做|跑|启动|写|发)/;
+
+/**
+ * True for a message that only explores, supposes or declines work. The
+ * program uses this as a narrow guard: even if the model emits create_task,
+ * a hypothetical/negated/discussion-only message must not create a Task.
+ * An explicit execution marker always wins.
+ */
+export function isDiscussionOnly(text: string): boolean {
+  const value = text.trim();
+  if (value.length === 0) {
+    return false;
+  }
+  // "不要创建任务" contains an execution word; negation must win first.
+  if (NEGATED_ACTION_PATTERN.test(value)) {
+    return true;
+  }
+  if (EXPLICIT_EXECUTION_PATTERN.test(value)) {
+    return false;
+  }
+  // Framing the whole message as a hypothesis or a discussion wins over
+  // verbs inside it; only an explicit start marker (handled above) escapes.
+  if (HYPOTHETICAL_PATTERN.test(value) || DISCUSSION_PATTERN.test(value)) {
+    return true;
+  }
+  // A concrete request ("能不能帮我检查一下") is an execution request even
+  // when phrased as a question.
+  if (REQUEST_VERB_PATTERN.test(value)) {
+    return false;
+  }
+  return CAPABILITY_QUESTION_PATTERN.test(value);
 }
 
 export function normalizeGithubCriteria(
@@ -718,6 +763,16 @@ export class Router implements InboundHandler {
     context: { ownerId: string; conversationId: string; inboxId: string; text: string },
   ): Promise<EffectOutcome> {
     const now = this.#now().toISOString();
+    if (decision.action === "create_task" && isDiscussionOnly(context.text)) {
+      // A model can mistake a hypothetical or a discussion for a mandate.
+      // The program keeps that boundary deterministic and non-destructive.
+      this.#reply(
+        context,
+        "这看起来还在讨论或假设阶段，我先不创建任务。要我实际开始，请明确说“开始执行”并说明范围。",
+        "clarify",
+      );
+      return { status: "done" };
+    }
     if (
       decision.action !== "reply" &&
       decision.action !== "query_status" &&
@@ -790,7 +845,11 @@ export class Router implements InboundHandler {
           this.#answerStateQuery(context);
           return { status: "done" };
         }
-        this.#reply(context, decision.text || "已收到。");
+        this.#reply(
+          context,
+          decision.text || "已收到。",
+          decision.replyKind === "clarify" ? "clarify" : "result",
+        );
         return { status: "done" };
       }
       case "create_task": {
@@ -2174,7 +2233,7 @@ export class Router implements InboundHandler {
   #reply(
     context: { ownerId: string; conversationId: string; inboxId: string },
     text: string,
-    purpose: "ack" | "status" | "failure" = "ack",
+    purpose: OutboxPurpose = "ack",
   ): void {
     const conversation = this.#store.getConversation(context.conversationId);
     if (conversation === undefined) {

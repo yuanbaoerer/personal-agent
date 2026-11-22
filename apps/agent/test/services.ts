@@ -11,7 +11,7 @@ import { createGithubPlugin } from "../src/plugins/github.ts";
 import { ExtensionService } from "../src/plugins/service.ts";
 import type { BuiltinPlugin } from "../src/plugins/types.ts";
 import type { SkillRuntime } from "../src/plugins/skills-contract.ts";
-import { Router, StaticRouterModel } from "../src/coordinator/router.ts";
+import { Router, StaticRouterModel, type RouterModel } from "../src/coordinator/router.ts";
 import { IngressService } from "../src/coordinator/ingress.ts";
 import { TaskService } from "../src/coordinator/tasks.ts";
 import { EffectDispatcher } from "../src/delivery/effects.ts";
@@ -86,6 +86,8 @@ export function createServices(options: {
   maxTaskAttempts?: number;
   actionTtlMs?: number;
   model?: StaticRouterModel;
+  /** Scripted/capture model that is not the StaticRouterModel facade. */
+  routerModel?: RouterModel;
   github?: GitHubReadConfig;
   githubIssueWrite?: { credentialRef: string };
   builtinPlugins?: readonly BuiltinPlugin[];
@@ -249,6 +251,7 @@ export function createServices(options: {
   const memory = new MemoryService({ store, memories, now });
   const confirmation = new ConfirmationService({ store, confirmations, now });
   const model = options.model ?? new StaticRouterModel();
+  const activeModel = options.routerModel ?? model;
   const router = new Router({
     store,
     tasks,
@@ -263,7 +266,7 @@ export function createServices(options: {
     schedulePolicy,
     state,
     budget,
-    model,
+    model: activeModel,
     wake,
     now,
     capabilities: catalog,
