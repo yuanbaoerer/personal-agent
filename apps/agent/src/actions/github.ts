@@ -316,7 +316,7 @@ export class GitHubReadTool implements ActionTool {
     const repo = canonical.repo as string;
     const limit = canonical.limit as number;
     const deadline = Date.now() + this.#config.timeoutMs;
-    const token = await this.#resolveToken(canonical, operation, deadline);
+    const token = await this.#resolveToken(canonical, operation, deadline, context);
     const projectEvidence =
       typeof canonical.projectKey === "string"
         ? {
@@ -415,6 +415,7 @@ export class GitHubReadTool implements ActionTool {
     canonical: Record<string, unknown>,
     operation: GitHubOperation,
     deadline: number,
+    context?: ToolExecutionContext,
   ): Promise<string> {
     if (
       canonical.projectKey !== undefined &&
@@ -441,6 +442,10 @@ export class GitHubReadTool implements ActionTool {
         credential = await this.#config.credentials.resolve(
           binding.credentialRef,
           ["repository.read"],
+          {
+            ...(context?.ownerId === undefined ? {} : { ownerId: context.ownerId }),
+            repositoryId: binding.repositoryId,
+          },
         );
       } catch (error) {
         if (

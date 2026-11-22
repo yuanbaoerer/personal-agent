@@ -224,13 +224,13 @@ export function createApp(deps: AppDeps): AppServices {
     confirmation,
     preauthorization,
     schedulePolicy,
-    projects,
     state,
     budget,
     model: deps.model,
     wake: deps.wake,
     now: deps.now,
     capabilities: catalog,
+    projects,
   });
 
   const effectDispatcher = new EffectDispatcher({ effects });

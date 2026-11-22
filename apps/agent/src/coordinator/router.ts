@@ -1,6 +1,7 @@
 import type {
   InboxRecord,
   Mandate,
+  ProjectBinding,
   ReplyDraft,
   RouterDecision,
   SchedulePolicyRecord,
@@ -11,7 +12,6 @@ import type {
 } from "../domain/types.ts";
 import type { ActionRepository } from "../storage/actions.ts";
 import type { EffectRepository } from "../storage/effects.ts";
-import type { ProjectRepository } from "../storage/projects.ts";
 import type { TaskRepository } from "../storage/tasks.ts";
 import type { Store } from "../storage/store.ts";
 import type { MemoryService } from "../personal/memory.ts";
@@ -70,6 +70,15 @@ export interface RouterModel {
   decide(input: RouterInput, capabilities?: CapabilityView): Promise<RouterDecision>;
 }
 
+/**
+ * Read-only view of owner project bindings. The Router never guesses a
+ * repository: a project key or full name must resolve to an active binding.
+ */
+export interface ProjectCatalog {
+  list(ownerId: string, status?: "active"): ProjectBinding[];
+  findActiveByKey(ownerId: string, projectKey: string): ProjectBinding | undefined;
+}
+
 /** Deterministic model used by tests and by the local Node fallback. */
 export class StaticRouterModel implements RouterModel {
   readonly #decisions: RouterDecision[] = [];
@@ -99,7 +108,6 @@ export interface RouterDeps {
   confirmation: ConfirmationService;
   preauthorization: PreauthorizationService;
   schedulePolicy?: SchedulePolicyService;
-  projects?: ProjectRepository;
   state: StateReadService;
   budget?: BudgetService;
   model: RouterModel;
@@ -108,6 +116,8 @@ export interface RouterDeps {
   defaultTimezone?: string;
   /** Live catalog; models may only request currently enabled capabilities. */
   capabilities?: CapabilityView;
+  /** Owner project bindings used to resolve projectKeys deterministically. */
+  projects?: ProjectCatalog;
 }
 
 const GITHUB_REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -145,7 +155,7 @@ function extractGithubRepo(text: string, requireUrl = false): string | undefined
 }
 
 const PROJECT_REVIEW_PATTERN =
-  /(?:项目(?:评估|审查|复盘|检查)|(?:评估|检查|审查).{0,10}(?:项目|开发进展|完成度)|对照(?:规划|计划).{0,10}(?:实现|完成|差距)|实施评估)/;
+  /(?:项目(?:评估|审查|复盘|检查|进展|状态|实施情况|完成度|差距)|(?:评估|检查|审查|复盘|对照).{0,40}(?:项目|开发进展|完成度|实施情况|实现差距|规划)|最新实施(?:情况|状态)|对照(?:规划|计划).{0,20}(?:实现|完成|差距|进展)|实施评估)/;
 
 /** Deterministic Skill binding for an explicit project-review request. */
 export function wantsProjectReview(text: string): boolean {
@@ -184,7 +194,7 @@ export function normalizeGithubCriteria(
   ownerText: string,
   mandateTools: readonly string[],
   skills: readonly string[] = [],
-  boundRepo?: string,
+  project?: ProjectBinding,
 ): string {
   if (!mandateTools.includes("github.read")) {
     return criteria;
@@ -199,7 +209,7 @@ export function normalizeGithubCriteria(
     // Plain text is replaced below once a repo is known.
   }
   const repo =
-    boundRepo?.toLowerCase() ??
+    project?.repositoryFullName.toLowerCase() ??
     extractGithubRepo(ownerText) ??
     extractGithubRepo(goal) ??
     (typeof parsed.repo === "string" && GITHUB_REPO_PATTERN.test(parsed.repo)
@@ -222,9 +232,148 @@ export function normalizeGithubCriteria(
       ? "project-review"
       : "github-read",
     repo,
+    ...(project === undefined
+      ? {}
+      : {
+          repositoryId: project.repositoryId,
+          projectKey: project.projectKey,
+          defaultBranch: project.defaultBranch,
+          allowedPlanPaths: project.allowedPlanPaths,
+          projectBindingVersion: project.version,
+          credentialRef: project.credentialRef,
+        }),
     requiredEvidenceKinds: [...required],
     requireStructuredClaims: true,
   });
+}
+
+export type ProjectMentionResolution =
+  | { status: "resolved"; project: ProjectBinding }
+  | { status: "none" }
+  | {
+      status: "missing" | "ambiguous" | "unavailable";
+      requested?: string;
+      projectKeys: string[];
+    };
+
+/**
+ * Resolve a project mention without a model. Explicit `--project=` wins, then
+ * an exact owner/name binding, then an exact projectKey token. Multiple
+ * matches and unbound names are reported, never guessed.
+ */
+export function resolveProjectMention(input: {
+  text: string;
+  ownerId: string;
+  requested?: string;
+  projects?: ProjectCatalog;
+  requireProject: boolean;
+}): ProjectMentionResolution {
+  const catalog = input.projects;
+  const active = catalog?.list(input.ownerId, "active") ?? [];
+  const projectKeys = active.map((project) => project.projectKey).sort();
+  if (active.length === 0) {
+    return input.requireProject || /项目|project/i.test(input.text)
+      ? { status: "unavailable", projectKeys }
+      : { status: "none" };
+  }
+  const explicit = extractProjectFlag(input.text);
+  if (explicit !== undefined) {
+    const project = active.find(
+      (candidate) => candidate.projectKey === explicit.toLowerCase(),
+    );
+    return project === undefined
+      ? { status: "missing", requested: explicit, projectKeys }
+      : { status: "resolved", project };
+  }
+
+  const matches = new Map<string, ProjectBinding>();
+  const lower = input.text.toLowerCase();
+  for (const project of active) {
+    if (
+      lower.includes(project.repositoryFullName.toLowerCase()) ||
+      new RegExp(
+        `(^|[^a-z0-9._-])${escapeRegExp(project.projectKey)}([^a-z0-9._-]|$)`,
+        "i",
+      ).test(input.text)
+    ) {
+      matches.set(project.id, project);
+    }
+  }
+
+  // A model-supplied project may narrow an ambiguous message, but it may not
+  // override a different project the owner named explicitly.
+  const requested = input.requested?.trim().toLowerCase();
+  if (requested !== undefined && requested.length > 0) {
+    const project = active.find((candidate) => candidate.projectKey === requested);
+    if (project === undefined) {
+      return { status: "missing", requested, projectKeys };
+    }
+    if (matches.size > 1) {
+      return {
+        status: "ambiguous",
+        projectKeys: [...matches.values()]
+          .map((candidate) => candidate.projectKey)
+          .sort(),
+      };
+    }
+    const mentioned = [...matches.values()][0];
+    if (mentioned !== undefined && mentioned.id !== project.id) {
+      return {
+        status: "ambiguous",
+        projectKeys: [mentioned.projectKey, project.projectKey].sort(),
+      };
+    }
+    return { status: "resolved", project };
+  }
+
+  if (matches.size === 1) {
+    return { status: "resolved", project: [...matches.values()][0] as ProjectBinding };
+  }
+  if (matches.size > 1) {
+    return {
+      status: "ambiguous",
+      projectKeys: [...matches.values()].map((project) => project.projectKey).sort(),
+    };
+  }
+  const unboundRepo = extractGithubRepo(input.text);
+  if (unboundRepo !== undefined) {
+    return { status: "missing", requested: unboundRepo, projectKeys };
+  }
+  if (input.requireProject || /项目|project/i.test(input.text)) {
+    const named = /([a-z0-9][a-z0-9._-]{0,63})\s*项目/i.exec(input.text)?.[1];
+    return {
+      status: "missing",
+      ...(requested !== undefined
+        ? { requested }
+        : named === undefined
+          ? {}
+          : { requested: named }),
+      projectKeys,
+    };
+  }
+  return { status: "none" };
+}
+
+export function describeProjectResolutionFailure(
+  resolution: Extract<ProjectMentionResolution, { status: "missing" | "ambiguous" | "unavailable" }>,
+): string {
+  if (resolution.status === "unavailable") {
+    return "没有可用的 GitHub 项目绑定；请主人先用 `pa projects bind` 绑定项目（immutable repositoryId）。";
+  }
+  if (resolution.status === "ambiguous") {
+    return `项目名称不唯一：${resolution.projectKeys.join(", ")}。请用 --project=<projectKey> 指定。`;
+  }
+  const available =
+    resolution.projectKeys.length === 0
+      ? ""
+      : ` 可用项目：${resolution.projectKeys.join(", ")}。`;
+  return resolution.requested === undefined
+    ? `请指定要检查的 projectKey。${available}`
+    : `找不到项目 ${resolution.requested} 的 active 绑定，或该仓库未授权。${available}`;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /**
@@ -333,7 +482,6 @@ export class Router implements InboundHandler {
   readonly #confirmation: ConfirmationService;
   readonly #preauthorization: PreauthorizationService;
   readonly #schedulePolicy?: SchedulePolicyService;
-  readonly #projects?: ProjectRepository;
   readonly #state: StateReadService;
   readonly #stateQuery: StateQueryHandler;
   readonly #personalIntents: PersonalIntentHandler;
@@ -343,6 +491,7 @@ export class Router implements InboundHandler {
   readonly #now: () => Date;
   readonly #timezone: string;
   readonly #capabilities?: CapabilityView;
+  readonly #projects?: ProjectCatalog;
 
   constructor(deps: RouterDeps) {
     this.#store = deps.store;
@@ -356,7 +505,6 @@ export class Router implements InboundHandler {
     this.#confirmation = deps.confirmation;
     this.#preauthorization = deps.preauthorization;
     this.#schedulePolicy = deps.schedulePolicy;
-    this.#projects = deps.projects;
     this.#state = deps.state;
     this.#budget = deps.budget;
     this.#model = deps.model;
@@ -364,6 +512,7 @@ export class Router implements InboundHandler {
     this.#now = deps.now ?? (() => new Date());
     this.#timezone = deps.defaultTimezone ?? "Asia/Shanghai";
     this.#capabilities = deps.capabilities;
+    this.#projects = deps.projects;
     this.#stateQuery = new StateQueryHandler({
       tasks: deps.tasks,
       state: deps.state,
@@ -625,34 +774,78 @@ export class Router implements InboundHandler {
           },
           this.#capabilities,
         );
-        const mandate = this.#constrainMandate(requestedMandate);
+        const reviewIntent = wantsProjectReview(context.text);
+        let mandate = this.#constrainMandate(requestedMandate);
         if (
-          mandate.tools.includes("github.read") &&
-          wantsProjectReview(context.text)
+          mandate.tools.includes("github.read") ||
+          reviewIntent
         ) {
-          mandate.skills = [
-            ...new Set([
-              ...(mandate.skills ?? []),
-              "github.project-review",
-            ]),
-          ];
+          const resolution = resolveProjectMention({
+            text: context.text,
+            ownerId: context.ownerId,
+            requested: mandate.project,
+            projects: this.#projects,
+            requireProject: reviewIntent,
+          });
+          if (resolution.status === "resolved") {
+            mandate.project = resolution.project.projectKey;
+          } else if (resolution.status !== "none") {
+            this.#reply(
+              context,
+              describeProjectResolutionFailure(resolution),
+              "failure",
+            );
+            return { status: "done" };
+          }
+          if (reviewIntent) {
+            if (resolution.status !== "resolved") {
+              this.#reply(
+                context,
+                "请指定要检查的 projectKey，例如 `检查 personal-agent 项目的最新实施情况`。",
+                "failure",
+              );
+              return { status: "done" };
+            }
+            if (!mandate.tools.includes("github.read")) {
+              // An explicit read-only project review needs the GitHub read
+              // capability; add it only when the live catalog still offers it.
+              mandate = this.#constrainMandate(
+                ensureMandateResources(
+                  {
+                    ...mandate,
+                    tools: [...new Set([...mandate.tools, "github.read"])],
+                  },
+                  this.#capabilities,
+                ),
+              );
+            }
+            if (!mandate.tools.includes("github.read")) {
+              this.#reply(
+                context,
+                "GitHub 只读能力当前未启用；请先由主人启用 github 插件。",
+                "failure",
+              );
+              return { status: "done" };
+            }
+            mandate.skills = [
+              ...new Set([
+                ...(mandate.skills ?? []),
+                "github.project-review",
+              ]),
+            ];
+          }
         }
-        let boundRepo: string | undefined;
-        if (mandate.skills?.includes("github.project-review") === true) {
-          const project = mandate.project === undefined
+        const project =
+          mandate.project === undefined
             ? undefined
-            : this.#projects?.findActiveByKey(context.ownerId, mandate.project.toLowerCase());
-          if (project === undefined) {
-            this.#reply(context, "请用 --project=<项目键> 指定一个已绑定的项目。", "failure");
-            return { status: "done" };
-          }
-          const ownerRepo = extractGithubRepo(context.text, true);
-          if (ownerRepo !== undefined && ownerRepo !== project.repositoryFullName.toLowerCase()) {
-            this.#reply(context, "指定的 GitHub 仓库与项目绑定不一致，请确认审查目标。", "failure");
-            return { status: "done" };
-          }
-          mandate.project = project.projectKey;
-          boundRepo = project.repositoryFullName;
+            : this.#projects?.findActiveByKey(context.ownerId, mandate.project);
+        if (reviewIntent && project === undefined) {
+          this.#reply(
+            context,
+            "项目绑定在创建任务前失效；请重新检查项目绑定后重试。",
+            "failure",
+          );
+          return { status: "done" };
         }
         if (requested.tools.length > 0 && mandate.tools.length === 0) {
           this.#reply(
@@ -674,7 +867,7 @@ export class Router implements InboundHandler {
               context.text,
               mandate.tools,
               mandate.skills ?? [],
-              boundRepo,
+              project,
             ),
             mandate.tools,
           ),

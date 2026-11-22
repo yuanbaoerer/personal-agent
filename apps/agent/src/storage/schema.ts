@@ -476,6 +476,25 @@ const migrations: readonly (readonly string[])[] = [
     `CREATE INDEX pa_projects_owner_idx
        ON pa_projects (owner_id, status, project_key)`,
   ],
+  [
+    // Non-secret credential metadata. Tokens stay in the encrypted OAuth
+    // vault or process environment; this row binds ref, owner, plugin,
+    // account, scopes, repository ids and the rotation epoch.
+    `CREATE TABLE pa_credential_refs (
+      ref TEXT PRIMARY KEY,
+      owner_id TEXT REFERENCES pa_identities(id),
+      plugin_id TEXT,
+      account TEXT,
+      scopes_json TEXT NOT NULL,
+      repository_ids_json TEXT NOT NULL DEFAULT '[]',
+      status TEXT NOT NULL CHECK (status IN ('active', 'revoked')),
+      version INTEGER NOT NULL CHECK (version >= 1),
+      expires_at TEXT,
+      updated_at TEXT NOT NULL
+    ) STRICT`,
+    `CREATE INDEX pa_credential_refs_owner_idx
+       ON pa_credential_refs (owner_id, plugin_id, status)`,
+  ],
 ];
 
 /** Highest schema version this build can read/migrate. */

@@ -219,13 +219,13 @@ export function createServices(options: {
     confirmation,
     preauthorization,
     schedulePolicy,
-    projects,
     state,
     budget,
     model,
     wake,
     now,
     capabilities: catalog,
+    projects,
   });
 
   const effectDispatcher = new EffectDispatcher({ effects, now, maxAttempts: 20 });

@@ -3,6 +3,7 @@ import { dirname, resolve } from "node:path";
 
 import { createApp } from "./app.ts";
 import { CredentialBroker } from "./actions/credentials.ts";
+import { CredentialRepository } from "./storage/credentials.ts";
 import { createGithubPlugin } from "./plugins/github.ts";
 import { connectMcpPlugins, parseMcpServers } from "./plugins/mcp.ts";
 import { FileSkillRuntime } from "./plugins/skills.ts";
@@ -195,12 +196,37 @@ async function main(): Promise<void> {
         ? undefined
         : () => config.github.token
       : () => githubOAuth.accessToken();
-  const credentials = new CredentialBroker();
+  const credentials = new CredentialBroker(
+    () => new Date(),
+    new CredentialRepository(store.db),
+  );
+  const githubCredentialMetadata: {
+    ownerId?: string;
+    pluginId: string;
+    account: string;
+    scopes: string[];
+  } = {
+    ...(owner === undefined ? {} : { ownerId: owner.id }),
+    pluginId: "github",
+    account: owner === undefined ? "default" : owner.id,
+    scopes: ["repository.read"],
+  };
   if (githubCredentialProvider !== undefined) {
-    credentials.register("github:default", {
-      provider: githubCredentialProvider,
-      scopes: ["repository.read"],
-    });
+    if (githubOAuth === undefined) {
+      // A PAT is explicit host configuration; registering re-activates a ref
+      // that was previously revoked and records a new epoch.
+      credentials.register("github:default", {
+        ...githubCredentialMetadata,
+        provider: githubCredentialProvider,
+      });
+    } else {
+      // OAuth revocation must survive a restart. The host only re-attaches
+      // the provider; the stored epoch/revocation state wins.
+      credentials.restore("github:default", {
+        ...githubCredentialMetadata,
+        provider: githubCredentialProvider,
+      });
+    }
   }
   const github = {
     token: config.github.token,
@@ -286,8 +312,8 @@ async function main(): Promise<void> {
         credentials.revoke("github:default");
       } else {
         credentials.rotate("github:default", {
+          ...githubCredentialMetadata,
           provider: githubCredentialProvider,
-          scopes: ["repository.read"],
         });
       }
       await app.plugins.credentialChanged("github", "oauth");

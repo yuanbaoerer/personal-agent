@@ -42,3 +42,11 @@
 - 真实 GitHub 只读查询前：确认 repo 白名单、OAuth/PAT 撤销路径。
 - 激活无人值守周期计划前：#7 预算与 #28 真实工具文本注入负例必须通过。
 - 任何已知越权、重复副作用、凭据泄漏未修复时，不开放高权限工具或公开发布安全声明。
+
+## 5. 2026-11-22 凭据作用域与项目解析补强
+
+- `pa_credential_refs` 只存 ref/owner/plugin/account/repositoryIds/scopes/status/version/expiry，不存 token。
+- 未声明 scopes 的凭据不获得任何 scope；`github:default` 必须显式声明 `repository.read`，`issues.write` 必须由独立 write ref 显式声明。
+- 项目读取同时校验 owner、immutable repositoryId 与 active ProjectBinding；撤销/重启不会复活 OAuth 凭据。
+- Router 不再让模型补猜仓库：projectKey 必须解析到 owner 的 active binding，歧义或未绑定直接拒绝并提示 owner。
+- 现有 E1 覆盖 `credentials.test.ts`、`projects.test.ts`、`github.test.ts`、`router.test.ts`、`completion-verifier.test.ts`；真实 OAuth/PAT 负例仍需 owner 环境。

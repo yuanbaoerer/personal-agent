@@ -1,6 +1,13 @@
+import type { CredentialRepository } from "../storage/credentials.ts";
+
 const CREDENTIAL_REF = /^[a-z][a-z0-9._:-]{0,127}$/;
 const CREDENTIAL_VALUE = /^(?:gh[pousr]_|github_pat_|sk-|xox[abp]-)/i;
 
+/**
+ * Scopes that only read repository data. An undeclared scope list may keep
+ * using these for backward compatibility with earlier `github:default`
+ * configurations. Anything else is privileged and must be declared.
+ */
 export class CredentialUnavailableError extends Error {
   constructor(message: string) {
     super(message);
@@ -22,7 +29,11 @@ export interface CredentialInput {
   provider?: () => string | undefined | Promise<string | undefined>;
   /** Declared scopes. An empty list grants no scopes. */
   scopes?: string[];
+  ownerId?: string;
+  pluginId?: string;
   account?: string;
+  /** Optional repository allow list (GitHub immutable repository ids). */
+  repositoryIds?: number[];
   expiresAt?: string;
 }
 
@@ -31,8 +42,18 @@ export interface CredentialSnapshot {
   status: "active" | "revoked";
   version: number;
   scopes: string[];
+  ownerId?: string;
+  pluginId?: string;
   account?: string;
+  repositoryIds: number[];
   expiresAt?: string;
+}
+
+export interface CredentialResolveOptions {
+  /** The owner asking for the secret; must match a bound credential. */
+  ownerId?: string;
+  /** GitHub immutable repository id for repository-scoped credentials. */
+  repositoryId?: number;
 }
 
 export interface ResolvedCredential {
@@ -40,7 +61,10 @@ export interface ResolvedCredential {
   token: string;
   version: number;
   scopes: string[];
+  ownerId?: string;
+  pluginId?: string;
   account?: string;
+  repositoryIds: number[];
   expiresAt?: string;
 }
 
@@ -48,7 +72,10 @@ interface CredentialEntry {
   token?: string;
   provider?: () => string | undefined | Promise<string | undefined>;
   scopes: string[];
+  ownerId?: string;
+  pluginId?: string;
   account?: string;
+  repositoryIds: number[];
   expiresAt?: string;
   status: "active" | "revoked";
   version: number;
@@ -58,32 +85,96 @@ interface CredentialEntry {
  * Owner-scoped credential references. Project bindings store only the ref;
  * the broker owns the actual secret and its rotation/revocation state. A
  * revoked or expired ref must never fall back to a global token.
+ *
+ * Non-secret metadata is persisted through `CredentialRepository` so a
+ * restart keeps the same epoch. Secrets are re-attached by the host; they are
+ * never written to the metadata table, Task, prompt or logs.
  */
 export class CredentialBroker {
   readonly #entries = new Map<string, CredentialEntry>();
   readonly #now: () => Date;
+  readonly #store?: CredentialRepository;
 
-  constructor(now: () => Date = () => new Date()) {
+  constructor(now: () => Date = () => new Date(), store?: CredentialRepository) {
     this.#now = now;
+    this.#store = store;
+    if (store !== undefined) {
+      for (const metadata of store.list()) {
+        this.#entries.set(metadata.ref, {
+          scopes: [...metadata.scopes],
+          ...(metadata.ownerId === undefined ? {} : { ownerId: metadata.ownerId }),
+          ...(metadata.pluginId === undefined ? {} : { pluginId: metadata.pluginId }),
+          ...(metadata.account === undefined ? {} : { account: metadata.account }),
+          repositoryIds: [...metadata.repositoryIds],
+          ...(metadata.expiresAt === undefined ? {} : { expiresAt: metadata.expiresAt }),
+          status: metadata.status,
+          version: metadata.version,
+        });
+      }
+    }
   }
 
+  /**
+   * Explicit registration or rotation by the host. Always activates the ref
+   * and increments the epoch so approvals bound to the previous version
+   * become stale.
+   */
   register(ref: string, input: CredentialInput): CredentialSnapshot {
     assertRef(ref);
     const previous = this.#entries.get(ref);
+    const normalized = normalizeInput(input);
+    if (previous !== undefined && previous.status === "active" && sameMetadata(previous, normalized)) {
+      // Re-registering an unchanged credential is an attach, not a rotation.
+      this.#attach(ref, previous, normalized);
+      return snapshot(ref, previous);
+    }
     const entry: CredentialEntry = {
-      ...input,
-      token: input.token?.trim() === "" ? undefined : input.token,
-      scopes: normalizeScopes(input.scopes),
+      ...normalized,
+      token: normalized.token?.trim() === "" ? undefined : normalized.token,
       status: "active",
       version: (previous?.version ?? 0) + 1,
     };
     this.#entries.set(ref, entry);
+    this.#persist(ref, entry);
     return snapshot(ref, entry);
   }
 
   /** Rotate the secret while keeping the ref addressable (e.g. OAuth refresh). */
-  rotate(ref: string, input: CredentialInput): CredentialSnapshot {
-    return this.register(ref, input);
+  rotate(ref: string, input: CredentialInput, now?: Date): CredentialSnapshot {
+    assertRef(ref);
+    const previous = this.#entries.get(ref);
+    const at = now ?? this.#now();
+    const entry: CredentialEntry = {
+      ...normalizeInput(input),
+      token: input.token?.trim() === "" ? undefined : input.token,
+      status: "active",
+      version: (previous?.version ?? 0) + 1,
+    };
+    this.#entries.set(ref, entry);
+    this.#persist(ref, entry, at);
+    return snapshot(ref, entry);
+  }
+
+  /**
+   * Startup recovery: keep the persisted epoch and revocation state. A
+   * revoked ref stays revoked even when the host still has a token. Changed
+   * metadata is a rotation, not a silent rewrite.
+   */
+  restore(ref: string, input: CredentialInput): CredentialSnapshot {
+    assertRef(ref);
+    const stored = this.#entries.get(ref);
+    if (stored === undefined) {
+      return this.register(ref, input);
+    }
+    const normalized = normalizeInput(input);
+    if (stored.status === "revoked") {
+      return snapshot(ref, stored);
+    }
+    if (!sameMetadata(stored, normalized)) {
+      return this.rotate(ref, input);
+    }
+    this.#attach(ref, stored, normalized);
+    return snapshot(ref, stored);
   }
 
   revoke(ref: string): boolean {
@@ -95,6 +186,7 @@ export class CredentialBroker {
     entry.version += 1;
     entry.token = undefined;
     entry.provider = undefined;
+    this.#persist(ref, entry);
     return true;
   }
 
@@ -110,12 +202,32 @@ export class CredentialBroker {
   async resolve(
     ref: string,
     requiredScopes: readonly string[] = [],
+    options: CredentialResolveOptions = {},
   ): Promise<ResolvedCredential | undefined> {
     assertRef(ref);
     const entry = this.#entries.get(ref);
     if (entry === undefined || entry.status !== "active") {
       return undefined;
     }
+    if (entry.ownerId !== undefined) {
+      if (options.ownerId !== entry.ownerId) {
+        throw new CredentialScopeError(
+          `credential ${ref} is not owned by the requesting owner`,
+        );
+      }
+    }
+    if (
+      entry.repositoryIds.length > 0 &&
+      (options.repositoryId === undefined ||
+        !entry.repositoryIds.includes(options.repositoryId))
+    ) {
+      throw new CredentialScopeError(
+        `credential ${ref} is not bound to the requested repository`,
+      );
+    }
+    // Undeclared scopes grant nothing. Existing `github:default` configs
+    // declare `repository.read` explicitly, so this stays compatible while
+    // never inferring an unknown permission.
     const expiresAt = entry.expiresAt === undefined ? Infinity : Date.parse(entry.expiresAt);
     if (!(expiresAt > this.#now().getTime())) {
       return undefined;
@@ -130,6 +242,7 @@ export class CredentialBroker {
         );
       }
     }
+
     let token: string | undefined;
     try {
       token =
@@ -154,11 +267,36 @@ export class CredentialBroker {
       token: token.trim(),
       version: entry.version,
       scopes: [...entry.scopes],
-      account: entry.account,
+      ...(entry.ownerId === undefined ? {} : { ownerId: entry.ownerId }),
+      ...(entry.pluginId === undefined ? {} : { pluginId: entry.pluginId }),
+      ...(entry.account === undefined ? {} : { account: entry.account }),
+      repositoryIds: [...entry.repositoryIds],
       expiresAt: entry.expiresAt,
     };
   }
+
+  #attach(ref: string, entry: CredentialEntry, input: CredentialEntry): void {
+    entry.token = input.token?.trim() === "" ? undefined : input.token;
+    entry.provider = input.provider;
+    this.#persist(ref, entry);
+  }
+
+  #persist(ref: string, entry: CredentialEntry, at?: Date): void {
+    this.#store?.upsert({
+      ref,
+      scopes: [...entry.scopes],
+      repositoryIds: [...entry.repositoryIds],
+      status: entry.status,
+      version: entry.version,
+      ...(entry.ownerId === undefined ? {} : { ownerId: entry.ownerId }),
+      ...(entry.pluginId === undefined ? {} : { pluginId: entry.pluginId }),
+      ...(entry.account === undefined ? {} : { account: entry.account }),
+      ...(entry.expiresAt === undefined ? {} : { expiresAt: entry.expiresAt }),
+      updatedAt: (at ?? this.#now()).toISOString(),
+    });
+  }
 }
+
 
 function assertRef(ref: string): void {
   if (!CREDENTIAL_REF.test(ref) || CREDENTIAL_VALUE.test(ref)) {
@@ -168,11 +306,59 @@ function assertRef(ref: string): void {
   }
 }
 
+function normalizeInput(input: CredentialInput): CredentialEntry {
+  return {
+    token: input.token,
+    provider: input.provider,
+    scopes: normalizeScopes(input.scopes),
+    ...(input.ownerId === undefined ? {} : { ownerId: input.ownerId }),
+    ...(input.pluginId === undefined ? {} : { pluginId: input.pluginId }),
+    ...(input.account === undefined ? {} : { account: input.account }),
+    repositoryIds: normalizeRepositoryIds(input.repositoryIds),
+    ...(input.expiresAt === undefined ? {} : { expiresAt: input.expiresAt }),
+    status: "active",
+    version: 0,
+  };
+}
+
 function normalizeScopes(scopes: string[] | undefined): string[] {
   if (scopes === undefined) {
     return [];
   }
   return [...new Set(scopes.map((scope) => scope.trim()).filter((scope) => scope.length > 0))];
+}
+
+function normalizeRepositoryIds(ids: number[] | undefined): number[] {
+  if (ids === undefined) {
+    return [];
+  }
+  return [
+    ...new Set(
+      ids.filter(
+        (id) => Number.isSafeInteger(id) && id > 0,
+      ),
+    ),
+  ];
+}
+
+function sameMetadata(left: CredentialEntry, right: CredentialEntry): boolean {
+  return (
+    left.ownerId === right.ownerId &&
+    left.pluginId === right.pluginId &&
+    left.account === right.account &&
+    left.expiresAt === right.expiresAt &&
+    sameList(left.scopes, right.scopes) &&
+    sameList(left.repositoryIds, right.repositoryIds)
+  );
+}
+
+function sameList(left: readonly string[] | readonly number[], right: readonly string[] | readonly number[]): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+  const a = [...left].map(String).sort();
+  const b = [...right].map(String).sort();
+  return a.every((value, index) => value === b[index]);
 }
 
 function snapshot(ref: string, entry: CredentialEntry): CredentialSnapshot {
@@ -181,7 +367,10 @@ function snapshot(ref: string, entry: CredentialEntry): CredentialSnapshot {
     status: entry.status,
     version: entry.version,
     scopes: [...entry.scopes],
-    account: entry.account,
+    ...(entry.ownerId === undefined ? {} : { ownerId: entry.ownerId }),
+    ...(entry.pluginId === undefined ? {} : { pluginId: entry.pluginId }),
+    ...(entry.account === undefined ? {} : { account: entry.account }),
+    repositoryIds: [...entry.repositoryIds],
     expiresAt: entry.expiresAt,
   };
 }

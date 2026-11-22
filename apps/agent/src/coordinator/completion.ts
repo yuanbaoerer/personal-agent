@@ -48,6 +48,9 @@ export type CompletionVerifierFn = (context: CompletionContext) => CompletionVer
 interface Criteria {
   verifier?: string;
   repo?: string;
+  repositoryId?: number;
+  projectKey?: string;
+  projectBindingVersion?: number;
   requiredEvidenceKinds: string[];
   /** New Router tasks require machine-checkable fact claims. */
   requireStructuredClaims: boolean;
@@ -71,6 +74,22 @@ function parseCriteria(text: string): Criteria {
   return {
     verifier: typeof record.verifier === "string" ? record.verifier : undefined,
     repo: typeof record.repo === "string" ? record.repo.toLowerCase() : undefined,
+    repositoryId:
+      typeof record.repositoryId === "number" &&
+      Number.isSafeInteger(record.repositoryId) &&
+      record.repositoryId > 0
+        ? record.repositoryId
+        : undefined,
+    projectKey:
+      typeof record.projectKey === "string" && record.projectKey.length > 0
+        ? record.projectKey
+        : undefined,
+    projectBindingVersion:
+      typeof record.projectBindingVersion === "number" &&
+      Number.isSafeInteger(record.projectBindingVersion) &&
+      record.projectBindingVersion > 0
+        ? record.projectBindingVersion
+        : undefined,
     requiredEvidenceKinds: Array.isArray(record.requiredEvidenceKinds)
       ? record.requiredEvidenceKinds.filter(
           (item): item is string => typeof item === "string",
@@ -1304,6 +1323,47 @@ export class TaskCompletionVerifier {
         {
           checked: [...structural.checked, "github_action_receipt"],
           missing: ["structured finding"],
+          evidenceRefs,
+          externalFactsVerified: false,
+        },
+        at,
+      );
+    }
+    // The task's completion criteria is bound to one active ProjectBinding.
+    // Findings for another repository or project cannot be accepted even
+    // when each individual receipt exists.
+    const bindingMissing: string[] = [];
+    if (
+      structural.criteria.projectKey !== undefined &&
+      task.mandate.project === undefined
+    ) {
+      bindingMissing.push("project_review:criteria_project_not_in_mandate");
+    }
+    if (
+      structural.criteria.projectKey !== undefined &&
+      task.mandate.project !== undefined &&
+      structural.criteria.projectKey.toLowerCase() !==
+        task.mandate.project.toLowerCase()
+    ) {
+      bindingMissing.push("project_review:criteria_project_mismatch");
+    }
+    if (
+      structural.criteria.repositoryId !== undefined &&
+      findings.some(
+        (finding) =>
+          finding.repositoryId !== structural.criteria.repositoryId,
+      )
+    ) {
+      bindingMissing.push("project_review:repository_id_mismatch");
+    }
+    if (bindingMissing.length > 0) {
+      return this.#verdict(
+        "project-review",
+        "needs_review",
+        "project review findings are outside the bound project",
+        {
+          checked: [...structural.checked, "github_action_receipt", "project_review:binding_criteria"],
+          missing: bindingMissing,
           evidenceRefs,
           externalFactsVerified: false,
         },
