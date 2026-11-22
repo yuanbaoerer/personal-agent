@@ -437,7 +437,12 @@ function actionArgs(draft: IssueDraftSnapshot): Record<string, unknown> {
     idempotencyKey: draft.idempotencyKey,
   };
   if (draft.action === "create") {
-    return { ...base, title: draft.title, body: draft.body };
+    return {
+      ...base,
+      title: draft.title,
+      body: draft.body,
+      notBefore: draft.createdAt,
+    };
   }
   if (draft.action === "comment") {
     return {

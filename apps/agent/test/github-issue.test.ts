@@ -416,3 +416,33 @@ describe("typed GitHub issue writes", () => {
     assert.equal(fake.requests.length, 0);
   });
 });
+
+describe("issue write idempotency robustness", () => {
+  it("keeps the marker discoverable and verifies a long body", async () => {
+    const { fake, byName, context, version } = fixture();
+    const tool = byName.get("github.issue.create");
+    assert.ok(tool);
+    const body = `long body ${"x".repeat(10_000)}`;
+    const args = base(version, {
+      title: "Long issue",
+      body,
+      idempotencyKey: "d".repeat(32),
+    });
+    const first = await tool.execute(args, context);
+    assert.equal(first.evidence.verified, true);
+    const issue = fake.issues.find(
+      (item) => item.number === first.evidence.issueNumber,
+    );
+    assert.ok(issue);
+    assert.ok(String(issue.body).startsWith("<!-- personal-agent:"));
+    assert.ok(String(issue.body).endsWith(body));
+    const replay = await tool.execute(args, context);
+    assert.equal(replay.evidence.issueNumber, first.evidence.issueNumber);
+    assert.equal(
+      fake.requests.filter(
+        (request) => request.method === "POST" && request.path.endsWith("/issues"),
+      ).length,
+      1,
+    );
+  });
+});

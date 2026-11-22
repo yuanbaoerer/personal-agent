@@ -137,7 +137,7 @@ export class IssueDraftService {
       const beforeHash =
         before === undefined
           ? draft.beforeHash
-          : issueBeforeHash(before.title, before.body);
+          : (before.beforeHash ?? issueBeforeHash(before.title, before.body));
       if (draft.action === "update" && beforeHash === undefined) {
         continue;
       }
@@ -460,8 +460,11 @@ function stableJson(value: Record<string, unknown>): string {
 
 function issueBodies(
   actions: readonly ActionRecord[],
-): Map<number, { title: string; body: string }> {
-  const bodies = new Map<number, { title: string; body: string }>();
+): Map<number, { title: string; body: string; beforeHash?: string }> {
+  const bodies = new Map<
+    number,
+    { title: string; body: string; beforeHash?: string }
+  >();
   for (const action of actions) {
     if (action.status !== "succeeded" || action.tool !== "github.read") {
       continue;
@@ -490,7 +493,13 @@ function issueBodies(
         typeof record.title === "string" &&
         !bodies.has(record.number)
       ) {
-        bodies.set(record.number, { title: record.title, body: record.body });
+        bodies.set(record.number, {
+          title: record.title,
+          body: record.body,
+          ...(typeof record.beforeHash === "string"
+            ? { beforeHash: record.beforeHash }
+            : {}),
+        });
       }
     }
   }

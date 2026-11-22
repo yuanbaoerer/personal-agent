@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { describe, it } from "node:test";
 
 import { GitHubReadTool, type GitHubProjectBinding } from "../src/actions/github.ts";
@@ -1100,5 +1101,41 @@ describe("read-only GitHub connector", () => {
     });
     assert.ok(action);
     assert.equal(calls.length, 0);
+  });
+});
+
+
+describe("issue beforeHash title fidelity", () => {
+  it("hashes the full title rather than the display-truncated title", async () => {
+    const longTitle = `T${"i".repeat(240)}`;
+    const body = "body";
+    const tool = new GitHubReadTool({
+      token: "secret-token",
+      allowedRepos: ["owner/repo"],
+      resolveProject,
+      fetch: (async () =>
+        new Response(
+          JSON.stringify({
+            number: 60,
+            title: longTitle,
+            body,
+            state: "open",
+            user: { login: "owner" },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        )) as typeof fetch,
+    });
+    const result = await tool.execute({
+      operation: "issue",
+      projectKey: BINDING.projectKey,
+      repo: "owner/repo",
+      number: 60,
+    });
+    const item = result.evidence.item as Record<string, unknown>;
+    assert.match(String(item.title), /…$/);
+    assert.equal(
+      item.beforeHash,
+      createHash("sha256").update(`${longTitle}\n${body}`).digest("hex"),
+    );
   });
 });

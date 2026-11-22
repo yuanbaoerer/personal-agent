@@ -1092,7 +1092,7 @@ function mapIssue(record: Record<string, unknown>): Record<string, unknown> {
     beforeHash:
       body !== undefined && body.length <= 4_000 && record.pull_request === undefined
         ? createHash("sha256")
-            .update(`${firstLine(stringValue(record.title))}\n${body}`)
+            .update(`${stringValue(record.title) ?? ""}\n${body}`)
             .digest("hex")
         : undefined,
     labels,
