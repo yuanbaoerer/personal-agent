@@ -640,8 +640,12 @@ const migrations: readonly (readonly MigrationStatement[])[] = [
     // ALTER must be conditional. Existing plan children are backfilled to
     // the parent-task lineage instead of keeping a per-plan-row counter.
     (db) => {
-      const columns = db.all<{ name: string }>("PRAGMA table_info(pa_tasks)");
-      if (!columns.some((column) => column.name === "budget_key")) {
+      // sqlite_master is queryable on both node:sqlite and Durable Object
+      // SQLite; PRAGMA statements are not uniformly available.
+      const table = db.all<{ sql: string | null }>(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'pa_tasks'",
+      )[0];
+      if (table?.sql !== null && !/\bbudget_key\b/i.test(table?.sql ?? "")) {
         db.exec("ALTER TABLE pa_tasks ADD COLUMN budget_key TEXT");
       }
     },
