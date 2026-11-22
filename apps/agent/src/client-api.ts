@@ -1071,11 +1071,47 @@ export class ClientApiService {
 
   #replanPlan(id: string, request: ClientApiRequest): ClientApiResponse {
     const body = parseJsonBody(request);
+    if (
+      body.stopOpenSteps !== undefined &&
+      typeof body.stopOpenSteps !== "boolean"
+    ) {
+      throw new ApiError(400, "invalid_request", "stopOpenSteps must be a boolean");
+    }
+    const source = this.#services.planService.get(this.#ownerId, id);
+    const runningTaskIds = (source?.steps ?? [])
+      .filter((step) => step.status === "running" && step.taskId !== undefined)
+      .map((step) => step.taskId as string);
     try {
-      const view = this.#services.planService.replan(this.#ownerId, id, {
-        steps: parsePlanSteps(body.steps),
-        budget: parsePlanBudget(body.budget),
-      });
+      const view = this.#services.planService.replan(
+        this.#ownerId,
+        id,
+        {
+          steps: parsePlanSteps(body.steps),
+          budget: parsePlanBudget(body.budget),
+        },
+        { stopOpenSteps: body.stopOpenSteps === true },
+      );
+      // Stop old children only after the new version commits; a crash or
+      // failure is repaired by the superseded-plan sweep.
+      for (const taskId of runningTaskIds) {
+        const child = this.#services.tasks.get(taskId);
+        if (
+          child === undefined ||
+          child.status === "cancelled" ||
+          child.status === "succeeded" ||
+          child.status === "failed"
+        ) {
+          continue;
+        }
+        try {
+          this.#services.taskService.cancel(child.id);
+        } catch (error) {
+          console.warn("plan_replan_child_cancel_failed", {
+            taskId: child.id,
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
       return { status: 200, body: view };
     } catch (error) {
       rethrowPlanError(error);

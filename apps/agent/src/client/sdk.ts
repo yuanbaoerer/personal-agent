@@ -233,7 +233,11 @@ export class ClientApiClient {
 
   async replanPlan(
     id: string,
-    input: { steps: PlanStepSpec[]; budget?: Partial<PlanBudget> },
+    input: {
+      steps: PlanStepSpec[];
+      budget?: Partial<PlanBudget>;
+      stopOpenSteps?: boolean;
+    },
   ): Promise<PlanView> {
     return this.#request(`/plans/${encodeURIComponent(id)}/replan`, {
       method: "POST",

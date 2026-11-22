@@ -381,6 +381,40 @@ describe("plan executor", () => {
     assert.notEqual(services.tasks.get(child.id)?.status, "queued");
   });
 
+  it("sweep stops orphan children of a committed replan", async () => {
+    const { services, parent, executor } = setup();
+    const plan = services.planService.create(services.owner.id, parent.id, {
+      steps: steps(),
+    });
+    services.planService.activate(services.owner.id, plan.plan.id);
+    const child = services.tasks.insert({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "replan-orphan-child",
+      goal: "orphan child",
+      completionCriteria: "provide a checked result",
+      mandate: { resources: ["chat"], tools: [] },
+      planId: plan.plan.id,
+      planStepKey: "A",
+      createdAt: NOW.toISOString(),
+    }).task;
+    assert.ok(
+      services.plans.bindStepTask(plan.plan.id, "A", child.id, NOW.toISOString()),
+    );
+
+    // Commit the replan without the Router's post-commit child cancellation.
+    services.planService.replan(
+      services.owner.id,
+      plan.plan.id,
+      { steps: steps() },
+      { stopOpenSteps: true },
+    );
+    assert.equal(services.tasks.get(child.id)?.status, "queued");
+
+    executor.sweep();
+    assert.notEqual(services.tasks.get(child.id)?.status, "queued");
+  });
+
   it("clears legacy running steps under a superseded plan", async () => {
     const { services, parent, executor } = setup();
     const first = services.planService.create(services.owner.id, parent.id, {

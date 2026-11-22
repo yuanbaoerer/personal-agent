@@ -1135,6 +1135,18 @@ export class Router implements InboundHandler {
           if (target === undefined) {
             return { status: "done" };
           }
+          if (
+            target.status === "succeeded" ||
+            target.status === "cancelled" ||
+            target.status === "needs_review"
+          ) {
+            this.#reply(
+              context,
+              "该任务已结束或待确认，不能修改计划；请先处理该任务或创建新任务。",
+              "failure",
+            );
+            return { status: "done" };
+          }
           const plans = this.#plans.list(context.ownerId, {
             parentTaskId: target.id,
             limit: 20,
@@ -1195,6 +1207,28 @@ export class Router implements InboundHandler {
             context,
             "当前会话没有可修改的计划草稿；请先让我生成草稿。",
             "status",
+          );
+          return { status: "done" };
+        }
+        const parentTask = this.#tasks.get(source.parentTaskId);
+        if (
+          parentTask !== undefined &&
+          (parentTask.status === "succeeded" ||
+            parentTask.status === "cancelled" ||
+            parentTask.status === "needs_review")
+        ) {
+          this.#reply(
+            context,
+            "父任务已结束或待确认，不能修改该计划；请先处理父任务或创建新任务。",
+            "failure",
+          );
+          return { status: "done" };
+        }
+        if (source.status === "draft" && parentTask?.status === "failed") {
+          this.#reply(
+            context,
+            "父任务已失败，草稿不能直接修改；请用 /plan replan 或创建新任务。",
+            "failure",
           );
           return { status: "done" };
         }
@@ -2507,6 +2541,24 @@ export class Router implements InboundHandler {
     }
 
     const ref = decision.taskRef;
+    if (ref !== undefined && /^[0-9a-f][0-9a-f-]{7,63}$/i.test(ref.trim())) {
+      const task = this.#tasks.get(ref.trim());
+      if (
+        task !== undefined &&
+        task.ownerId === context.ownerId &&
+        task.conversationId === context.conversationId &&
+        (project === undefined || task.mandate.project === project)
+      ) {
+        this.#rememberTaskFocus(context.conversationId, task.id);
+        return task;
+      }
+      this.#reply(
+        context,
+        "当前会话没有这个任务；请指定当前会话的任务 id 或引用。",
+        "failure",
+      );
+      return undefined;
+    }
     const resolution = resolveTaskReference(
       context.ownerId,
       context.conversationId,

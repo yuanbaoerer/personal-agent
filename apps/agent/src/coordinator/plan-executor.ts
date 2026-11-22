@@ -148,16 +148,10 @@ export class PlanExecutor {
       this.#settleCancelled(plan);
     }
     for (const plan of this.#plans.listPlansByStatus("superseded")) {
-      // Legacy intermediate-branch data can have a running step under a
-      // superseded plan; clear it so a later version can activate.
-      const steps = this.#plans.listSteps(plan.id);
-      if (
-        steps.some(
-          (step) => step.status === "running" || step.status === "ready",
-        )
-      ) {
-        this.#cancelSiblings(plan, now.toISOString());
-      }
+      // Durable repair for a replan that committed but lost its post-commit
+      // child cancellation: scan every step's taskId, even when the step is
+      // already marked cancelled, and retry until the child is terminal.
+      this.#cancelSiblings(plan, now.toISOString());
     }
     for (const plan of this.#plans.listPlansByStatus("completed")) {
       const parent = this.#tasks.get(plan.parentTaskId);
@@ -626,14 +620,24 @@ export class PlanExecutor {
   /** Pause/cancel every not-yet-finished sibling before settling the plan. */
   #cancelSiblings(plan: PlanRecord, now: string): void {
     for (const step of this.#plans.listSteps(plan.id)) {
-      if (step.status !== "running" && step.status !== "ready") {
-        continue;
-      }
       if (step.taskId !== undefined) {
         const child = this.#tasks.get(step.taskId);
         if (child !== undefined && !isTerminal(child.status)) {
-          this.#taskService.cancel(child.id);
+          try {
+            this.#taskService.cancel(child.id);
+          } catch (error) {
+            // Keep the sweep retryable; the step stays as-is and the next
+            // maintenance pass tries the child again.
+            console.warn("plan_child_cancel_failed", {
+              planId: plan.id,
+              taskId: child.id,
+              message: error instanceof Error ? error.message : String(error),
+            });
+          }
         }
+      }
+      if (step.status !== "running" && step.status !== "ready") {
+        continue;
       }
       this.#plans.setStepOutcome(
         plan.id,

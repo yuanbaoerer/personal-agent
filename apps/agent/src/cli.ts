@@ -75,7 +75,7 @@ Usage:
   pa plans show <id> [--json]
   pa plans create <task-id> --file PLAN.json [--json]
   pa plans revise <id> --file PLAN.json [--json]
-  pa plans replan <id> --file PLAN.json [--json]
+  pa plans replan <id> --file PLAN.json [--stop-open-steps] [--json]
   pa plans activate <id> --yes [--json]
   pa plans pause <id> [--json]
   pa plans resume <id> [--json]
@@ -812,7 +812,10 @@ export async function runCli(
               ? await client.createPlan(target, input)
               : sub === "revise"
                 ? await client.revisePlan(target, input)
-                : await client.replanPlan(target, input);
+                : await client.replanPlan(target, {
+                    ...input,
+                    stopOpenSteps: args.flags["stop-open-steps"] === true,
+                  });
           if (json) printJson(io, view);
           else io.out(formatPlanView(view));
           return 0;

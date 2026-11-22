@@ -136,6 +136,40 @@ describe("plan API", () => {
     assert.equal(superseded.status, 409);
   });
 
+  it("replans a running plan when stopOpenSteps is explicit", async () => {
+    const { services, api, task } = fixture();
+    const created = await call(api, "POST", "/api/v1/plans", {
+      body: { parentTaskId: task.id, steps: steps() },
+    });
+    const plan = created.body.plan as { id: string };
+    assert.equal(
+      (await call(api, "POST", `/api/v1/plans/${plan.id}/activate`)).status,
+      200,
+    );
+    const child = services.tasks.insert({
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "api-replan-child",
+      goal: "running child",
+      completionCriteria: "criteria",
+      mandate: { resources: ["chat"], tools: [] },
+      planId: plan.id,
+      planStepKey: "A",
+      createdAt: NOW.toISOString(),
+    }).task;
+    assert.ok(
+      services.plans.bindStepTask(plan.id, "A", child.id, NOW.toISOString()),
+    );
+
+    const replanned = await call(api, "POST", `/api/v1/plans/${plan.id}/replan`, {
+      body: { steps: steps(), stopOpenSteps: true },
+    });
+    assert.equal(replanned.status, 200);
+    assert.equal((replanned.body.plan as { status: string }).status, "active");
+    assert.equal(services.plans.listSteps(plan.id)[0]?.status, "cancelled");
+    assert.notEqual(services.tasks.get(child.id)?.status, "queued");
+  });
+
   it("maps invalid plans and stale activation to owner-visible errors", async () => {
     const { services, api, task } = fixture();
     const invalid = await call(api, "POST", "/api/v1/plans", {
