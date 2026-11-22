@@ -11,6 +11,7 @@ import type {
 import type { CapabilityView } from "../src/plugins/fence.ts";
 import { PlanRepository } from "../src/storage/plans.ts";
 import { TaskRepository } from "../src/storage/tasks.ts";
+import { ActionRepository } from "../src/storage/actions.ts";
 import type { Store } from "../src/storage/store.ts";
 import { createStore } from "./helpers.ts";
 
@@ -116,6 +117,7 @@ function setup() {
     store,
     plans: new PlanRepository(store.db),
     tasks: new TaskRepository(store.db),
+    actions: new ActionRepository(store.db),
     capabilities: capabilities(),
     now: () => new Date(NOW),
   });
@@ -517,6 +519,36 @@ describe("plan lifecycle", () => {
     const second = service.create(owner.id, task.id, { steps: steps() });
     assert.equal(
       codeOf(() => service.activate(owner.id, second.plan.id)),
+      "invalid_transition",
+    );
+  });
+
+  it("refuses revise/resume while the parent has an in-flight action", () => {
+    const { store, owner, task, service } = setup();
+    const draft = service.create(owner.id, task.id, { steps: steps() });
+    service.activate(owner.id, draft.plan.id);
+    service.pause(owner.id, draft.plan.id);
+    const action = new ActionRepository(store.db).insert({
+      ownerId: owner.id,
+      conversationId: task.conversationId,
+      taskId: task.id,
+      taskRevision: task.revision,
+      fencingToken: 1,
+      tool: "state.summary",
+      args: {},
+      argsHash: "in-flight-hash",
+      expiresAt: "2026-01-01T01:00:00.000Z",
+      nonce: "in-flight-nonce",
+      createdAt: NOW,
+    }).action;
+    store.db.run("UPDATE pa_actions SET status = 'executing' WHERE id = ?", action.id);
+
+    assert.equal(
+      codeOf(() => service.resume(owner.id, draft.plan.id)),
+      "invalid_transition",
+    );
+    assert.equal(
+      codeOf(() => service.revise(owner.id, draft.plan.id, { steps: steps() })),
       "invalid_transition",
     );
   });

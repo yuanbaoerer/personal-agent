@@ -107,7 +107,8 @@ export class PlanExecutor {
       }
       if (parent.status === "cancelling" || parent.status === "cancelled") {
         // A direct task cancellation is authoritative even when the plan was
-        // paused first. failed/needs_review stay paused for owner replan.
+        // paused first. failed stays paused for a replan; needs_review waits
+        // for owner acknowledgement/cancellation.
         this.#plans.setPlanStatus(
           plan.id,
           ["paused", "active"],
@@ -145,6 +146,18 @@ export class PlanExecutor {
       // Idempotent: cancels this version's children and only touches the
       // parent when the version still owns it.
       this.#settleCancelled(plan);
+    }
+    for (const plan of this.#plans.listPlansByStatus("superseded")) {
+      // Legacy intermediate-branch data can have a running step under a
+      // superseded plan; clear it so a later version can activate.
+      const steps = this.#plans.listSteps(plan.id);
+      if (
+        steps.some(
+          (step) => step.status === "running" || step.status === "ready",
+        )
+      ) {
+        this.#cancelSiblings(plan, now.toISOString());
+      }
     }
     for (const plan of this.#plans.listPlansByStatus("completed")) {
       const parent = this.#tasks.get(plan.parentTaskId);

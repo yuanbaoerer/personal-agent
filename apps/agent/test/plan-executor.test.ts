@@ -381,6 +381,39 @@ describe("plan executor", () => {
     assert.notEqual(services.tasks.get(child.id)?.status, "queued");
   });
 
+  it("clears legacy running steps under a superseded plan", async () => {
+    const { services, parent, executor } = setup();
+    const first = services.planService.create(services.owner.id, parent.id, {
+      steps: steps(),
+    });
+    services.planService.activate(services.owner.id, first.plan.id);
+    await executor.tick(first.plan.id);
+    const child = childTasks(services, parent)[0];
+    assert.ok(child);
+    assert.ok(
+      services.plans.setPlanStatus(
+        first.plan.id,
+        ["active"],
+        "superseded",
+        NOW.toISOString(),
+      ),
+    );
+
+    executor.sweep();
+    assert.notEqual(
+      services.plans.listSteps(first.plan.id)[0]?.status,
+      "running",
+    );
+    assert.notEqual(services.tasks.get(child.id)?.status, "queued");
+
+    const second = services.planService.create(services.owner.id, parent.id, {
+      steps: steps(),
+    });
+    assert.doesNotThrow(() =>
+      services.planService.activate(services.owner.id, second.plan.id),
+    );
+  });
+
   it("inherits the parent extension policy on every step child", async () => {
     const services = createServices({ now: () => NOW });
     const parent = services.taskService.create({
