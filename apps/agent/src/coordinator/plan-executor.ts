@@ -96,11 +96,16 @@ export class PlanExecutor {
     }
     for (const plan of this.#plans.listPlansByStatus("paused")) {
       const parent = this.#tasks.get(plan.parentTaskId);
-      if (
-        parent === undefined ||
-        parent.planId !== plan.id ||
-        parent.status !== "waiting_external"
-      ) {
+      if (parent === undefined) {
+        continue;
+      }
+      if (parent.planId !== plan.id) {
+        // A newer version owns the parent; stop any straggler children of
+        // this paused version without touching the parent outcome.
+        this.#cancelSiblings(plan, now.toISOString());
+        continue;
+      }
+      if (parent.status !== "waiting_external") {
         continue;
       }
       const steps = this.#plans.listSteps(plan.id);
