@@ -10,6 +10,11 @@ import type {
   StateQuery,
   TaskRecord,
 } from "../domain/types.ts";
+import {
+  CONVERSATION_TURN_CHARS,
+  CONVERSATION_WINDOW_CHARS,
+  CONVERSATION_WINDOW_TURNS,
+} from "../domain/types.ts";
 import type { ActionRepository } from "../storage/actions.ts";
 import type { EffectRepository } from "../storage/effects.ts";
 import type { TaskRepository } from "../storage/tasks.ts";
@@ -653,6 +658,14 @@ export class Router implements InboundHandler {
         conversationId,
         text,
         inboxId,
+        conversationWindow: this.#store.listConversationTurns({
+          ownerId,
+          conversationId,
+          excludeInboxId: inboxId,
+          maxTurns: CONVERSATION_WINDOW_TURNS,
+          maxChars: CONVERSATION_WINDOW_CHARS,
+          maxTurnChars: CONVERSATION_TURN_CHARS,
+        }),
         taskContext: this.#tasks.listByOwner(ownerId, 10).map((task) => ({
           id: task.id,
           status: task.status,

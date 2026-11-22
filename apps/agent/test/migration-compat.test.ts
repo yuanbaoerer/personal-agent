@@ -78,6 +78,21 @@ describe("legacy schema migration", () => {
                   'legacy:source', 'legacy goal', 'legacy criteria',
                   '{"resources":["chat"],"tools":[]}', 1, 'succeeded', 1,
                   '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+        CREATE TABLE pa_inbox (
+          id TEXT PRIMARY KEY,
+          conversation_id TEXT,
+          owner_id TEXT,
+          status TEXT NOT NULL,
+          received_at TEXT NOT NULL
+        ) STRICT;
+        CREATE TABLE pa_outbox (
+          id TEXT PRIMARY KEY,
+          owner_id TEXT NOT NULL,
+          channel TEXT NOT NULL,
+          account_id TEXT NOT NULL,
+          conversation_id TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        ) STRICT;
         CREATE TABLE pa_actions (
           id TEXT PRIMARY KEY,
           owner_id TEXT NOT NULL,

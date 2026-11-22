@@ -4,6 +4,9 @@ import type {
   ActorType,
   ChatType,
   ConversationRecord,
+  ConversationTurn,
+  ConversationWindow,
+  ConversationWindowQuery,
   InboxRecord,
   InboxStatus,
   OutboxPurpose,
@@ -153,6 +156,78 @@ interface OutboxRow {
   accepted_at: string | null;
   delivered_at: string | null;
   read_at: string | null;
+}
+
+type TurnCandidate = {
+  turn: ConversationTurn;
+  at: string;
+  id: string;
+  /** Index of the user turn this message is anchored to; -1 when none. */
+  anchor: number;
+};
+
+function compareTurns(a: TurnCandidate, b: TurnCandidate): number {
+  if (a.at !== b.at) {
+    return a.at < b.at ? -1 : 1;
+  }
+  if (a.anchor !== b.anchor) {
+    return a.anchor - b.anchor;
+  }
+  // A user message and the reply it caused can share a timestamp; the user
+  // side is always the earlier turn.
+  if (a.turn.role !== b.turn.role) {
+    return a.turn.role === "user" ? -1 : 1;
+  }
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
+
+/** The inbox this outbox row answers, from its durable causal keys. */
+function causalInboxId(row: {
+  business_key: string;
+  trace_id: string | null;
+  task_source_key: string | null;
+}): string | undefined {
+  const fromKey = /^inbox:([^:]+):/.exec(row.business_key)?.[1];
+  if (fromKey !== undefined) {
+    return fromKey;
+  }
+  const fromTrace = /^inbox:([^:]+)$/.exec(row.trace_id ?? "")?.[1];
+  if (fromTrace !== undefined) {
+    return fromTrace;
+  }
+  return /^inbox:([^:]+):task$/.exec(row.task_source_key ?? "")?.[1];
+}
+
+/** Last user turn received at or before `at`; -1 when the reply precedes all. */
+function latestUserAnchor(
+  ascending: readonly { id: string; received_at: string }[],
+  at: string,
+): number {
+  let anchor = -1;
+  for (let index = 0; index < ascending.length; index += 1) {
+    const row = ascending[index];
+    if (row !== undefined && row.received_at <= at) {
+      anchor = index;
+    }
+  }
+  return anchor;
+}
+
+function clipTurn(
+  text: string,
+  maxChars: number,
+): { text: string; truncated: boolean } {
+  // Keep one turn on one prompt line: normalize control characters and
+  // whitespace before clipping so history cannot forge prompt structure.
+  const normalized = text
+    .replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const limit = Math.max(1, maxChars);
+  if (normalized.length <= limit) {
+    return { text: normalized, truncated: false };
+  }
+  return { text: `${normalized.slice(0, limit - 1)}…`, truncated: true };
 }
 
 function mapIdentity(row: IdentityRow): OwnerIdentity {
@@ -616,6 +691,160 @@ export class Store {
         limit,
       )
       .map(mapOutbox);
+  }
+
+  /**
+   * Bounded transcript for the Router. Reads durable inbox/outbox rows
+   * instead of keeping a second copy of private chat text. Anything older
+   * than the window or dropped by the character cap is counted in
+   * `omittedTurns`; individual turns are clipped to `maxTurnChars`.
+   */
+  listConversationTurns(query: ConversationWindowQuery): ConversationWindow {
+    const conversation = this.getConversation(query.conversationId);
+    if (conversation === undefined || conversation.ownerId !== query.ownerId) {
+      return { turns: [], omittedTurns: 0, truncated: false };
+    }
+    const maxTurns = Math.max(1, Math.trunc(query.maxTurns));
+    const maxChars = Math.max(1, Math.trunc(query.maxChars));
+    const maxTurnChars = Math.max(1, Math.trunc(query.maxTurnChars));
+
+    const userWhere = `i.conversation_id = ? AND i.owner_id = ?
+      AND i.actor_type = 'user' AND i.status = 'accepted'
+      AND i.text IS NOT NULL AND length(trim(i.text)) > 0
+      AND (? IS NULL OR i.id <> ?)`;
+    const userParams = [
+      query.conversationId,
+      query.ownerId,
+      query.excludeInboxId ?? null,
+      query.excludeInboxId ?? null,
+    ] as const;
+
+    const outboxWhere = `o.owner_id = ? AND o.channel = ? AND o.account_id = ?
+      AND o.conversation_id = ? AND o.status = 'accepted'
+      AND o.purpose IN ('status', 'clarify', 'approval', 'result', 'failure')
+      AND length(trim(o.text)) > 0`;
+    const outboxParams = [
+      query.ownerId,
+      conversation.channel,
+      conversation.accountId,
+      conversation.platformConversationId,
+    ] as const;
+
+    // One extra row per side detects "there is older history" without
+    // fetching the whole conversation into this process.
+    const userRows = this.#db.all<{
+      id: string;
+      text: string;
+      received_at: string;
+      task_input_seq: number | null;
+    }>(
+      `SELECT i.id, i.text, i.received_at,
+              (SELECT ti.seq FROM pa_task_inputs ti
+                WHERE ti.source_inbox_id = i.id
+                ORDER BY ti.seq ASC LIMIT 1) AS task_input_seq
+       FROM pa_inbox i
+       WHERE ${userWhere}
+       ORDER BY i.received_at DESC, i.id DESC
+       LIMIT ?`,
+      ...userParams,
+      maxTurns + 1,
+    );
+    const assistantRows = this.#db.all<{
+      id: string;
+      text: string;
+      created_at: string;
+      business_key: string;
+      trace_id: string | null;
+      task_source_key: string | null;
+    }>(
+      `SELECT o.id, o.text, o.created_at, o.business_key, o.trace_id,
+              t.source_key AS task_source_key
+       FROM pa_outbox o
+       LEFT JOIN pa_tasks t ON t.id = o.task_id
+       WHERE ${outboxWhere}
+       ORDER BY o.created_at DESC, o.id DESC
+       LIMIT ?`,
+      ...outboxParams,
+      maxTurns + 1,
+    );
+
+    const totals = this.#db.all<{ user_total: number; assistant_total: number }>(
+      `SELECT
+         (SELECT COUNT(*) FROM pa_inbox i WHERE ${userWhere}) AS user_total,
+         (SELECT COUNT(*) FROM pa_outbox o WHERE ${outboxWhere}) AS assistant_total`,
+      ...userParams,
+      ...outboxParams,
+    )[0];
+
+    // Timestamps can collide when a reply and the next message land in the
+    // same millisecond. Anchor each assistant reply to the user turn it
+    // answers (business key/trace/task source) so ties keep causal order.
+    const userAscending = [...userRows].reverse();
+    const userIndex = new Map(userAscending.map((row, index) => [row.id, index]));
+
+    const candidates: TurnCandidate[] = [
+      ...userRows.map((row) => ({
+        turn: {
+          role: "user" as const,
+          text: row.text,
+          at: row.received_at,
+          inboxId: row.id,
+          ...(row.task_input_seq === null
+            ? {}
+            : { taskInputSeq: Number(row.task_input_seq) }),
+        },
+        at: row.received_at,
+        id: row.id,
+        anchor: userIndex.get(row.id) ?? 0,
+      })),
+      ...assistantRows.map((row) => {
+        const causalInbox = causalInboxId(row);
+        const anchor =
+          (causalInbox === undefined ? undefined : userIndex.get(causalInbox)) ??
+          latestUserAnchor(userAscending, row.created_at);
+        return {
+          turn: {
+            role: "assistant" as const,
+            text: row.text,
+            at: row.created_at,
+            outboxId: row.id,
+          },
+          at: row.created_at,
+          id: row.id,
+          anchor,
+        };
+      }),
+    ].sort(compareTurns);
+
+    const kept: ConversationTurn[] = [];
+    let chars = 0;
+    let truncated = false;
+    for (let index = candidates.length - 1; index >= 0; index -= 1) {
+      if (kept.length >= query.maxTurns) {
+        break;
+      }
+      const candidate = candidates[index];
+      if (candidate === undefined) {
+        continue;
+      }
+      const clipped = clipTurn(candidate.turn.text, maxTurnChars);
+      if (chars + clipped.text.length > maxChars && kept.length > 0) {
+        // The window is contiguous: once the budget is spent, everything
+        // older is omitted rather than skipped and partially re-included.
+        break;
+      }
+      chars += clipped.text.length;
+      truncated = truncated || clipped.truncated;
+      kept.push({ ...candidate.turn, text: clipped.text });
+    }
+    kept.reverse();
+
+    const total = Number(totals?.user_total ?? 0) + Number(totals?.assistant_total ?? 0);
+    return {
+      turns: kept,
+      omittedTurns: Math.max(0, total - kept.length),
+      truncated,
+    };
   }
 
   /**

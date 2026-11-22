@@ -547,6 +547,15 @@ const migrations: readonly (readonly string[])[] = [
     // across restarts without storing the token itself.
     `ALTER TABLE pa_credential_refs ADD COLUMN secret_fingerprint TEXT`,
   ],
+  [
+    // The Router reads a bounded window of one conversation. Inbox rows keep
+    // the internal conversation id; outbox rows are addressed by the platform
+    // conversation tuple, so both paths get an index.
+    `CREATE INDEX IF NOT EXISTS pa_inbox_conversation_idx
+       ON pa_inbox (conversation_id, owner_id, status, received_at)`,
+    `CREATE INDEX IF NOT EXISTS pa_outbox_conversation_idx
+       ON pa_outbox (owner_id, channel, account_id, conversation_id, created_at)`,
+  ],
 ];
 
 /** Highest schema version this build can read/migrate. */
