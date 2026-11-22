@@ -347,7 +347,10 @@ export class IssueDraftService {
       this.#audit("issue_draft.superseded", updated, { reason });
       return { ...updated, validity: "superseded" };
     };
-    if (draft.expiresAt <= at) {
+    if (
+      (draft.status === "draft" || draft.status === "pending_approval") &&
+      draft.expiresAt <= at
+    ) {
       const updated =
         this.#drafts.updateStatus(
           draft.id,

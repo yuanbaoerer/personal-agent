@@ -834,3 +834,33 @@ describe("approval withdrawal", () => {
     );
   });
 });
+
+describe("executed draft expiry", () => {
+  it("does not expire an already approved draft", async () => {
+    const { services } = setup();
+    const { draft, payloadHash } = seedDraft(services, { key: "3" });
+    await sendText(
+      services,
+      `/draft approve ${draft.id} ${payloadHash}`,
+      "evt_draft_expiry_approved",
+    );
+    assert.equal(
+      services.issueDrafts.get(services.owner.id, draft.id)?.status,
+      "approved",
+    );
+    services.store.db.run(
+      "UPDATE pa_issue_drafts SET expires_at = ? WHERE id = ?",
+      "2025-12-31T00:00:00.000Z",
+      draft.id,
+    );
+    assert.equal(
+      services.issueDrafts.get(services.owner.id, draft.id)?.status,
+      "approved",
+    );
+    assert.equal(
+      services.issueDrafts.list(services.owner.id).find((item) => item.id === draft.id)
+        ?.status,
+      "approved",
+    );
+  });
+});
