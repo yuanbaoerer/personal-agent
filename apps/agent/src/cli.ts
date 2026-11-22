@@ -1,10 +1,16 @@
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 
 import { ClientApiClient, ClientApiError } from "./client/sdk.ts";
 import type {
   ActionRecord,
   IssueDraftSnapshot,
+  PlanBudget,
+  PlanDiff,
+  PlanRecord,
+  PlanStepSpec,
+  PlanView,
   ProjectBinding,
   ScheduleRecord,
   TaskRecord,
@@ -65,6 +71,15 @@ Usage:
   pa drafts list [--status STATUS] [--project KEY] [--json]
   pa drafts show <id> [--json]
   pa drafts reject <id> --yes [--json]
+  pa plans list [--task ID] [--status STATUS] [--json]
+  pa plans show <id> [--json]
+  pa plans create <task-id> --file PLAN.json [--json]
+  pa plans revise <id> --file PLAN.json [--json]
+  pa plans activate <id> --yes [--json]
+  pa plans pause <id> [--json]
+  pa plans resume <id> [--json]
+  pa plans cancel <id> --yes [--json]
+  pa plans diff <id> [--from N] [--to N] [--json]
   pa skills list [--json]
 
 Environment:
@@ -179,6 +194,71 @@ function formatDraft(draft: IssueDraftSnapshot): string {
     `  before: ${before}`,
     `  after: ${safeText(draft.body).slice(0, 2_000)}`,
   ].join("\n");
+}
+
+function formatPlan(plan: PlanRecord): string {
+  const budget = plan.budget;
+  const cost =
+    budget.maxCostUsd === undefined ? "" : ` cost<=$${budget.maxCostUsd}`;
+  const calls =
+    budget.maxToolCalls === undefined ? "" : ` calls<=${budget.maxToolCalls}`;
+  return [
+    `${shortId(plan.id)}  v${plan.planVersion}  ${plan.status}  task=${shortId(plan.parentTaskId)} rev=${plan.taskRevision} input=${plan.inputSeq}`,
+    `  budget steps<=${budget.maxSteps} attempts<=${budget.maxAttemptsPerStep} timeout=${budget.timeoutMs}ms${calls}${cost}`,
+    `  scope=${plan.approvedScopeRef ?? "-"}  project=${plan.projectKey ?? "-"}  updated=${plan.updatedAt}`,
+  ].join("\n");
+}
+
+function formatPlanView(view: PlanView): string {
+  return [
+    formatPlan(view.plan),
+    "  steps:",
+    ...view.steps.map(
+      (step) =>
+        `    ${step.key}  ${step.status.padEnd(10)}  ${safeText(step.goal)}` +
+        `  deps=${step.dependsOn.join(",") || "-"}` +
+        `  tools=${step.tools.join(",") || "-"}` +
+        `  resources=${step.resources.join(",") || "-"}` +
+        `  verifier=${step.verifierId}`,
+    ),
+  ].join("\n");
+}
+
+function formatPlanDiff(diff: PlanDiff): string {
+  const mark = { added: "+", removed: "-", changed: "~", unchanged: " " } as const;
+  return [
+    `diff v${diff.fromVersion} -> v${diff.toVersion}  task=${shortId(diff.parentTaskId)}`,
+    ...diff.steps.map(
+      (step) =>
+        `  ${mark[step.change]} ${step.key.padEnd(16)} ${step.change}` +
+        (step.fields.length === 0 ? "" : `: ${step.fields.join(",")}`),
+    ),
+  ].join("\n");
+}
+
+async function readPlanInput(
+  file: string,
+): Promise<{ steps: PlanStepSpec[]; budget?: Partial<PlanBudget> }> {
+  const raw = await readFile(file, "utf8");
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    throw new Error(`${file} is not valid JSON`);
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`${file} must contain a JSON object`);
+  }
+  const record = value as Record<string, unknown>;
+  if (!Array.isArray(record.steps)) {
+    throw new Error(`${file} must contain a steps array`);
+  }
+  return {
+    steps: record.steps as PlanStepSpec[],
+    ...(record.budget === undefined
+      ? {}
+      : { budget: record.budget as Partial<PlanBudget> }),
+  };
 }
 
 function makeClient(env: NodeJS.ProcessEnv, fetchImpl: typeof fetch): ClientApiClient {
@@ -681,6 +761,91 @@ export async function runCli(
           return 0;
         }
         throw new Error("drafts subcommand must be list, show or reject");
+      }
+      case "plans": {
+        const sub = requirePositional(args, 0, "plans subcommand");
+        const json = args.flags.json === true;
+        if (sub === "list") {
+          const status = flagString(args.flags, "status");
+          if (
+            status !== undefined &&
+            !["draft", "active", "paused", "completed", "cancelled", "superseded"].includes(
+              status,
+            )
+          ) {
+            throw new Error("--status is not a valid plan status");
+          }
+          const plans = await client.listPlans({
+            ...(flagString(args.flags, "task") === undefined
+              ? {}
+              : { parentTaskId: flagString(args.flags, "task") as string }),
+            ...(status === undefined
+              ? {}
+              : { status: status as PlanRecord["status"] }),
+          });
+          if (json) printJson(io, { plans });
+          else if (plans.length === 0) io.out("No plans.");
+          else for (const plan of plans) io.out(formatPlan(plan));
+          return 0;
+        }
+        if (sub === "show") {
+          const id = requirePositional(args, 1, "plan id");
+          const view = await client.getPlan(id);
+          if (json) printJson(io, view);
+          else io.out(formatPlanView(view));
+          return 0;
+        }
+        if (sub === "create" || sub === "revise") {
+          const target = requirePositional(
+            args,
+            1,
+            sub === "create" ? "parent task id" : "plan id",
+          );
+          const file = flagString(args.flags, "file");
+          if (file === undefined) {
+            throw new Error(`plans ${sub} requires --file PLAN.json`);
+          }
+          const input = await readPlanInput(file);
+          const view =
+            sub === "create"
+              ? await client.createPlan(target, input)
+              : await client.revisePlan(target, input);
+          if (json) printJson(io, view);
+          else io.out(formatPlanView(view));
+          return 0;
+        }
+        if (sub === "activate" || sub === "pause" || sub === "resume" || sub === "cancel") {
+          const id = requirePositional(args, 1, "plan id");
+          if ((sub === "activate" || sub === "cancel") && args.flags.yes !== true) {
+            throw new Error(`plans ${sub} requires --yes`);
+          }
+          const view =
+            sub === "activate"
+              ? await client.activatePlan(id)
+              : sub === "pause"
+                ? await client.pausePlan(id)
+                : sub === "resume"
+                  ? await client.resumePlan(id)
+                  : await client.cancelPlan(id);
+          if (json) printJson(io, view);
+          else io.out(formatPlanView(view));
+          return 0;
+        }
+        if (sub === "diff") {
+          const id = requirePositional(args, 1, "plan id");
+          const from = flagNumber(args.flags, "from");
+          const to = flagNumber(args.flags, "to");
+          const diff = await client.planDiff(id, {
+            ...(from === undefined ? {} : { from }),
+            ...(to === undefined ? {} : { to }),
+          });
+          if (json) printJson(io, { diff });
+          else io.out(formatPlanDiff(diff));
+          return 0;
+        }
+        throw new Error(
+          "plans subcommand must be list, show, create, revise, activate, pause, resume, cancel or diff",
+        );
       }
       case "skills": {
         const sub = requirePositional(args, 0, "skills subcommand");

@@ -37,6 +37,8 @@ import { IssueDraftApprovalBridge } from "../src/personal/draft-approval.ts";
 import { TaskRepository } from "../src/storage/tasks.ts";
 import type { Store } from "../src/storage/store.ts";
 import { ProjectService } from "../src/personal/projects.ts";
+import { PlanRepository } from "../src/storage/plans.ts";
+import { PlanService } from "../src/coordinator/plans.ts";
 import { APP_ID, CONVERSATION_ID, OWNER_OPEN_ID, createStore, inbound } from "./helpers.ts";
 
 export interface TestServices {
@@ -52,6 +54,8 @@ export interface TestServices {
   preauthorizations: PreauthorizationRepository;
   schedulePolicies: SchedulePolicyRepository;
   projects: ProjectRepository;
+  plans: PlanRepository;
+  planService: PlanService;
   issueDrafts: IssueDraftService;
   issueDraftApproval?: IssueDraftApprovalBridge;
   runtime: FakeRuntime;
@@ -161,6 +165,14 @@ export function createServices(options: {
     store,
     registry,
     plugins: options.builtinPlugins ?? [createGithubPlugin(options.github)],
+    now,
+  });
+  const plans = new PlanRepository(db);
+  const planService = new PlanService({
+    store,
+    plans,
+    tasks,
+    capabilities: catalog,
     now,
   });
   const runtime = new FakeRuntime();
@@ -295,6 +307,8 @@ export function createServices(options: {
     preauthorizations,
     schedulePolicies,
     projects,
+    plans,
+    planService,
     issueDrafts,
     issueDraftApproval,
     runtime,

@@ -38,6 +38,8 @@ import { IssueDraftApprovalBridge } from "./personal/draft-approval.ts";
 import type { Store } from "./storage/store.ts";
 import { TaskRepository } from "./storage/tasks.ts";
 import { ProjectService } from "./personal/projects.ts";
+import { PlanRepository } from "./storage/plans.ts";
+import { PlanService } from "./coordinator/plans.ts";
 
 /**
  * Everything the business logic needs that only a host can supply. Node and
@@ -85,6 +87,8 @@ export interface AppServices {
   preauthorizations: PreauthorizationRepository;
   schedulePolicies: SchedulePolicyRepository;
   projects: ProjectRepository;
+  plans: PlanRepository;
+  planService: PlanService;
   issueDrafts: IssueDraftService;
   issueDraftApproval?: IssueDraftApprovalBridge;
   taskService: TaskService;
@@ -162,6 +166,14 @@ export function createApp(deps: AppDeps): AppServices {
     store,
     registry,
     plugins: deps.builtinPlugins ?? [createGithubPlugin(deps.github)],
+    now: deps.now,
+  });
+  const plans = new PlanRepository(db);
+  const planService = new PlanService({
+    store,
+    plans,
+    tasks,
+    capabilities: catalog,
     now: deps.now,
   });
 
@@ -291,6 +303,8 @@ export function createApp(deps: AppDeps): AppServices {
     preauthorizations,
     schedulePolicies,
     projects,
+    plans,
+    planService,
     issueDrafts,
     issueDraftApproval,
     taskService,

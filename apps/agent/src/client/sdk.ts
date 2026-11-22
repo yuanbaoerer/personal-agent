@@ -4,6 +4,12 @@ import type {
   ExtensionPolicy,
   IssueDraftSnapshot,
   MemoryRecord,
+  PlanBudget,
+  PlanDiff,
+  PlanRecord,
+  PlanStepRecord,
+  PlanStepSpec,
+  PlanView,
   ProjectBinding,
   ScheduleRecord,
   TaskInputRecord,
@@ -184,6 +190,80 @@ export class ClientApiClient {
       { method: "POST" },
     );
     return result.draft;
+  }
+
+  async listPlans(options: {
+    parentTaskId?: string;
+    status?: PlanRecord["status"];
+    limit?: number;
+  } = {}): Promise<PlanRecord[]> {
+    const result = await this.#request<{ plans: PlanRecord[] }>("/plans", {
+      query: {
+        task: options.parentTaskId,
+        status: options.status,
+        limit: options.limit,
+      },
+    });
+    return result.plans;
+  }
+
+  async getPlan(id: string): Promise<PlanView> {
+    return this.#request(`/plans/${encodeURIComponent(id)}`);
+  }
+
+  async createPlan(
+    parentTaskId: string,
+    input: { steps: PlanStepSpec[]; budget?: Partial<PlanBudget> },
+  ): Promise<PlanView> {
+    return this.#request("/plans", {
+      method: "POST",
+      body: { parentTaskId, ...input },
+    });
+  }
+
+  async revisePlan(
+    id: string,
+    input: { steps: PlanStepSpec[]; budget?: Partial<PlanBudget> },
+  ): Promise<PlanView> {
+    return this.#request(`/plans/${encodeURIComponent(id)}/revise`, {
+      method: "POST",
+      body: input,
+    });
+  }
+
+  async activatePlan(id: string): Promise<PlanView> {
+    return this.#request(`/plans/${encodeURIComponent(id)}/activate`, {
+      method: "POST",
+    });
+  }
+
+  async pausePlan(id: string): Promise<PlanView> {
+    return this.#request(`/plans/${encodeURIComponent(id)}/pause`, {
+      method: "POST",
+    });
+  }
+
+  async resumePlan(id: string): Promise<PlanView> {
+    return this.#request(`/plans/${encodeURIComponent(id)}/resume`, {
+      method: "POST",
+    });
+  }
+
+  async cancelPlan(id: string): Promise<PlanView> {
+    return this.#request(`/plans/${encodeURIComponent(id)}/cancel`, {
+      method: "POST",
+    });
+  }
+
+  async planDiff(
+    id: string,
+    options: { from?: number; to?: number } = {},
+  ): Promise<PlanDiff> {
+    const result = await this.#request<{ diff: PlanDiff }>(
+      `/plans/${encodeURIComponent(id)}/diff`,
+      { query: { from: options.from, to: options.to } },
+    );
+    return result.diff;
   }
 
   async listTasks(options: { status?: TaskStatus; limit?: number } = {}): Promise<TaskRecord[]> {

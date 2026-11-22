@@ -284,4 +284,67 @@ describe("drafts CLI", () => {
     assert.match(reject.out.join("\n"), /rejected/);
     assert.match(reject.out.join("\n"), /before:/);
   });
+
+  it("shows plans and requires --yes to activate", async () => {
+    const view = {
+      plan: {
+        id: "plan-1",
+        ownerId: "owner",
+        parentTaskId: "task-1",
+        taskRevision: 1,
+        inputSeq: 0,
+        planVersion: 1,
+        status: "draft",
+        budget: { maxSteps: 3, maxAttemptsPerStep: 1, timeoutMs: 300000 },
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+      steps: [
+        {
+          id: "step-a",
+          planId: "plan-1",
+          key: "A",
+          ordinal: 0,
+          goal: "read evidence",
+          dependsOn: [],
+          tools: [],
+          resources: [],
+          verifierId: "text-report",
+          maxAttempts: 1,
+          timeoutMs: 300000,
+          status: "blocked",
+          attempts: 0,
+          evidenceRefs: [],
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+    };
+    const fakeFetch: typeof fetch = async () =>
+      jsonResponse({ plans: [view.plan] });
+    const env = { PA_API_URL: "http://api.local", PA_API_TOKEN: "pa_secret" };
+
+    const json = captureIo();
+    assert.equal(
+      await runCli(["plans", "list", "--json"], env, json.io, fakeFetch),
+      0,
+    );
+    assert.deepEqual(JSON.parse(json.out[0] ?? "{}"), { plans: [view.plan] });
+
+    const showFetch: typeof fetch = async () => jsonResponse(view);
+    const show = captureIo();
+    assert.equal(
+      await runCli(["plans", "show", "plan-1"], env, show.io, showFetch),
+      0,
+    );
+    assert.match(show.out.join("\n"), /v1\s+draft/);
+    assert.match(show.out.join("\n"), /A\s+blocked/);
+
+    const refused = captureIo();
+    assert.equal(
+      await runCli(["plans", "activate", "plan-1"], env, refused.io, fakeFetch),
+      1,
+    );
+    assert.match(refused.err.join("\n"), /requires --yes/);
+  });
 });
