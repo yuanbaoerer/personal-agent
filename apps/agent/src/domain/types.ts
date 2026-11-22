@@ -747,6 +747,44 @@ export interface RouterTaskContext {
   project?: string;
 }
 
+/** One persisted message from this owner's side of a single conversation. */
+export interface ConversationTurn {
+  role: "user" | "assistant";
+  text: string;
+  at: string;
+  /** Source inbox row; set exactly when role is "user". */
+  inboxId?: string;
+  /** Source delivered outbox row; set exactly when role is "assistant". */
+  outboxId?: string;
+  /** Task input sequence when this message was accepted into a task. */
+  taskInputSeq?: number;
+}
+
+export interface ConversationWindow {
+  /** Oldest first; never includes the inbox currently being routed. */
+  turns: ConversationTurn[];
+  /** Eligible turns older than the window or dropped by the character cap. */
+  omittedTurns: number;
+  /** True when at least one included turn was shortened. */
+  truncated: boolean;
+}
+
+export interface ConversationWindowQuery {
+  ownerId: string;
+  /** Internal pa_conversations id, not the platform conversation id. */
+  conversationId: string;
+  /** The message being routed; it is rendered separately as the live input. */
+  excludeInboxId?: string;
+  maxTurns: number;
+  maxChars: number;
+  maxTurnChars: number;
+}
+
+/** Router history defaults: small enough for cost, large enough for 6-turn chat. */
+export const CONVERSATION_WINDOW_TURNS = 12;
+export const CONVERSATION_WINDOW_CHARS = 4_000;
+export const CONVERSATION_TURN_CHARS = 400;
+
 export interface RouterInput {
   ownerId: string;
   conversationId: string;
@@ -756,6 +794,8 @@ export interface RouterInput {
   taskContext?: RouterTaskContext[];
   /** Real owner-scoped project bindings; projectKey -> immutable repository. */
   projectContext?: RouterProjectContext[];
+  /** Bounded transcript of this owner and conversation; continuity only. */
+  conversationWindow?: ConversationWindow;
 }
 
 export interface RouterProjectContext {
