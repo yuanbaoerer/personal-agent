@@ -11,7 +11,7 @@
 | CX-01 context | `feat/conv-01-context` | `af38963` | bounded window + per-conversation session (`21a5eaf`) + causal ordering fix |
 | CX-01 routing | `feat/conv-01-routing` | `a71d9a1` | replyKind, discussion guard, ack purposes, guard regression (`7f569e9`, `4a933d1`, `a71d9a1`) |
 | PL-01 plan store | `feat/plan-01-store` | `5c8fece` | schema/service/API/CLI + review fixes, rebased on CX-01 (`26fb0f5`, `ef362cc`, `5c8fece`) |
-| PL-02 executor | `feat/plan-02-executor` | `9526202` | child-task executor, shared budgets, progress/replan, model-proposed drafts, review-hardened cancellation/settlement and idempotent schema upgrade (`5ef92ed`…`9526202`) |
+| PL-02 executor | `feat/plan-02-executor` | `459aa98` | child-task executor, shared budgets, progress/replan, model-proposed drafts, review-hardened cancellation/settlement and idempotent schema upgrade (`5ef92ed`…`459aa98`) |
 | Acceptance record | `docs/exp-01-evidence` | this commit | docs only |
 
 These branches are not merged. A real acceptance run must record the actual deployed/main SHA instead.
