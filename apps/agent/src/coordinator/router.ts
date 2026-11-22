@@ -1162,11 +1162,7 @@ export class Router implements InboundHandler {
             return { status: "done" };
           } else if (pausedPlans.length === 1) {
             const paused = pausedPlans[0] as PlanRecord;
-            this.#reply(
-              context,
-              `计划 ${paused.id.slice(0, 8)} 已暂停；请等运行中步骤结束/取消后，用 /plan replan ${paused.id.slice(0, 8)} confirm 修改（保留已完成步骤、预算只能缩小），用 /plan resume ${paused.id.slice(0, 8)} 继续，或 /plan cancel ${paused.id.slice(0, 8)} confirm。`,
-              "clarify",
-            );
+            this.#reply(context, this.#pausedPlanGuidance(paused), "clarify");
             return { status: "done" };
           } else if (pausedPlans.length > 1) {
             this.#reply(
@@ -1200,7 +1196,7 @@ export class Router implements InboundHandler {
             source.status === "active"
               ? `计划 ${short} 正在执行，不能直接改；先用 /plan pause ${short}，再用 /plan replan ${short} confirm。`
               : source.status === "paused"
-                ? `计划 ${short} 已暂停；请等运行中步骤结束/取消后，用 /plan replan ${short} confirm 修改（保留已完成步骤、预算只能缩小），用 /plan resume ${short} 继续，或 /plan cancel ${short} confirm。`
+                ? this.#pausedPlanGuidance(source)
                 : source.status === "completed"
                   ? `计划 ${short} 已完成，不能再修改；请新建草稿。`
                   : source.status === "cancelled"
@@ -2766,6 +2762,18 @@ export class Router implements InboundHandler {
           `- ${step.key} [${step.status}] ${step.goal.slice(0, 100)}  deps=${step.dependsOn.join(",") || "-"}  tools=${step.tools.join(",") || "-"}  verifier=${step.verifierId}`,
       ),
     ].join("\n");
+  }
+
+  #pausedPlanGuidance(plan: PlanRecord): string {
+    const short = plan.id.slice(0, 8);
+    const parent = this.#tasks.get(plan.parentTaskId);
+    if (parent?.status === "needs_review") {
+      return `计划 ${short} 已暂停，但父任务处于待确认；请先确认或取消该任务，计划不能直接 replan/resume。`;
+    }
+    if (parent?.status === "failed") {
+      return `计划 ${short} 已暂停（父任务失败）；用 /plan replan ${short} confirm 重新激活，或 /plan cancel ${short} confirm。`;
+    }
+    return `计划 ${short} 已暂停；请等运行中步骤结束/取消后，用 /plan replan ${short} confirm 修改（保留已完成步骤、预算只能缩小），用 /plan resume ${short} 继续，或 /plan cancel ${short} confirm。`;
   }
 
   #planDiffText(diff: PlanDiff): string {

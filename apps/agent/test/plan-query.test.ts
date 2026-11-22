@@ -408,6 +408,28 @@ describe("plan progress queries", () => {
     );
   });
 
+  it("gives ack/cancel guidance for a paused plan on a needs_review parent", async () => {
+    const { services, parent, planId } = setup();
+    services.planService.pause(services.owner.id, planId);
+    services.tasks.updateTask(parent.id, parent.revision, {
+      status: "needs_review",
+      updatedAt: NOW.toISOString(),
+    });
+    services.model.push({
+      action: "revise_plan",
+      text: "",
+      taskId: parent.id,
+      plan: { steps: steps() },
+    });
+    await sendText(services, "改一下这个暂停计划", "evt_needs_review_paused");
+
+    assert.match(lastOutbox(services), /待确认/);
+    assert.equal(
+      services.planService.list(services.owner.id, { parentTaskId: parent.id }).length,
+      1,
+    );
+  });
+
   it("asks when a task has both a draft and an active plan", async () => {
     const { services, parent } = setup();
     services.planService.create(services.owner.id, parent.id, { steps: steps() });
