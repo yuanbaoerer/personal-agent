@@ -143,16 +143,16 @@ const REDIRECTABLE_CONTROL_ACTIONS: ReadonlySet<RouterDecision["action"]> = new 
 
 /**
  * The router model supplies completion criteria, but a github.read task must
- * carry the exact repo for the verifier. Prefer the model's JSON field, then
- * a repo visibly present in the task/message; never invent one.
+ * carry the exact repo for the verifier. Prefer an active binding or an
+ * owner-supplied repo before consulting the model's goal and criteria.
  */
-function extractGithubRepo(text: string): string | undefined {
+function extractGithubRepo(text: string, requireUrl = false): string | undefined {
   const urlMatch = /https?:\/\/github\.com\/([^/\s?#]+\/[^/\s?#]+)/i.exec(text);
-  const plainSource = text.replace(/https?:\/\/\S+/g, " ");
-  const plainMatch =
-    /(?:^|\s)([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)(?=$|[\s,.;:!?，。；：！？])/.exec(
-      plainSource,
-    );
+  const plainMatch = requireUrl || urlMatch !== null
+    ? null
+    : /(?:^|\s)([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)(?=$|[\s,.;:!?，。；：！？])/.exec(
+        text.replace(/https?:\/\/\S+/g, " "),
+      );
   const candidate = urlMatch?.[1] ?? plainMatch?.[1];
   return candidate !== undefined && GITHUB_REPO_PATTERN.test(candidate)
     ? candidate.toLowerCase()

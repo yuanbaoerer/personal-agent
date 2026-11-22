@@ -1733,7 +1733,7 @@ function workerPrompt(
     lines.push(
       "Project review output must be structured; prose alone is not verified:",
       '{"findings":[{"id":"f1","requirementRef":"plan section","classification":"observed|inferred|unknown","severity":"critical|high|medium|low","repositoryId":123,"commitSha":"<40-hex or unknown for a gap>","evidenceRefs":["<source URL or path from an action receipt>"],"expected":"...","actual":"...","impact":"...","existingIssueMatches":[60],"suggestedAction":"...","evidenceGap":"required for unknown","coverage":"complete|partial|unknown","truncated":false}]}',
-      '{"issueDrafts":[{"action":"create|update|comment","targetIssue":60,"title":"...","body":"...","findingIds":["f1"],"beforeHash":"<sha256 of the existing issue body for update>","requiresOwnerApproval":true}]}',
+      '{"issueDrafts":[{"action":"create|update|comment","targetIssue":60,"title":"...","body":"...","findingIds":["f1"],"beforeHash":"<sha256 of title + newline + body from the issue detail receipt, for updates>","requiresOwnerApproval":true}]}',
       "Stop gathering after at most two rounds of typed reads. One plan file, one or two source files, PR files, checks and the issue list are enough; then set status=ready and emit findings/issueDrafts. Do not read every issue or file.",
       "Start with a repo read to obtain the immutable repositoryId, then a ref read to resolve the branch to a fixed commit SHA before typed file/tree/checks reads.",
       "Typed read args (use exactly these field names; limit is 1..20):",
@@ -1749,6 +1749,7 @@ function workerPrompt(
       "For a pull_files receipt, set the finding.commitSha to that receipt's headSha. Do not mix a main-branch file URL into a PR-head finding.",
       "Every observed finding must cite a receipt at the same repositoryId and commitSha; never invent issue numbers or test results.",
       "update/comment drafts must target an issue already listed in the finding's existingIssueMatches; update drafts must also carry beforeHash = SHA-256 of title, a newline, then body from that issue's receipt. Create drafts must not duplicate an existing issue.",
+      "If the issue detail receipt is body-truncated it has no beforeHash; do not draft an update from it.",
       "Issue drafts are proposals only. This task cannot write to GitHub. Omit idempotencyKey entirely; the host computes it and rejects model-supplied values.",
       "One draft may link only findings with the same repositoryId and commitSha. Split drafts by revision.",
       "If any cited receipt is truncated, set the finding's truncated=true and coverage=partial or unknown; otherwise do not cite that receipt.",

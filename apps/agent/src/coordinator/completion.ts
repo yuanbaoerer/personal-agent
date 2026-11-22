@@ -20,7 +20,7 @@ import {
 } from "../actions/state.ts";
 import type { ActionRepository } from "../storage/actions.ts";
 
-export const VERIFIER_VERSION = "2026-11-20.3";
+export const VERIFIER_VERSION = "2026-11-21.1";
 
 export interface CompletionVerdict {
   verdict: TaskVerification["verdict"];
@@ -1287,9 +1287,15 @@ export class TaskCompletionVerifier {
         at,
       );
     }
-    const succeeded = actions.filter((action) => action.status === "succeeded");
-    const githubActions = succeeded.filter(
-      (action) => action.tool === "github.read",
+    const repo = structural.criteria.repo;
+    const project = task.mandate.project?.toLowerCase();
+    const githubActions = actions.filter(
+      (action) => action.status === "succeeded" &&
+        action.tool === "github.read" &&
+        githubActionEvidenceValid(action, repo) &&
+        (project === undefined ||
+          (typeof action.evidence?.projectKey === "string" &&
+            action.evidence.projectKey.toLowerCase() === project)),
     );
     const evidenceRefs = githubActions
       .map((action) => action.externalRef ?? `action:${action.id}`)
@@ -1367,10 +1373,18 @@ export class TaskCompletionVerifier {
     const validation = validateProjectReview({
       findings,
       drafts,
-      actions,
-      repo: structural.criteria.repo,
-      projectKey: task.mandate.project,
+      actions: githubActions,
+      repo,
+      projectKey: project,
     });
+    for (const claim of report.githubClaims ?? []) {
+      const mismatch = validateGithubClaim(claim, githubActions);
+      if (mismatch !== undefined) {
+        validation.missing.push(`claim:${mismatch}`);
+      } else {
+        validation.checked.push(`claim:github:${claim.operation}:${claim.field}`);
+      }
+    }
     const checked = [
       ...structural.checked,
       "github_action_receipt",
@@ -1409,11 +1423,11 @@ export class TaskCompletionVerifier {
     return this.#verdict(
       "project-review",
       "succeeded",
-      `project review verified ${validation.observed} observed, ${validation.inferred} inferred and ${validation.unknown} unknown finding(s); ${validation.drafts} issue draft(s) await owner approval`,
+      `project review checked citations for ${validation.observed} observed, ${validation.inferred} inferred and ${validation.unknown} unknown finding(s); narrative conclusions were not independently verified; ${validation.drafts} issue draft(s) await owner approval`,
       {
         checked,
         evidenceRefs,
-        externalFactsVerified: true,
+        externalFactsVerified: false,
       },
       at,
     );

@@ -36,15 +36,14 @@ export interface ProjectReviewValidation {
 }
 
 interface Receipt {
-  projectKey?: string;
   repositoryId?: number;
-  operation?: string;
   commitSha?: string;
   headSha?: string;
   stale: boolean;
   truncated: boolean;
   refs: Set<string>;
-  issues: Map<number, { title: string; body?: string }>;
+  file?: { path: string; content: string };
+  issues: Map<number, { title: string; beforeHash?: string }>;
 }
 
 /**
@@ -77,17 +76,17 @@ export function validateProjectReview(input: {
   repo?: string;
   projectKey?: string;
 }): ProjectReviewValidation {
-  const receipts = buildReceipts(input.actions, input.repo);
+  const receipts = buildReceipts(input.actions, input.repo, input.projectKey);
   const checked: string[] = [];
   const missing: string[] = [];
   const refs = new Set<string>();
-  const issues = new Map<number, { title: string; body?: string }>();
+  const issues = new Map<number, { title: string; beforeHash?: string }>();
   for (const receipt of receipts) {
     for (const ref of receipt.refs) {
       refs.add(ref);
     }
     for (const [number, issue] of receipt.issues) {
-      if (issue.body !== undefined || !issues.has(number)) {
+      if (issue.beforeHash !== undefined || !issues.has(number)) {
         issues.set(number, issue);
       }
     }
@@ -97,11 +96,7 @@ export function validateProjectReview(input: {
     missing.push("project_review:no_github_receipt");
   }
   if (input.projectKey !== undefined) {
-    const scoped = receipts.some(
-      (receipt) =>
-        receipt.projectKey?.toLowerCase() === input.projectKey?.toLowerCase(),
-    );
-    if (!scoped) {
+    if (receipts.length === 0) {
       missing.push("project_review:project_binding_receipt_missing");
     } else {
       checked.push("project_review:project_binding_receipt");
@@ -206,7 +201,6 @@ export function validateProjectReview(input: {
         fail("evidence_refs_missing");
       }
     }
-    let citedRevision = false;
     let citedTruncated = false;
     for (const raw of finding.evidenceRefs) {
       const normalized = normalizeRef(raw);
@@ -214,21 +208,12 @@ export function validateProjectReview(input: {
         fail(`evidence_ref_unverified:${truncateForMessage(raw)}`);
         continue;
       }
-      if (
-        revisionReceipts.some((receipt) => receipt.refs.has(normalized))
-      ) {
-        citedRevision = true;
-      }
-      if (receipts.some((receipt) => receipt.truncated && receipt.refs.has(normalized))) {
+      const matches = revisionReceipts.filter((receipt) => receipt.refs.has(normalized));
+      if (matches.length === 0) {
+        fail(`evidence_ref_not_at_revision:${truncateForMessage(raw)}`);
+      } else if (matches.every((receipt) => receipt.truncated)) {
         citedTruncated = true;
       }
-    }
-    if (
-      finding.classification === "observed" &&
-      finding.evidenceRefs.length > 0 &&
-      !citedRevision
-    ) {
-      fail("observed_ref_not_at_revision");
     }
     if (finding.path !== undefined) {
       const pathVerified = revisionReceipts.some((receipt) =>
@@ -236,6 +221,15 @@ export function validateProjectReview(input: {
       );
       if (!pathVerified) {
         fail(`path_unverified:${truncateForMessage(finding.path)}`);
+      }
+    }
+    if (finding.line !== undefined) {
+      const { path, line } = finding;
+      if (!revisionReceipts.some((receipt) =>
+        receipt.file !== undefined && receipt.file.path === path &&
+        containsLine(receipt.file.content, line)
+      )) {
+        fail("line_unverified");
       }
     }
     if (finding.sourceUrl !== undefined) {
@@ -340,16 +334,11 @@ export function validateProjectReview(input: {
       }
       if (draft.action === "update") {
         const issue = issues.get(target);
-        if (issue?.body === undefined) {
+        if (issue?.beforeHash === undefined) {
           fail("before_hash_unverifiable");
         } else if (draft.beforeHash === undefined) {
           fail("before_hash_missing");
-        } else if (
-          draft.beforeHash !==
-          createHash("sha256")
-            .update(`${issue.title}\n${issue.body}`)
-            .digest("hex")
-        ) {
+        } else if (draft.beforeHash !== issue.beforeHash) {
           fail("before_hash_mismatch");
         }
       }
@@ -602,6 +591,7 @@ export function parseIssueDrafts(value: unknown): IssueDraft[] | undefined {
 function buildReceipts(
   actions: readonly ActionRecord[],
   repoFilter?: string,
+  projectFilter?: string,
 ): Receipt[] {
   const receipts: Receipt[] = [];
   for (const action of actions) {
@@ -612,29 +602,27 @@ function buildReceipts(
       typeof action.evidence === "object" && action.evidence !== null
         ? action.evidence
         : {};
-    const repo =
-      typeof evidence.repo === "string"
-        ? evidence.repo
-        : typeof action.args.repo === "string"
-          ? action.args.repo
-          : undefined;
+    const repo = evidence.repo;
     if (
-      repo === undefined ||
-      (repoFilter !== undefined && repo.toLowerCase() !== repoFilter.toLowerCase())
+      typeof repo !== "string" ||
+      (repoFilter !== undefined && repo.toLowerCase() !== repoFilter.toLowerCase()) ||
+      (projectFilter !== undefined &&
+        (typeof evidence.projectKey !== "string" ||
+          evidence.projectKey.toLowerCase() !== projectFilter.toLowerCase()))
     ) {
       continue;
     }
     const refs = new Set<string>();
+    const repositoryUrl = `https://github.com/${repo.toLowerCase()}`;
     const addRef = (value: unknown): void => {
       if (typeof value !== "string") {
         return;
       }
       const normalized = normalizeRef(value);
-      if (normalized !== undefined) {
+      if (normalized !== undefined && normalized.toLowerCase() !== repositoryUrl) {
         refs.add(normalized);
       }
     };
-    addRef(action.externalRef);
     addRef(`action:${action.id}`);
     addRef(evidence.source);
     addRef(evidence.url);
@@ -651,16 +639,16 @@ function buildReceipts(
       typeof action.args.operation === "string"
         ? action.args.operation
         : undefined;
-    const issues = new Map<number, { title: string; body?: string }>();
+    const issues = new Map<number, { title: string; beforeHash?: string }>();
     if (operation === "issues" || operation === "issue") {
       collectIssueEntries(evidence, issues);
     }
+    const item = evidence.item as Record<string, unknown> | undefined;
+    const file = operation === "file" && typeof item?.path === "string" &&
+        typeof item.content === "string"
+      ? { path: item.path, content: item.content }
+      : undefined;
     receipts.push({
-      operation,
-      projectKey:
-        typeof evidence.projectKey === "string"
-          ? evidence.projectKey
-          : undefined,
       repositoryId:
         typeof evidence.repositoryId === "number"
           ? evidence.repositoryId
@@ -669,6 +657,7 @@ function buildReceipts(
         typeof evidence.commitSha === "string"
           ? evidence.commitSha.toLowerCase()
           : action.args.operation === "ref" &&
+              evidence.type === "commit" &&
               typeof evidence.sha === "string" &&
               /^[0-9a-f]{40}$/i.test(evidence.sha)
             ? evidence.sha.toLowerCase()
@@ -679,6 +668,7 @@ function buildReceipts(
           : undefined,
       stale: evidence.stale === true,
       truncated: evidenceIsTruncated(evidence),
+      file,
       refs,
       issues,
     });
@@ -728,6 +718,17 @@ function evidenceIsTruncated(
   return false;
 }
 
+function containsLine(content: string, line: number): boolean {
+  if (!Number.isSafeInteger(line) || line < 1 || content.length === 0) return false;
+  let offset = 0;
+  for (let next = 1; next < line; next += 1) {
+    const newline = content.indexOf("\n", offset);
+    if (newline === -1) return false;
+    offset = newline + 1;
+  }
+  return offset < content.length;
+}
+
 function addObjectRefs(
   value: unknown,
   addRef: (value: unknown) => void,
@@ -753,18 +754,21 @@ function addObjectRefs(
 
 function collectIssueEntries(
   evidence: Record<string, unknown>,
-  output: Map<number, { title: string; body?: string }>,
+  output: Map<number, { title: string; beforeHash?: string }>,
 ): void {
   const add = (entry: unknown): void => {
     if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
       return;
     }
     const record = entry as Record<string, unknown>;
+    if (record.isPullRequest === true) return;
     const number = record.number;
     if (typeof number === "number" && Number.isSafeInteger(number)) {
       output.set(number, {
         title: typeof record.title === "string" ? record.title : "",
-        ...(typeof record.body === "string" ? { body: record.body } : {}),
+        ...(typeof record.beforeHash === "string" && record.bodyTruncated !== true
+          ? { beforeHash: record.beforeHash }
+          : {}),
       });
     }
   };
@@ -904,12 +908,15 @@ export function summarizeProjectReview(
   findings: readonly ProjectFinding[],
   drafts: readonly IssueDraft[],
 ): string {
-  const lines: string[] = ["项目评估（结构化证据已核对）："];
+  const lines: string[] = ["项目评估（已核对证据引用，结论为模型分析）："];
   for (const finding of findings.slice(0, 8)) {
-    const ref = finding.evidenceRefs[0] ?? finding.sourceUrl ?? "no-ref";
+    const ref = finding.sourceUrl ?? finding.evidenceRefs.find((ref) => ref.startsWith("https://")) ??
+      finding.evidenceRefs[0] ?? "no-ref";
     lines.push(
       `- [${finding.severity}/${finding.classification}] ${finding.requirementRef}: ` +
-        `${finding.expected} → ${finding.actual}` +
+        (finding.classification === "unknown"
+          ? `证据缺口：${finding.evidenceGap ?? "未说明"}`
+          : `${finding.expected} → ${finding.actual}`) +
         (finding.existingIssueMatches.length > 0
           ? ` (issues: ${finding.existingIssueMatches.join(",")})`
           : "") +

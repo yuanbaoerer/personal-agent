@@ -46,7 +46,7 @@
 ## 5. 2026-11-22 凭据作用域与项目解析补强
 
 - `pa_credential_refs` 只存 ref/owner/plugin/account/repositoryIds/scopes/status/version/expiry，不存 token。
-- 未声明 scopes 的 legacy 凭据仅保留 read scope 兼容；`issues.write` 等写 scope 必须显式声明，否则拒绝。
+- 未声明 scopes 的凭据不获得任何 scope；`github:default` 必须显式声明 `repository.read`，`issues.write` 必须由独立 write ref 显式声明。
 - 项目读取同时校验 owner、immutable repositoryId 与 active ProjectBinding；撤销/重启不会复活 OAuth 凭据。
 - Router 不再让模型补猜仓库：projectKey 必须解析到 owner 的 active binding，歧义或未绑定直接拒绝并提示 owner。
 - 现有 E1 覆盖 `credentials.test.ts`、`projects.test.ts`、`github.test.ts`、`router.test.ts`、`completion-verifier.test.ts`；真实 OAuth/PAT 负例仍需 owner 环境。

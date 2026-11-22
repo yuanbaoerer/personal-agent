@@ -10,12 +10,6 @@ const CREDENTIAL_VALUE = /^(?:gh[pousr]_|github_pat_|sk-|xox[abp]-)/i;
  * using these for backward compatibility with earlier `github:default`
  * configurations. Anything else is privileged and must be declared.
  */
-const READ_SCOPES = new Set([
-  "repository.read",
-  "metadata.read",
-  "repository.metadata.read",
-]);
-
 export class CredentialUnavailableError extends Error {
   constructor(message: string) {
     super(message);
@@ -35,7 +29,7 @@ export interface CredentialInput {
   token?: string;
   /** Resolves the current token at call time. */
   provider?: () => string | undefined | Promise<string | undefined>;
-  /** Declared scopes; an empty list means the host did not declare any. */
+  /** Declared scopes. An empty list grants no scopes. */
   scopes?: string[];
   ownerId?: string;
   pluginId?: string;
@@ -237,13 +231,24 @@ export class CredentialBroker {
         `credential ${ref} is not bound to the requested repository`,
       );
     }
-    if (entry.expiresAt !== undefined) {
-      const expiresAt = Date.parse(entry.expiresAt);
-      if (!Number.isFinite(expiresAt) || expiresAt <= this.#now().getTime()) {
-        return undefined;
+    // Undeclared scopes grant nothing. Existing `github:default` configs
+    // declare `repository.read` explicitly, so this stays compatible while
+    // never inferring an unknown permission.
+    const expiresAt = entry.expiresAt === undefined ? Infinity : Date.parse(entry.expiresAt);
+    if (!(expiresAt > this.#now().getTime())) {
+      return undefined;
+    }
+    if (requiredScopes.length > 0) {
+      const missing = requiredScopes.filter(
+        (scope) => !entry.scopes.includes(scope),
+      );
+      if (missing.length > 0) {
+        throw new CredentialScopeError(
+          `credential ${ref} is missing scope ${missing.join(",")}`,
+        );
       }
     }
-    assertScopes(ref, entry.scopes, requiredScopes);
+
     let token: string | undefined;
     try {
       token =
@@ -252,6 +257,13 @@ export class CredentialBroker {
       throw new CredentialUnavailableError(
         `credential ${ref} provider failed`,
       );
+    }
+    if (
+      this.#entries.get(ref) !== entry ||
+      entry.status !== "active" ||
+      !(expiresAt > this.#now().getTime())
+    ) {
+      return undefined;
     }
     if (token === undefined || token.trim().length === 0) {
       return undefined;
@@ -294,35 +306,6 @@ export class CredentialBroker {
   }
 }
 
-/**
- * Undeclared scopes keep legacy read-only credentials working. Any scope
- * outside the read set requires an explicit declaration, so a write token is
- * never inherited from a credential whose permission was never stated.
- */
-function assertScopes(
-  ref: string,
-  declared: readonly string[],
-  required: readonly string[],
-): void {
-  if (required.length === 0) {
-    return;
-  }
-  if (declared.length === 0) {
-    const privileged = required.filter((scope) => !READ_SCOPES.has(scope));
-    if (privileged.length > 0) {
-      throw new CredentialScopeError(
-        `credential ${ref} has no declared scopes; ${privileged.join(",")} requires an explicit declaration`,
-      );
-    }
-    return;
-  }
-  const missing = required.filter((scope) => !declared.includes(scope));
-  if (missing.length > 0) {
-    throw new CredentialScopeError(
-      `credential ${ref} is missing scope ${missing.join(",")}`,
-    );
-  }
-}
 
 function assertRef(ref: string): void {
   if (!CREDENTIAL_REF.test(ref) || CREDENTIAL_VALUE.test(ref)) {
