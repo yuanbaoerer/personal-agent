@@ -404,13 +404,18 @@ describe("read-only project review E2E (fake GitHub API)", () => {
     const verified = services.tasks.get(task.id) as TaskRecord;
     assert.equal(verified.status, "succeeded");
     assert.equal(verified.verification?.verifier, "project-review");
-    assert.equal(verified.verification?.externalFactsVerified, true);
+    assert.equal(verified.verification?.verdict, "succeeded");
+    assert.equal(verified.verification?.missing.length, 0);
     assert.match(verified.verification?.reason ?? "", /2 observed/);
     assert.match(verified.verification?.reason ?? "", /2 issue draft/);
+    assert.ok(
+      verified.verification?.checked.includes("finding:f1:evidence"),
+    );
+    assert.equal(verified.verification?.externalFactsVerified, false);
 
     const outbox = services.store.listRecentOutbox(20);
     const resultText = outbox.map((row) => row.text).join("\n");
-    assert.match(resultText, /项目评估（结构化证据已核对）/);
+    assert.match(resultText, /项目评估（已核对证据引用，结论为模型分析）/);
     assert.match(resultText, /待办草稿/);
     assert.match(resultText, /approval required/);
     assert.match(resultText, /GH-02 evidence/);

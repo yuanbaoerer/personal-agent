@@ -373,6 +373,36 @@ describe("GitHub completion criteria", () => {
     assert.equal(wantsProjectReview("查看 open issues"), false);
   });
 
+  it("uses the active binding for a review requested by project key", async () => {
+    const services = createServices({ github: { token: "test-token", allowedRepos: ["owner/repo"] } });
+    try {
+      services.projectService.bind(services.owner.id, {
+        projectKey: "alpha",
+        repositoryId: 101,
+        repositoryFullName: "owner/repo",
+      }, services.owner.id);
+      services.model.push({
+        action: "create_task",
+        text: "",
+        task: {
+          goal: "对照规划审查项目实施情况",
+          completionCriteria: '{"repo":"other/repo"}',
+          mandate: { resources: ["github"], tools: ["github.read"] },
+        },
+      });
+      await sendText(
+        services,
+        "--project=alpha 对照 docs/plan.md 审查项目实施情况",
+        "evt_bound_review",
+      );
+      const [task] = services.tasks.listByOwner(services.owner.id);
+      assert.equal(task?.mandate.project, "alpha");
+      assert.equal(JSON.parse(task?.completionCriteria ?? "{}").repo, "owner/repo");
+    } finally {
+      services.store.close();
+    }
+  });
+
   it("never invents a repo for a non-GitHub task", () => {
     assert.equal(
       normalizeGithubCriteria("done", "check owner/repo", "owner/repo", []),
