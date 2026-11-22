@@ -2,6 +2,8 @@
 
 > **2026-11-21 产品定义升级 / 规划，不代表已实现**。代码核对基线 main `345faacf803fe3d230ab1843295b18d353e5da66`；执行前应重新检查最新 main。实施 Issue：[CONV-01 #89](https://github.com/yuanbaoerer/personal-agent/issues/89)、[PLAN-01 #90](https://github.com/yuanbaoerer/personal-agent/issues/90)、[PLAN-02 #91](https://github.com/yuanbaoerer/personal-agent/issues/91)、[EXP-01 #92](https://github.com/yuanbaoerer/personal-agent/issues/92)。与 [#41 MVP Functional Ready](https://github.com/yuanbaoerer/personal-agent/issues/41)、[21 · 私有 MVP 实施纲领](21-mvp-functional-ready.md)、[12 · Mode Architecture](12-mode-architecture.md)、[24 · GitHub Project Management](24-github-project-management.md) 并存。**原 M01–M14、K/SEC、E3/E4 验收及正式发布门槛不降低。**
 
+> **2026-11-22 实施状态**：P0-A/B/C 的代码路径已在 PR #106–#110 实现（线性栈 CX-01 → PL-01 → PL-02），E1 记录见 [2026-11-22 E1 acceptance](acceptance/2026-11-22-conversational-planning-e1.md)。真实 Feishu / 模型 / GitHub 的 E3/E4 仍为 **BLOCKED**；C02/C05 只有 E1 证据，不能据此宣称 Pilot。原 #41 M01–M14 与安全/预算门槛不变。
+
 ## 1. 产品北极星和实际差异
 
 **一句话**：Personal Agent 是一个能像成熟交互式 Agent 一样自然对话、以可持久的 Plan 规划复杂目标、在 Owner 授权与预算内自主推进、允许实时修订并以可验证证据汇报的长期个人助手。

@@ -1105,6 +1105,519 @@
         ]
       }
     },
+    "/plans": {
+      "get": {
+        "operationId": "listPlans",
+        "summary": "List owner-scoped plans, optionally for one parent task",
+        "tags": [
+          "plans"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "task",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "draft",
+                "active",
+                "paused",
+                "completed",
+                "cancelled",
+                "superseded"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Plans"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createPlan",
+        "summary": "Create a draft plan for a parent task",
+        "tags": [
+          "plans"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "parentTaskId",
+                  "steps"
+                ],
+                "properties": {
+                  "parentTaskId": {
+                    "type": "string"
+                  },
+                  "steps": {
+                    "type": "array",
+                    "minItems": 3,
+                    "maxItems": 5,
+                    "items": {
+                      "$ref": "#/components/schemas/PlanStepSpec"
+                    }
+                  },
+                  "budget": {
+                    "$ref": "#/components/schemas/PlanBudget"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Draft plan"
+          },
+          "400": {
+            "description": "Invalid plan"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "409": {
+            "description": "Parent task is closed or already bound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/plans/{id}": {
+      "get": {
+        "operationId": "getPlan",
+        "summary": "Get one plan with its steps",
+        "tags": [
+          "plans"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Plan and steps"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Plan not found"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/plans/{id}/revise": {
+      "post": {
+        "operationId": "revisePlan",
+        "summary": "Create the next plan version and supersede the old one",
+        "tags": [
+          "plans"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "steps"
+                ],
+                "properties": {
+                  "steps": {
+                    "type": "array",
+                    "minItems": 3,
+                    "maxItems": 5,
+                    "items": {
+                      "$ref": "#/components/schemas/PlanStepSpec"
+                    }
+                  },
+                  "budget": {
+                    "$ref": "#/components/schemas/PlanBudget"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "New draft version"
+          },
+          "400": {
+            "description": "Invalid plan"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Plan not found"
+          },
+          "409": {
+            "description": "Plan or parent task is closed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/plans/{id}/replan": {
+      "post": {
+        "operationId": "replanPlan",
+        "summary": "Replace a paused plan with a bounded new active version",
+        "tags": [
+          "plans"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "steps"
+                ],
+                "properties": {
+                  "steps": {
+                    "type": "array",
+                    "minItems": 3,
+                    "maxItems": 5,
+                    "items": {
+                      "$ref": "#/components/schemas/PlanStepSpec"
+                    }
+                  },
+                  "budget": {
+                    "$ref": "#/components/schemas/PlanBudget"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Replanned active version"
+          },
+          "400": {
+            "description": "Invalid plan, changed completed step or expanded budget"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Plan not found"
+          },
+          "409": {
+            "description": "Plan is not paused/active or the task is closed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/plans/{id}/activate": {
+      "post": {
+        "operationId": "activatePlan",
+        "summary": "Activate a draft plan after revision/input freshness checks",
+        "tags": [
+          "plans"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Active plan"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Plan not found"
+          },
+          "409": {
+            "description": "Stale, closed or conflicting plan"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/plans/{id}/pause": {
+      "post": {
+        "operationId": "pausePlan",
+        "summary": "Pause an active plan",
+        "tags": [
+          "plans"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paused plan"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Plan not found"
+          },
+          "409": {
+            "description": "Invalid transition"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/plans/{id}/resume": {
+      "post": {
+        "operationId": "resumePlan",
+        "summary": "Resume a paused plan after freshness/catalog checks",
+        "tags": [
+          "plans"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Active plan"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Plan not found"
+          },
+          "409": {
+            "description": "Stale, invalid or conflicting plan"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/plans/{id}/cancel": {
+      "post": {
+        "operationId": "cancelPlan",
+        "summary": "Cancel a plan and stop further step dispatch",
+        "tags": [
+          "plans"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cancelled plan"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Plan not found"
+          },
+          "409": {
+            "description": "Invalid transition"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/plans/{id}/diff": {
+      "get": {
+        "operationId": "planDiff",
+        "summary": "Compare two versions of the same parent plan",
+        "tags": [
+          "plans"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Step-level diff"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Plan or version not found"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
     "/skills": {
       "get": {
         "operationId": "listSkills",
@@ -1140,6 +1653,94 @@
       }
     },
     "schemas": {
+      "PlanBudget": {
+        "type": "object",
+        "required": [
+          "maxSteps",
+          "maxAttemptsPerStep",
+          "timeoutMs"
+        ],
+        "properties": {
+          "maxSteps": {
+            "type": "integer",
+            "minimum": 3,
+            "maximum": 5
+          },
+          "maxAttemptsPerStep": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3
+          },
+          "maxToolCalls": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200
+          },
+          "maxCostUsd": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 1000
+          },
+          "timeoutMs": {
+            "type": "integer",
+            "minimum": 1000,
+            "maximum": 3600000
+          }
+        }
+      },
+      "PlanStepSpec": {
+        "type": "object",
+        "required": [
+          "key",
+          "goal",
+          "verifierId"
+        ],
+        "properties": {
+          "key": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,31}$"
+          },
+          "goal": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "dependsOn": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "resources": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "verifierId": {
+            "type": "string"
+          },
+          "completionCriteria": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "maxAttempts": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3
+          },
+          "timeoutMs": {
+            "type": "integer",
+            "minimum": 1000
+          }
+        }
+      },
       "Error": {
         "type": "object",
         "required": [
