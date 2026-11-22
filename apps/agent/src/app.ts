@@ -224,6 +224,7 @@ export function createApp(deps: AppDeps): AppServices {
     confirmation,
     preauthorization,
     schedulePolicy,
+    projects,
     state,
     budget,
     model: deps.model,

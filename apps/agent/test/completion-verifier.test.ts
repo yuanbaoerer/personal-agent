@@ -1029,20 +1029,18 @@ describe("TaskCompletionVerifier", () => {
       services,
       task.id,
       assignment,
-      { operation: "issues", repo: "owner/repo" },
+      { operation: "issue", repo: "owner/repo", number: 60 },
       {
-        operation: "issues",
+        operation: "issue",
         repo: "owner/repo",
-        source: "https://github.com/owner/repo",
-        items: [
-          {
-            number: 60,
-            title: "GH-02 evidence",
-            state: "open",
-            body: "Existing GH-02 body",
-            url: "https://github.com/owner/repo/issues/60",
-          },
-        ],
+        source: "https://github.com/owner/repo/issues/60",
+        item: {
+          number: 60,
+          title: "GH-02 evidence",
+          state: "open",
+          body: "Existing GH-02 body",
+          beforeHash: "5bf3e85a6ed5c27d8b0b56ebd63b6a4dcd51833cd07a5328003197f5c1a1eab9",
+        },
       },
     );
     services.taskService.report(
@@ -1085,7 +1083,7 @@ describe("TaskCompletionVerifier", () => {
     const current = services.tasks.get(task.id);
     assert.equal(current?.status, "succeeded");
     assert.equal(current?.verification?.verifier, "project-review");
-    assert.equal(current?.verification?.externalFactsVerified, true);
+    assert.equal(current?.verification?.externalFactsVerified, false);
     assert.match(current?.verification?.reason ?? "", /1 observed/);
   });
 
@@ -1115,7 +1113,23 @@ describe("TaskCompletionVerifier", () => {
         repositoryId: 101,
         commitSha: sha,
         source: `https://github.com/owner/repo/blob/${sha}/docs/24.md`,
-        item: { type: "file", path: "docs/24.md" },
+        item: { type: "file", path: "docs/24.md", contentTruncated: true },
+      },
+    );
+    const otherSha = "b".repeat(40);
+    const otherSource = `https://github.com/owner/repo/blob/${otherSha}/src/other.ts`;
+    insertSucceededGithubCustom(
+      services,
+      task.id,
+      assignment,
+      { operation: "file", projectKey: "personal-agent", repo: "owner/repo", sha: otherSha },
+      {
+        operation: "file",
+        repo: "owner/repo",
+        projectKey: "personal-agent",
+        repositoryId: 101,
+        commitSha: otherSha,
+        source: otherSource,
       },
     );
     services.taskService.report(
@@ -1129,6 +1143,16 @@ describe("TaskCompletionVerifier", () => {
             value: `https://github.com/owner/repo/blob/${sha}/docs/24.md`,
           },
         ]),
+        githubClaims: [{
+          kind: "github_typed",
+          repo: "owner/repo",
+          projectKey: "personal-agent",
+          operation: "file",
+          revision: sha,
+          target: "docs/24.md",
+          field: "exists",
+          value: false,
+        }],
         findings: [
           {
             id: "f1",
@@ -1137,7 +1161,14 @@ describe("TaskCompletionVerifier", () => {
             severity: "high",
             repositoryId: 101,
             commitSha: sha,
-            evidenceRefs: ["https://github.com/owner/repo/blob/deadbeef/docs/24.md"],
+            path: "docs/24.md",
+            line: 99,
+            coverage: "complete",
+            evidenceRefs: [
+              "docs/24.md",
+              otherSource,
+              "https://github.com/owner/repo/blob/deadbeef/docs/24.md",
+            ],
             expected: "pinned",
             actual: "unpinned",
             impact: "stale",
@@ -1161,8 +1192,12 @@ describe("TaskCompletionVerifier", () => {
     assert.equal(current?.status, "needs_review");
     const missing = current?.verification?.missing.join(",") ?? "";
     assert.match(missing, /evidence_ref_unverified/);
+    assert.match(missing, /evidence_ref_not_at_revision/);
     assert.match(missing, /issue_match_unverified:999/);
     assert.match(missing, /target_issue_unverified/);
+    assert.match(missing, /github_typed_field_mismatch:file:docs\/24.md:exists/);
+    assert.match(missing, /coverage_overstates_truncated_evidence/);
+    assert.match(missing, /line_unverified/);
   });
 
   it("refuses a create draft when an existing issue already matches", () => {
@@ -1297,6 +1332,9 @@ describe("TaskCompletionVerifier", () => {
         item: { number: 60, title: "PR not issue", state: "open" },
       },
     );
+    insertSucceededGithubList(services, task.id, assignment, "issues", [
+      { number: 60, title: "PR in issue list", isPullRequest: true },
+    ]);
     services.taskService.report(
       assignment.assignment.id,
       assignment.assignment.fencingToken,

@@ -11,6 +11,7 @@ import type {
 } from "../domain/types.ts";
 import type { ActionRepository } from "../storage/actions.ts";
 import type { EffectRepository } from "../storage/effects.ts";
+import type { ProjectRepository } from "../storage/projects.ts";
 import type { TaskRepository } from "../storage/tasks.ts";
 import type { Store } from "../storage/store.ts";
 import type { MemoryService } from "../personal/memory.ts";
@@ -98,6 +99,7 @@ export interface RouterDeps {
   confirmation: ConfirmationService;
   preauthorization: PreauthorizationService;
   schedulePolicy?: SchedulePolicyService;
+  projects?: ProjectRepository;
   state: StateReadService;
   budget?: BudgetService;
   model: RouterModel;
@@ -126,16 +128,16 @@ const REDIRECTABLE_CONTROL_ACTIONS: ReadonlySet<RouterDecision["action"]> = new 
 
 /**
  * The router model supplies completion criteria, but a github.read task must
- * carry the exact repo for the verifier. Prefer the model's JSON field, then
- * a repo visibly present in the task/message; never invent one.
+ * carry the exact repo for the verifier. Prefer an active binding or an
+ * owner-supplied repo before consulting the model's goal and criteria.
  */
-function extractGithubRepo(text: string): string | undefined {
+function extractGithubRepo(text: string, requireUrl = false): string | undefined {
   const urlMatch = /https?:\/\/github\.com\/([^/\s?#]+\/[^/\s?#]+)/i.exec(text);
-  const plainSource = text.replace(/https?:\/\/\S+/g, " ");
-  const plainMatch =
-    /(?:^|\s)([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)(?=$|[\s,.;:!?，。；：！？])/.exec(
-      plainSource,
-    );
+  const plainMatch = requireUrl || urlMatch !== null
+    ? null
+    : /(?:^|\s)([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)(?=$|[\s,.;:!?，。；：！？])/.exec(
+        text.replace(/https?:\/\/\S+/g, " "),
+      );
   const candidate = urlMatch?.[1] ?? plainMatch?.[1];
   return candidate !== undefined && GITHUB_REPO_PATTERN.test(candidate)
     ? candidate.toLowerCase()
@@ -182,6 +184,7 @@ export function normalizeGithubCriteria(
   ownerText: string,
   mandateTools: readonly string[],
   skills: readonly string[] = [],
+  boundRepo?: string,
 ): string {
   if (!mandateTools.includes("github.read")) {
     return criteria;
@@ -196,6 +199,7 @@ export function normalizeGithubCriteria(
     // Plain text is replaced below once a repo is known.
   }
   const repo =
+    boundRepo?.toLowerCase() ??
     extractGithubRepo(ownerText) ??
     extractGithubRepo(goal) ??
     (typeof parsed.repo === "string" && GITHUB_REPO_PATTERN.test(parsed.repo)
@@ -329,6 +333,7 @@ export class Router implements InboundHandler {
   readonly #confirmation: ConfirmationService;
   readonly #preauthorization: PreauthorizationService;
   readonly #schedulePolicy?: SchedulePolicyService;
+  readonly #projects?: ProjectRepository;
   readonly #state: StateReadService;
   readonly #stateQuery: StateQueryHandler;
   readonly #personalIntents: PersonalIntentHandler;
@@ -351,6 +356,7 @@ export class Router implements InboundHandler {
     this.#confirmation = deps.confirmation;
     this.#preauthorization = deps.preauthorization;
     this.#schedulePolicy = deps.schedulePolicy;
+    this.#projects = deps.projects;
     this.#state = deps.state;
     this.#budget = deps.budget;
     this.#model = deps.model;
@@ -631,6 +637,23 @@ export class Router implements InboundHandler {
             ]),
           ];
         }
+        let boundRepo: string | undefined;
+        if (mandate.skills?.includes("github.project-review") === true) {
+          const project = mandate.project === undefined
+            ? undefined
+            : this.#projects?.findActiveByKey(context.ownerId, mandate.project.toLowerCase());
+          if (project === undefined) {
+            this.#reply(context, "请用 --project=<项目键> 指定一个已绑定的项目。", "failure");
+            return { status: "done" };
+          }
+          const ownerRepo = extractGithubRepo(context.text, true);
+          if (ownerRepo !== undefined && ownerRepo !== project.repositoryFullName.toLowerCase()) {
+            this.#reply(context, "指定的 GitHub 仓库与项目绑定不一致，请确认审查目标。", "failure");
+            return { status: "done" };
+          }
+          mandate.project = project.projectKey;
+          boundRepo = project.repositoryFullName;
+        }
         if (requested.tools.length > 0 && mandate.tools.length === 0) {
           this.#reply(
             context,
@@ -651,6 +674,7 @@ export class Router implements InboundHandler {
               context.text,
               mandate.tools,
               mandate.skills ?? [],
+              boundRepo,
             ),
             mandate.tools,
           ),

@@ -11,6 +11,7 @@ import {
 import { parseRouterDecision, routerPrompt } from "../src/coordinator/pi-router.ts";
 import { evaluateCompletion, parseWorkerReport } from "../src/coordinator/tasks.ts";
 import type { ScheduleRecord, TaskRecord } from "../src/domain/types.ts";
+import { createServices, sendText } from "./services.ts";
 
 function taskRecord(id: string, ownerId = "owner"): TaskRecord {
   return {
@@ -369,6 +370,36 @@ describe("GitHub completion criteria", () => {
     assert.equal(parsed.repo, "owner/repo");
     assert.equal(wantsProjectReview("对照规划评估这个项目的实现差距"), true);
     assert.equal(wantsProjectReview("查看 open issues"), false);
+  });
+
+  it("uses the active binding for a review requested by project key", async () => {
+    const services = createServices({ github: { token: "test-token", allowedRepos: ["owner/repo"] } });
+    try {
+      services.projectService.bind(services.owner.id, {
+        projectKey: "alpha",
+        repositoryId: 101,
+        repositoryFullName: "owner/repo",
+      }, services.owner.id);
+      services.model.push({
+        action: "create_task",
+        text: "",
+        task: {
+          goal: "对照规划审查项目实施情况",
+          completionCriteria: '{"repo":"other/repo"}',
+          mandate: { resources: ["github"], tools: ["github.read"] },
+        },
+      });
+      await sendText(
+        services,
+        "--project=alpha 对照 docs/plan.md 审查项目实施情况",
+        "evt_bound_review",
+      );
+      const [task] = services.tasks.listByOwner(services.owner.id);
+      assert.equal(task?.mandate.project, "alpha");
+      assert.equal(JSON.parse(task?.completionCriteria ?? "{}").repo, "owner/repo");
+    } finally {
+      services.store.close();
+    }
   });
 
   it("never invents a repo for a non-GitHub task", () => {

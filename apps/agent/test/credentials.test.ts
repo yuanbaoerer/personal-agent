@@ -45,6 +45,11 @@ describe("CredentialBroker", () => {
       () => broker.resolve("github:default", ["issues.write"]),
       CredentialScopeError,
     );
+    broker.register("github:unscoped", { token: "test-token" });
+    await assert.rejects(
+      () => broker.resolve("github:unscoped", ["repository.read"]),
+      CredentialScopeError,
+    );
     assert.equal(broker.revoke("github:default"), true);
     assert.equal(await broker.resolve("github:default"), undefined);
     assert.equal(broker.revoke("github:default"), false);
@@ -72,6 +77,26 @@ describe("CredentialBroker", () => {
       () => broker.resolve("github:broken"),
       /credential github:broken provider failed/,
     );
+  });
+
+  it("discards tokens returned after revoke, rotation or expiry", async () => {
+    for (const invalidate of ["revoke", "rotate", "expire"] as const) {
+      let now = NOW;
+      const broker = new CredentialBroker(() => now);
+      const provider = Promise.withResolvers<string>();
+      const ref = "github:default";
+      broker.register(ref, {
+        provider: () => provider.promise,
+        expiresAt: "2026-01-01T00:00:01.000Z",
+        scopes: ["repository.read"],
+      });
+      const resolving = broker.resolve(ref, ["repository.read"]);
+      if (invalidate === "revoke") broker.revoke(ref);
+      if (invalidate === "rotate") broker.rotate(ref, { token: "new-token" });
+      if (invalidate === "expire") now = new Date("2026-01-01T00:00:01.000Z");
+      provider.resolve("old-token");
+      assert.equal(await resolving, undefined, invalidate);
+    }
   });
 
   it("rejects token-shaped refs", () => {

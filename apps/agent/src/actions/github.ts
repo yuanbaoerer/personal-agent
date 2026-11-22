@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import {
   ToolRejectedError,
   type ActionTool,
@@ -133,6 +135,9 @@ export class GitHubReadTool implements ActionTool {
           `${operation} requires an active projectKey`,
         );
       }
+      if (context?.taskId !== undefined && context.project === undefined) {
+        throw new ToolRejectedError("typed GitHub reads require a task mandate project");
+      }
       if (
         context?.project !== undefined &&
         context.project.toLowerCase() !== requestedProject
@@ -198,7 +203,7 @@ export class GitHubReadTool implements ActionTool {
       ) {
         let binding: GitHubProjectBinding | undefined;
         try {
-          binding = this.#config.resolveProject(context.project);
+          binding = this.#config.resolveProject(context.project.toLowerCase());
         } catch {
           throw new ToolRejectedError("GitHub project binding lookup failed");
         }
@@ -598,9 +603,8 @@ export class GitHubReadTool implements ActionTool {
   }
 
   /**
-   * `/pulls/{n}/files` is not pinned by SHA. Read the PR head before and after
-   * the file list; retry once, then mark the receipt stale so the verifier
-   * refuses deterministic conclusions from it.
+   * `/pulls/{n}/files` is not pinned by SHA. Check both base and head around
+   * the file list. Retry once, then mark the receipt stale if either moves.
    */
   async #readPullFiles(
     repo: string,
@@ -639,6 +643,7 @@ export class GitHubReadTool implements ActionTool {
     );
     let retryCount = 0;
     let stale = false;
+    let observedBaseSha: string | undefined;
     let observedHeadSha: string | undefined;
 
     const second = await this.#requestJson(
@@ -653,8 +658,7 @@ export class GitHubReadTool implements ActionTool {
         "github pull request has no base/head SHA",
       );
     }
-    if (secondShas.headSha !== headSha) {
-      observedHeadSha = headSha;
+    if (secondShas.headSha !== headSha || secondShas.baseSha !== baseSha) {
       headSha = secondShas.headSha;
       baseSha = secondShas.baseSha;
       retryCount = 1;
@@ -676,30 +680,31 @@ export class GitHubReadTool implements ActionTool {
           "github pull request has no base/head SHA",
         );
       }
-      if (thirdShas.headSha !== headSha) {
+      if (thirdShas.headSha !== headSha || thirdShas.baseSha !== baseSha) {
         stale = true;
+        observedBaseSha = baseSha;
         observedHeadSha = headSha;
         headSha = thirdShas.headSha;
-        baseSha = thirdShas.baseSha;
-      } else {
         baseSha = thirdShas.baseSha;
       }
     }
 
     const items = Array.isArray(files.body) ? files.body : [];
+    const truncated = files.hasNext || items.length > limit;
     return {
       operation: "pull_files",
       repo,
       number,
       baseSha,
       headSha,
+      ...(observedBaseSha === undefined ? {} : { observedBaseSha }),
       ...(observedHeadSha === undefined ? {} : { observedHeadSha }),
       retryCount,
       stale,
-      coverage: stale ? "unknown" : "complete",
+      coverage: stale ? "unknown" : truncated ? "partial" : "complete",
       source: `https://github.com/${repo}/pull/${number}/files`,
       items: items.slice(0, limit).map((item) => mapPullFile(asObject(item))),
-      truncated: files.hasNext || items.length > limit,
+      truncated,
     };
   }
 
@@ -1075,6 +1080,10 @@ function mapIssue(record: Record<string, unknown>): Record<string, unknown> {
     author: stringValue(asObject(record.user).login),
     body: truncateText(body, 4_000),
     bodyTruncated: body !== undefined && body.length > 4_000,
+    beforeHash:
+      body !== undefined && body.length <= 4_000 && record.pull_request === undefined
+        ? createHash("sha256").update(body).digest("hex")
+        : undefined,
     labels,
     isPullRequest: record.pull_request !== undefined,
     createdAt: stringValue(record.created_at),
