@@ -75,6 +75,7 @@ Usage:
   pa plans show <id> [--json]
   pa plans create <task-id> --file PLAN.json [--json]
   pa plans revise <id> --file PLAN.json [--json]
+  pa plans replan <id> --file PLAN.json [--json]
   pa plans activate <id> --yes [--json]
   pa plans pause <id> [--json]
   pa plans resume <id> [--json]
@@ -795,7 +796,7 @@ export async function runCli(
           else io.out(formatPlanView(view));
           return 0;
         }
-        if (sub === "create" || sub === "revise") {
+        if (sub === "create" || sub === "revise" || sub === "replan") {
           const target = requirePositional(
             args,
             1,
@@ -809,7 +810,9 @@ export async function runCli(
           const view =
             sub === "create"
               ? await client.createPlan(target, input)
-              : await client.revisePlan(target, input);
+              : sub === "revise"
+                ? await client.revisePlan(target, input)
+                : await client.replanPlan(target, input);
           if (json) printJson(io, view);
           else io.out(formatPlanView(view));
           return 0;
@@ -844,7 +847,7 @@ export async function runCli(
           return 0;
         }
         throw new Error(
-          "plans subcommand must be list, show, create, revise, activate, pause, resume, cancel or diff",
+          "plans subcommand must be list, show, create, revise, replan, activate, pause, resume, cancel or diff",
         );
       }
       case "skills": {

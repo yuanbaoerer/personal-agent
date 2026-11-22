@@ -9,7 +9,9 @@ import type { Db } from "./db.ts";
  * lives in pa_meta rather than `PRAGMA user_version`, which Durable Object
  * SQLite does not expose through its typed API.
  */
-const migrations: readonly (readonly string[])[] = [
+type MigrationStatement = string | ((db: Db) => void);
+
+const migrations: readonly (readonly MigrationStatement[])[] = [
   [
     `CREATE TABLE pa_identities (
       id TEXT PRIMARY KEY,
@@ -621,6 +623,42 @@ const migrations: readonly (readonly string[])[] = [
     `CREATE INDEX pa_plan_diffs_plan_idx
        ON pa_plan_diffs (plan_id, to_version DESC)`,
   ],
+  [
+    // PL-02 wires plan steps to child tasks. The child task carries plan_id
+    // so the dispatcher can reserve the parent while the plan runs; steps
+    // keep the child task id and their own completion criteria.
+    `ALTER TABLE pa_tasks ADD COLUMN plan_id TEXT`,
+    `ALTER TABLE pa_tasks ADD COLUMN plan_step_key TEXT`,
+    `CREATE INDEX IF NOT EXISTS pa_tasks_plan_idx ON pa_tasks (plan_id, plan_step_key)`,
+    `ALTER TABLE pa_plan_steps ADD COLUMN task_id TEXT`,
+    `ALTER TABLE pa_plan_steps ADD COLUMN completion_criteria TEXT NOT NULL DEFAULT ''`,
+    `CREATE INDEX IF NOT EXISTS pa_plan_steps_task_idx ON pa_plan_steps (task_id)`,
+  ],
+  [
+    // Stable plan-lineage budget key. Some databases at schema 23 already
+    // have the column (the intermediate branch tip added it early), so the
+    // ALTER must be conditional. Existing plan children are backfilled to
+    // the parent-task lineage instead of keeping a per-plan-row counter.
+    (db) => {
+      // sqlite_master is queryable on both node:sqlite and Durable Object
+      // SQLite; PRAGMA statements are not uniformly available.
+      const table = db.all<{ sql: string | null }>(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'pa_tasks'",
+      )[0];
+      if (table?.sql !== null && !/\bbudget_key\b/i.test(table?.sql ?? "")) {
+        db.exec("ALTER TABLE pa_tasks ADD COLUMN budget_key TEXT");
+      }
+    },
+    `CREATE INDEX IF NOT EXISTS pa_tasks_budget_idx ON pa_tasks (budget_key)`,
+    `UPDATE pa_tasks
+       SET budget_key = 'plan:' || (
+         SELECT p.parent_task_id FROM pa_plans p WHERE p.id = pa_tasks.plan_id
+       )
+     WHERE plan_id IS NOT NULL
+       AND plan_step_key IS NOT NULL
+       AND budget_key IS NULL
+       AND EXISTS (SELECT 1 FROM pa_plans p WHERE p.id = pa_tasks.plan_id)`,
+  ],
 ];
 
 /** Highest schema version this build can read/migrate. */
@@ -668,7 +706,11 @@ export function migrate(db: Db): void {
 
     db.transaction(() => {
       for (const statement of statements) {
-        db.exec(statement);
+        if (typeof statement === "string") {
+          db.exec(statement);
+        } else {
+          statement(db);
+        }
       }
       db.run(
         `INSERT INTO pa_meta (key, value) VALUES (?, ?)

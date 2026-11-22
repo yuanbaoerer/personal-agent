@@ -33,10 +33,16 @@ export interface NewPlanStep {
   tools: string[];
   resources: string[];
   verifierId: string;
+  completionCriteria: string;
   maxAttempts: number;
   timeoutMs: number;
   status: PlanStepStatus;
   evidenceRefs?: string[];
+  /** Preserved when a replan copies a completed step from an older version. */
+  taskId?: string;
+  attempts?: number;
+  startedAt?: string;
+  completedAt?: string;
   createdAt: string;
 }
 
@@ -65,10 +71,12 @@ interface PlanStepRow {
   tools_json: string;
   resources_json: string;
   verifier_id: string;
+  completion_criteria: string;
   max_attempts: number;
   timeout_ms: number;
   status: PlanStepStatus;
   assignment_id: string | null;
+  task_id: string | null;
   attempts: number;
   evidence_refs_json: string;
   last_error: string | null;
@@ -117,10 +125,12 @@ function mapStep(row: PlanStepRow): PlanStepRecord {
     tools: parseStrings(row.tools_json),
     resources: parseStrings(row.resources_json),
     verifierId: row.verifier_id,
+    completionCriteria: row.completion_criteria,
     maxAttempts: Number(row.max_attempts),
     timeoutMs: Number(row.timeout_ms),
     status: row.status,
     assignmentId: row.assignment_id ?? undefined,
+    taskId: row.task_id ?? undefined,
     attempts: Number(row.attempts),
     evidenceRefs: parseStrings(row.evidence_refs_json),
     lastError: row.last_error ?? undefined,
@@ -168,9 +178,10 @@ export class PlanRepository {
     const row = this.#db.all<PlanStepRow>(
       `INSERT INTO pa_plan_steps
         (id, plan_id, step_key, ordinal, goal, depends_on_json, tools_json,
-         resources_json, verifier_id, max_attempts, timeout_ms, status,
-         evidence_refs_json, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         resources_json, verifier_id, completion_criteria, max_attempts,
+         timeout_ms, status, evidence_refs_json, task_id, attempts,
+         started_at, completed_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        RETURNING *`,
       randomUUID(),
       input.planId,
@@ -181,10 +192,15 @@ export class PlanRepository {
       JSON.stringify(input.tools),
       JSON.stringify(input.resources),
       input.verifierId,
+      input.completionCriteria,
       input.maxAttempts,
       input.timeoutMs,
       input.status,
       JSON.stringify(input.evidenceRefs ?? []),
+      input.taskId ?? null,
+      input.attempts ?? 0,
+      input.startedAt ?? null,
+      input.completedAt ?? null,
       input.createdAt,
       input.createdAt,
     )[0];
@@ -334,6 +350,115 @@ export class PlanRepository {
       planId,
       ...stepKeys,
     );
+  }
+
+  getStep(planId: string, stepKey: string): PlanStepRecord | undefined {
+    const row = this.#db.all<PlanStepRow>(
+      "SELECT * FROM pa_plan_steps WHERE plan_id = ? AND step_key = ?",
+      planId,
+      stepKey,
+    )[0];
+    return row === undefined ? undefined : mapStep(row);
+  }
+
+  bindStepTask(
+    planId: string,
+    stepKey: string,
+    taskId: string,
+    at: string,
+  ): PlanStepRecord | undefined {
+    const row = this.#db.all<PlanStepRow>(
+      `UPDATE pa_plan_steps
+       SET task_id = ?, status = 'running', attempts = attempts + 1,
+           started_at = COALESCE(started_at, ?), updated_at = ?
+       WHERE plan_id = ? AND step_key = ? AND status = 'ready'
+       RETURNING *`,
+      taskId,
+      at,
+      at,
+      planId,
+      stepKey,
+    )[0];
+    return row === undefined ? undefined : mapStep(row);
+  }
+
+  setStepAssignment(
+    planId: string,
+    stepKey: string,
+    assignmentId: string,
+    at: string,
+  ): void {
+    this.#db.run(
+      `UPDATE pa_plan_steps
+       SET assignment_id = ?, updated_at = ?
+       WHERE plan_id = ? AND step_key = ?`,
+      assignmentId,
+      at,
+      planId,
+      stepKey,
+    );
+  }
+
+  setStepOutcome(
+    planId: string,
+    stepKey: string,
+    status: PlanStepStatus,
+    evidenceRefs: readonly string[],
+    lastError: string | undefined,
+    at: string,
+  ): PlanStepRecord | undefined {
+    const row = this.#db.all<PlanStepRow>(
+      `UPDATE pa_plan_steps
+       SET status = ?, evidence_refs_json = ?, last_error = ?,
+           completed_at = CASE
+             WHEN ? IN ('completed', 'failed', 'needs_review', 'cancelled') THEN ?
+             ELSE completed_at
+           END,
+           updated_at = ?
+       WHERE plan_id = ? AND step_key = ?
+       RETURNING *`,
+      status,
+      JSON.stringify(evidenceRefs),
+      lastError ?? null,
+      status,
+      at,
+      at,
+      planId,
+      stepKey,
+    )[0];
+    return row === undefined ? undefined : mapStep(row);
+  }
+
+  resetStepForRetry(
+    planId: string,
+    stepKey: string,
+    lastError: string,
+    at: string,
+  ): PlanStepRecord | undefined {
+    const row = this.#db.all<PlanStepRow>(
+      `UPDATE pa_plan_steps
+       SET status = 'ready', last_error = ?, updated_at = ?
+       WHERE plan_id = ? AND step_key = ? AND status = 'running'
+       RETURNING *`,
+      lastError,
+      at,
+      planId,
+      stepKey,
+    )[0];
+    return row === undefined ? undefined : mapStep(row);
+  }
+
+  listPlansByStatus(status: PlanStatus, limit = 50): PlanRecord[] {
+    return this.#db
+      .all<PlanRow>(
+        `SELECT * FROM pa_plans
+         WHERE status = ?
+         ORDER BY updated_at ASC
+         LIMIT ?`,
+        status,
+        limit,
+      )
+      .map(mapPlan);
   }
 
   insertDiff(planId: string, diff: PlanDiff): void {

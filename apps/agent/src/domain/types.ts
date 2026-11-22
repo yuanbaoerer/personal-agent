@@ -229,6 +229,12 @@ export interface TaskRecord {
   acknowledgedBy?: string;
   /** Set when this task was created by an authorized schedule policy. */
   schedulePolicyId?: string;
+  /** Set when this task is a plan parent or a plan step child. */
+  planId?: string;
+  /** Set only on a child task that executes one plan step. */
+  planStepKey?: string;
+  /** Stable counter key shared by every plan version of one parent task. */
+  budgetKey?: string;
   /** Capability catalog identity pinned at task creation/revision. */
   extension?: TaskExtensionSnapshot;
   createdAt: string;
@@ -275,6 +281,8 @@ export interface PlanStepSpec {
   /** Subset of the parent task mandate resources, including tool resources. */
   resources: string[];
   verifierId: string;
+  /** Task completion criteria for this step; defaults from verifierId. */
+  completionCriteria?: string;
   maxAttempts?: number;
   timeoutMs?: number;
 }
@@ -301,10 +309,13 @@ export interface PlanStepRecord extends PlanStepSpec {
   id: string;
   planId: string;
   ordinal: number;
+  completionCriteria: string;
   maxAttempts: number;
   timeoutMs: number;
   status: PlanStepStatus;
   assignmentId?: string;
+  /** Child task that executes this step; absent before dispatch. */
+  taskId?: string;
   attempts: number;
   evidenceRefs: string[];
   lastError?: string;
@@ -789,6 +800,7 @@ export interface ScheduleIntent {
 export type RouterAction =
   | "reply"
   | "create_task"
+  | "draft_plan"
   | "supplement_task"
   | "revise_task"
   | "cancel_task"
@@ -821,6 +833,8 @@ export interface RouterDecision {
   taskId?: string;
   /** Natural task reference; the program resolves it against owner tasks. */
   taskRef?: string;
+  /** Model-proposed 3–5 step plan; always validated by PlanService. */
+  plan?: { steps: PlanStepSpec[] };
   /** Changes for an existing task; a revision bump invalidates old work. */
   changes?: {
     goal?: string;

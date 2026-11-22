@@ -13,6 +13,7 @@ import type { CapabilityView } from "../plugins/fence.ts";
 import { PlanRepository } from "../storage/plans.ts";
 import type { Store } from "../storage/store.ts";
 import type { TaskRepository } from "../storage/tasks.ts";
+import type { ActionRepository } from "../storage/actions.ts";
 
 export const PLAN_MIN_STEPS = 3;
 export const PLAN_MAX_STEPS = 5;
@@ -97,6 +98,7 @@ function compareStepFields(
   if (!sameList(left.tools, right.tools)) fields.push("tools");
   if (!sameList(left.resources, right.resources)) fields.push("resources");
   if (left.verifierId !== right.verifierId) fields.push("verifierId");
+  if (left.completionCriteria !== right.completionCriteria) fields.push("completionCriteria");
   if (left.maxAttempts !== right.maxAttempts) fields.push("maxAttempts");
   if (left.timeoutMs !== right.timeoutMs) fields.push("timeoutMs");
   return fields;
@@ -152,6 +154,30 @@ function normalizeBudget(steps: readonly PlanStepSpec[], input?: Partial<PlanBud
   return budget;
 }
 
+/** A replan may shrink but never refresh or expand an existing plan budget. */
+function assertBudgetNotExpanded(next: PlanBudget, current: PlanBudget): void {
+  const required: { key: "maxSteps" | "maxAttemptsPerStep" | "timeoutMs"; label: string }[] = [
+    { key: "maxSteps", label: "maxSteps" },
+    { key: "maxAttemptsPerStep", label: "maxAttemptsPerStep" },
+    { key: "timeoutMs", label: "timeoutMs" },
+  ];
+  for (const { key, label } of required) {
+    if (next[key] > current[key]) {
+      throw new PlanError("invalid_plan", `replan cannot increase budget.${label}`);
+    }
+  }
+  for (const key of ["maxToolCalls", "maxCostUsd"] as const) {
+    const currentValue = current[key];
+    const nextValue = next[key];
+    if (
+      currentValue !== undefined &&
+      (nextValue === undefined || nextValue > currentValue)
+    ) {
+      throw new PlanError("invalid_plan", `replan cannot increase budget.${key}`);
+    }
+  }
+}
+
 /**
  * Validate a model- or owner-proposed plan against the parent task mandate
  * and the live capability catalog. The program never lets a plan widen
@@ -198,6 +224,30 @@ export function resolvePlanSpec(
     const verifierId = raw.verifierId.trim();
     if (!VERIFIER_PATTERN.test(verifierId)) {
       throw new PlanError("invalid_plan", `step ${key} verifierId is not valid`);
+    }
+    const completionCriteria = (raw.completionCriteria ?? "").trim();
+    if (completionCriteria.length > 2_000) {
+      throw new PlanError(
+        "invalid_plan",
+        `step ${key} completionCriteria must be at most 2000 characters`,
+      );
+    }
+    if (completionCriteria.startsWith("{")) {
+      let criteria: unknown;
+      try {
+        criteria = JSON.parse(completionCriteria);
+      } catch {
+        throw new PlanError("invalid_plan", `step ${key} completionCriteria is not valid JSON`);
+      }
+      if (typeof criteria === "object" && criteria !== null) {
+        const declared = (criteria as Record<string, unknown>).verifier;
+        if (typeof declared === "string" && declared !== verifierId) {
+          throw new PlanError(
+            "invalid_plan",
+            `step ${key} completionCriteria verifier ${declared} does not match ${verifierId}`,
+          );
+        }
+      }
     }
 
     const tools = uniqueStrings(raw.tools, `step ${key} tools`);
@@ -265,6 +315,7 @@ export function resolvePlanSpec(
       tools,
       resources,
       verifierId,
+      completionCriteria,
       maxAttempts,
       timeoutMs,
     });
@@ -331,6 +382,7 @@ function planStepsToSpecs(steps: readonly PlanStepRecord[]): Required<PlanStepSp
     tools: step.tools,
     resources: step.resources,
     verifierId: step.verifierId,
+    completionCriteria: step.completionCriteria,
     maxAttempts: step.maxAttempts,
     timeoutMs: step.timeoutMs,
   }));
@@ -371,6 +423,7 @@ export interface PlanServiceDeps {
   store: Store;
   plans: PlanRepository;
   tasks: TaskRepository;
+  actions?: ActionRepository;
   capabilities?: CapabilityView;
   now?: () => Date;
 }
@@ -384,15 +437,23 @@ export class PlanService {
   readonly #store: Store;
   readonly #plans: PlanRepository;
   readonly #tasks: TaskRepository;
+  readonly #actions?: ActionRepository;
   readonly #capabilities?: CapabilityView;
   readonly #now: () => Date;
+  #onLifecycle?: (planId: string) => void;
 
   constructor(deps: PlanServiceDeps) {
     this.#store = deps.store;
     this.#plans = deps.plans;
     this.#tasks = deps.tasks;
+    this.#actions = deps.actions;
     this.#capabilities = deps.capabilities;
     this.#now = deps.now ?? (() => new Date());
+  }
+
+  /** The host wires this to the executor; tests can omit it. */
+  setLifecycleHook(handler: (planId: string) => void): void {
+    this.#onLifecycle = handler;
   }
 
   create(ownerId: string, parentTaskId: string, input: PlanSpecInput): PlanView {
@@ -423,6 +484,7 @@ export class PlanService {
           tools: step.tools,
           resources: step.resources,
           verifierId: step.verifierId,
+          completionCriteria: step.completionCriteria,
           maxAttempts: step.maxAttempts,
           timeoutMs: step.timeoutMs,
           status: "blocked",
@@ -444,6 +506,11 @@ export class PlanService {
     this.#assertTaskOpen(task);
     const spec = resolvePlanSpec(input, task, this.#capabilities);
     const oldSteps = this.#plans.listSteps(source.id);
+    if (oldSteps.some((step) => step.status === "running")) {
+      throw new PlanError("invalid_transition", "pause the plan before revising it");
+    }
+    this.#assertNoRunningVersions(task.id, source.id);
+    this.#assertNoInFlightActions(task.id);
     const latest = this.#plans.latestForTask(task.id);
     const now = this.#now().toISOString();
     const planVersion = (latest?.planVersion ?? source.planVersion) + 1;
@@ -473,6 +540,7 @@ export class PlanService {
           tools: step.tools,
           resources: step.resources,
           verifierId: step.verifierId,
+          completionCriteria: step.completionCriteria,
           maxAttempts: step.maxAttempts,
           timeoutMs: step.timeoutMs,
           status: "blocked",
@@ -493,6 +561,164 @@ export class PlanService {
       fromVersion: source.planVersion,
       fromPlanId: source.id,
     });
+    this.#onLifecycle?.(source.id);
+    return view;
+  }
+
+  /**
+   * Owner-initiated replan after a paused/failed step. Completed steps are
+   * immutable and copied into the new version; budgets can only shrink.
+   * The new version becomes active immediately under the owner's explicit
+   * command and keeps the same parent task/authorization.
+   */
+  replan(ownerId: string, planId: string, input: PlanSpecInput): PlanView {
+    const source = this.#ownedPlan(ownerId, planId);
+    if (source.status !== "paused" && source.status !== "active") {
+      throw new PlanError("invalid_transition", `cannot replan a ${source.status} plan`);
+    }
+    const task = this.#task(ownerId, source.parentTaskId);
+    if (
+      task.status === "succeeded" ||
+      task.status === "cancelled" ||
+      task.status === "needs_review"
+    ) {
+      throw new PlanError("task_terminal", `parent task is ${task.status}`);
+    }
+    if (source.taskRevision !== task.revision) {
+      throw new PlanError("task_revision_changed", "parent task revision changed");
+    }
+    const latestInput = this.#plans.maxInputSeq(task.id);
+    if (latestInput > source.inputSeq) {
+      throw new PlanError("stale_task_input", "parent task has newer input");
+    }
+    const oldSteps = this.#plans.listSteps(source.id);
+    if (oldSteps.some((step) => step.status === "running")) {
+      throw new PlanError("invalid_transition", "pause the plan before replanning");
+    }
+    this.#assertNoRunningVersions(task.id, source.id);
+    this.#assertNoInFlightActions(task.id);
+    const spec = resolvePlanSpec(input, task, this.#capabilities);
+    assertBudgetNotExpanded(spec.budget, source.budget);
+
+    for (const step of oldSteps) {
+      if (step.status !== "completed") {
+        continue;
+      }
+      const replacement = spec.steps.find((candidate) => candidate.key === step.key);
+      if (replacement === undefined) {
+        throw new PlanError(
+          "invalid_plan",
+          `completed step ${step.key} cannot be removed by a replan`,
+        );
+      }
+      const comparison = diffPlanSteps([step], [
+        {
+          ...step,
+          goal: replacement.goal,
+          dependsOn: replacement.dependsOn,
+          tools: replacement.tools,
+          resources: replacement.resources,
+          verifierId: replacement.verifierId,
+          completionCriteria: replacement.completionCriteria,
+          maxAttempts: replacement.maxAttempts,
+          timeoutMs: replacement.timeoutMs,
+        },
+      ])[0];
+      if (comparison?.change !== "unchanged") {
+        throw new PlanError(
+          "invalid_plan",
+          `completed step ${step.key} cannot be changed by a replan`,
+        );
+      }
+    }
+
+    const completed = new Set(
+      oldSteps.filter((step) => step.status === "completed").map((step) => step.key),
+    );
+    const completedByKey = new Map(
+      oldSteps.filter((step) => step.status === "completed").map((step) => [step.key, step]),
+    );
+    const latest = this.#plans.latestForTask(task.id);
+    const now = this.#now().toISOString();
+    const view = this.#store.db.transaction(() => {
+      this.#plans.setPlanStatus(
+        source.id,
+        ["active", "paused"],
+        "superseded",
+        now,
+      );
+      const plan = this.#plans.insertPlan({
+        ownerId,
+        parentTaskId: task.id,
+        taskRevision: task.revision,
+        inputSeq: this.#plans.maxInputSeq(task.id),
+        planVersion: (latest?.planVersion ?? source.planVersion) + 1,
+        status: "active",
+        projectKey: task.mandate.project,
+        approvedScopeRef: `task:${task.id}:rev:${task.revision}:plan:${(latest?.planVersion ?? source.planVersion) + 1}`,
+        budget: spec.budget,
+        createdAt: now,
+      });
+      if (this.#tasks.bindPlan(task.id, plan.id, now) === undefined) {
+        throw new PlanError("invalid_transition", "parent task could not be rebound");
+      }
+      const steps = spec.steps.map((step, ordinal) => {
+        const previous = completedByKey.get(step.key);
+        if (previous !== undefined) {
+          return this.#plans.insertStep({
+            planId: plan.id,
+            stepKey: step.key,
+            ordinal,
+            goal: step.goal,
+            dependsOn: step.dependsOn,
+            tools: step.tools,
+            resources: step.resources,
+            verifierId: step.verifierId,
+            completionCriteria: step.completionCriteria,
+            maxAttempts: step.maxAttempts,
+            timeoutMs: step.timeoutMs,
+            status: "completed",
+            evidenceRefs: previous.evidenceRefs,
+            taskId: previous.taskId,
+            attempts: previous.attempts,
+            startedAt: previous.startedAt,
+            completedAt: previous.completedAt,
+            createdAt: now,
+          });
+        }
+        return this.#plans.insertStep({
+          planId: plan.id,
+          stepKey: step.key,
+          ordinal,
+          goal: step.goal,
+          dependsOn: step.dependsOn,
+          tools: step.tools,
+          resources: step.resources,
+          verifierId: step.verifierId,
+          completionCriteria: step.completionCriteria,
+          maxAttempts: step.maxAttempts,
+          timeoutMs: step.timeoutMs,
+          status: step.dependsOn.every((dependency) => completed.has(dependency))
+            ? "ready"
+            : "blocked",
+          createdAt: now,
+        });
+      });
+      const diff: PlanDiff = {
+        parentTaskId: task.id,
+        fromVersion: source.planVersion,
+        toVersion: plan.planVersion,
+        steps: diffPlanSteps(oldSteps, steps),
+        createdAt: now,
+      };
+      this.#plans.insertDiff(plan.id, diff);
+      return { plan, steps };
+    });
+    this.#audit("plan.replanned", view.plan, {
+      fromVersion: source.planVersion,
+      fromPlanId: source.id,
+    });
+    this.#onLifecycle?.(view.plan.id);
     return view;
   }
 
@@ -506,6 +732,17 @@ export class PlanService {
     if (this.#plans.activeForTask(task.id) !== undefined) {
       throw new PlanError("conflict_active_plan", "another plan version is already active");
     }
+    if (
+      task.status === "running" ||
+      this.#tasks.listActiveAssignments(task.id).length > 0
+    ) {
+      throw new PlanError(
+        "invalid_transition",
+        "parent task already has an active Worker; wait for or cancel it before activating a plan",
+      );
+    }
+    this.#assertNoRunningVersions(task.id, plan.id);
+    this.#assertNoInFlightActions(task.id);
     const steps = this.#plans.listSteps(plan.id);
     resolvePlanSpec(
       { steps: planStepsToSpecs(steps), budget: plan.budget },
@@ -532,9 +769,17 @@ export class PlanService {
       if (stamped === undefined) {
         throw new PlanError("plan_not_found", "plan disappeared during activation");
       }
+      // Reserve the parent task before any dispatch effect can claim it.
+      if (this.#tasks.bindPlan(task.id, plan.id, now) === undefined) {
+        throw new PlanError(
+          "invalid_transition",
+          "parent task is already bound to another active plan",
+        );
+      }
       return { plan: stamped, steps: this.#plans.listSteps(plan.id) };
     });
     this.#audit("plan.activated", view.plan, { roots });
+    this.#onLifecycle?.(view.plan.id);
     return view;
   }
 
@@ -549,6 +794,8 @@ export class PlanService {
     if (this.#plans.activeForTask(task.id) !== undefined) {
       throw new PlanError("conflict_active_plan", "another plan version is already active");
     }
+    this.#assertNoRunningVersions(task.id, plan.id);
+    this.#assertNoInFlightActions(task.id);
     // The catalog can change without a task revision; re-check the steps
     // against the live mandate/capabilities before making them runnable.
     resolvePlanSpec(
@@ -594,6 +841,7 @@ export class PlanService {
       return { plan: cancelled, steps: this.#plans.listSteps(plan.id) };
     });
     this.#audit("plan.cancelled", view.plan, {});
+    this.#onLifecycle?.(view.plan.id);
     return view;
   }
 
@@ -672,6 +920,7 @@ export class PlanService {
       return { plan: updated, steps: this.#plans.listSteps(plan.id) };
     });
     this.#audit(event, view.plan, {});
+    this.#onLifecycle?.(view.plan.id);
     return view;
   }
 
@@ -698,6 +947,37 @@ export class PlanService {
   #assertTaskOpen(task: TaskRecord): void {
     if (TERMINAL_TASK_STATUSES.has(task.status)) {
       throw new PlanError("task_terminal", `parent task is ${task.status}`);
+    }
+  }
+
+  /** No other non-terminal version may still have a running step. */
+  #assertNoRunningVersions(taskId: string, exceptPlanId?: string): void {
+    for (const version of this.#plans.listVersions(taskId)) {
+      if (
+        version.id === exceptPlanId ||
+        version.status === "completed" ||
+        version.status === "cancelled"
+      ) {
+        continue;
+      }
+      const running = this.#plans
+        .listSteps(version.id)
+        .find((step) => step.status === "running");
+      if (running !== undefined) {
+        throw new PlanError(
+          "invalid_transition",
+          `plan ${version.id.slice(0, 8)} still has a running step ${running.key}`,
+        );
+      }
+    }
+  }
+
+  #assertNoInFlightActions(taskId: string): void {
+    if ((this.#actions?.listInFlight(taskId).length ?? 0) > 0) {
+      throw new PlanError(
+        "invalid_transition",
+        "parent task has an in-flight action; wait for it to settle before binding a plan",
+      );
     }
   }
 

@@ -221,6 +221,30 @@ export class ActionRepository {
       .map(mapAction);
   }
 
+  /** Tool calls consumed under one stable budget key (task or plan lineage). */
+  countByBudgetKey(budgetKey: string): number {
+    const row = this.#db.all<{ count: number }>(
+      `SELECT COUNT(*) AS count
+       FROM pa_actions a
+       JOIN pa_tasks t ON t.id = a.task_id
+       WHERE t.budget_key = ?`,
+      budgetKey,
+    )[0];
+    return Number(row?.count ?? 0);
+  }
+
+  /** Tool calls consumed by every child that belongs to one plan. */
+  countByPlan(planId: string): number {
+    const row = this.#db.all<{ count: number }>(
+      `SELECT COUNT(*) AS count
+       FROM pa_actions a
+       JOIN pa_tasks t ON t.id = a.task_id
+       WHERE t.plan_id = ?`,
+      planId,
+    )[0];
+    return Number(row?.count ?? 0);
+  }
+
   /** Pending approvals for a plugin being disabled or replaced. */
   listPendingForTools(tools: readonly string[]): ActionRecord[] {
     if (tools.length === 0) {

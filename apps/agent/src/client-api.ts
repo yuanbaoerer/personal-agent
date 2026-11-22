@@ -223,6 +223,13 @@ function parsePlanSteps(value: unknown): PlanStepSpec[] {
           : parseStringArray(record.resources, `steps[${index}].resources`),
       verifierId: parseString(record.verifierId, `steps[${index}].verifierId`, 64),
     };
+    if (record.completionCriteria !== undefined) {
+      step.completionCriteria = parseString(
+        record.completionCriteria,
+        `steps[${index}].completionCriteria`,
+        2_000,
+      );
+    }
     if (record.maxAttempts !== undefined) {
       step.maxAttempts = parseApiInteger(record.maxAttempts, `steps[${index}].maxAttempts`, 1, 3);
     }
@@ -738,6 +745,10 @@ export class ClientApiService {
         this.#require(auth, "write");
         return this.#revisePlan(id, request);
       }
+      if (id !== undefined && action === "replan" && method === "POST") {
+        this.#require(auth, "write");
+        return this.#replanPlan(id, request);
+      }
       if (
         id !== undefined &&
         method === "POST" &&
@@ -1049,6 +1060,19 @@ export class ClientApiService {
     const body = parseJsonBody(request);
     try {
       const view = this.#services.planService.revise(this.#ownerId, id, {
+        steps: parsePlanSteps(body.steps),
+        budget: parsePlanBudget(body.budget),
+      });
+      return { status: 200, body: view };
+    } catch (error) {
+      rethrowPlanError(error);
+    }
+  }
+
+  #replanPlan(id: string, request: ClientApiRequest): ClientApiResponse {
+    const body = parseJsonBody(request);
+    try {
+      const view = this.#services.planService.replan(this.#ownerId, id, {
         steps: parsePlanSteps(body.steps),
         budget: parsePlanBudget(body.budget),
       });

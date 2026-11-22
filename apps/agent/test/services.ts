@@ -172,6 +172,7 @@ export function createServices(options: {
     store,
     plans,
     tasks,
+    actions,
     capabilities: catalog,
     now,
   });
@@ -226,6 +227,7 @@ export function createServices(options: {
     maxConcurrentTools: options.maxConcurrentTools,
     maxToolCallsPerTask: options.maxToolCallsPerTask,
     tasks,
+    plans,
     preauthorizations: preauthorization,
     schedulePolicies: schedulePolicy,
     onSettled: (taskId) => taskService.onActionSettled(taskId),
@@ -283,6 +285,7 @@ export function createServices(options: {
     now,
     capabilities: catalog,
     projects,
+    plans: planService,
     issueDrafts,
     issueDraftApproval,
   });

@@ -231,6 +231,16 @@ export class ClientApiClient {
     });
   }
 
+  async replanPlan(
+    id: string,
+    input: { steps: PlanStepSpec[]; budget?: Partial<PlanBudget> },
+  ): Promise<PlanView> {
+    return this.#request(`/plans/${encodeURIComponent(id)}/replan`, {
+      method: "POST",
+      body: input,
+    });
+  }
+
   async activatePlan(id: string): Promise<PlanView> {
     return this.#request(`/plans/${encodeURIComponent(id)}/activate`, {
       method: "POST",

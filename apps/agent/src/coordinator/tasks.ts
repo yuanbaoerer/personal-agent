@@ -114,6 +114,10 @@ export interface CreateTaskInput {
   deadline?: string;
   schedulePolicyId?: string;
   extensionPolicy?: ExtensionPolicy;
+  /** Internal: parent/child link for a plan-managed task. */
+  planId?: string;
+  planStepKey?: string;
+  budgetKey?: string;
   /** False for tasks whose authority is an already-approved external action. */
   dispatch?: boolean;
 }
@@ -209,6 +213,9 @@ export class TaskService {
       priority: input.priority,
       deadline: input.deadline,
       schedulePolicyId: input.schedulePolicyId,
+      planId: input.planId,
+      planStepKey: input.planStepKey,
+      budgetKey: input.budgetKey,
       extension,
       createdAt: now,
     });
@@ -300,6 +307,11 @@ export class TaskService {
       `external:${outcome.verification.verifier}:${outcome.verification.verdict}`,
     );
     return updated;
+  }
+
+  /** A plan parent has no Worker of its own; children carry planStepKey. */
+  #isPlanParent(task: TaskRecord): boolean {
+    return task.planId !== undefined && task.planStepKey === undefined;
   }
 
   /**
@@ -658,9 +670,14 @@ export class TaskService {
     if (task === undefined) {
       return;
     }
-
     if (task.status === "cancelling") {
+      // Finish a cancellation even when the task is also a plan parent;
+      // otherwise its in-flight action receipt would be dropped forever.
       this.#finalizeCancellation(taskId, now);
+      return;
+    }
+    // A plan parent is otherwise settled by the PlanExecutor.
+    if (this.#isPlanParent(task)) {
       return;
     }
 
@@ -689,6 +706,11 @@ export class TaskService {
         // A dispatch effect that arrives after the Worker session opened must
         // still attach the wait effect; otherwise a real session is stranded.
         return this.#acceptLateDispatch(task, now);
+      }
+      // The parent task is reserved for its active plan; child step tasks
+      // carry planStepKey and dispatch normally.
+      if (this.#isPlanParent(task)) {
+        return { status: "done" };
       }
       if (task.status !== "queued") {
         return { status: "done" };
@@ -817,7 +839,12 @@ export class TaskService {
 
     const budget = await this.#budget?.check({
       role: "worker",
-      taskId: claimed.task.id,
+      // All children of one plan share the parent's model-call budget.
+      taskId:
+        claimed.task.budgetKey ??
+        (claimed.task.planId === undefined
+          ? claimed.task.id
+          : `plan:${claimed.task.planId}`),
     });
     if (budget !== undefined && !budget.ok) {
       const at = this.#now().toISOString();

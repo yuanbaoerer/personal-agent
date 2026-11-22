@@ -11,6 +11,7 @@ import type {
 import type { CapabilityView } from "../src/plugins/fence.ts";
 import { PlanRepository } from "../src/storage/plans.ts";
 import { TaskRepository } from "../src/storage/tasks.ts";
+import { ActionRepository } from "../src/storage/actions.ts";
 import type { Store } from "../src/storage/store.ts";
 import { createStore } from "./helpers.ts";
 
@@ -116,6 +117,7 @@ function setup() {
     store,
     plans: new PlanRepository(store.db),
     tasks: new TaskRepository(store.db),
+    actions: new ActionRepository(store.db),
     capabilities: capabilities(),
     now: () => new Date(NOW),
   });
@@ -414,6 +416,153 @@ describe("plan lifecycle", () => {
     assert.equal(
       codeOf(() => service.resume(owner.id, draft.plan.id)),
       "invalid_plan",
+    );
+  });
+
+  it("replans a failed plan while preserving completed steps and budget", () => {
+    const { store, owner, task, service } = setup();
+    const draft = service.create(owner.id, task.id, { steps: steps() });
+    service.activate(owner.id, draft.plan.id);
+    const plans = new PlanRepository(store.db);
+    assert.ok(plans.bindStepTask(draft.plan.id, "A", "child-a", NOW));
+    plans.setStepOutcome(draft.plan.id, "A", "completed", ["task:child-a"], undefined, NOW);
+    new TaskRepository(store.db).updateTask(task.id, task.revision, {
+      status: "failed",
+      updatedAt: NOW,
+    });
+
+    const changed = steps();
+    changed[1] = { ...changed[1]!, goal: "analyze revised evidence" };
+    const replanned = service.replan(owner.id, draft.plan.id, { steps: changed });
+
+    assert.equal(replanned.plan.planVersion, 2);
+    assert.equal(replanned.plan.status, "active");
+    assert.equal(service.get(owner.id, draft.plan.id)?.plan.status, "superseded");
+    assert.deepEqual(
+      replanned.steps.map((step) => [step.key, step.status]),
+      [
+        ["A", "completed"],
+        ["B", "ready"],
+        ["C", "ready"],
+      ],
+    );
+    const preserved = replanned.steps.find((step) => step.key === "A");
+    assert.equal(preserved?.taskId, "child-a");
+    assert.deepEqual(preserved?.evidenceRefs, ["task:child-a"]);
+    assert.equal(store.listAuditAfter(0, 100).filter((item) => item.event === "plan.replanned").length, 1);
+    assert.equal(new TaskRepository(store.db).get(task.id)?.planId, replanned.plan.id);
+    assert.equal(new TaskRepository(store.db).get(task.id)?.status, "waiting_external");
+  });
+
+  it("rejects replans that change completed steps or expand the budget", () => {
+    const first = setup();
+    const draft = first.service.create(first.owner.id, first.task.id, { steps: steps() });
+    first.service.activate(first.owner.id, draft.plan.id);
+    const plans = new PlanRepository(first.store.db);
+    assert.ok(plans.bindStepTask(draft.plan.id, "A", "child-a", NOW));
+    plans.setStepOutcome(draft.plan.id, "A", "completed", [], undefined, NOW);
+
+    const changedCompleted = steps();
+    changedCompleted[0] = { ...changedCompleted[0]!, goal: "different completed goal" };
+    assert.equal(
+      codeOf(() => first.service.replan(first.owner.id, draft.plan.id, { steps: changedCompleted })),
+      "invalid_plan",
+    );
+
+    const expanded = steps();
+    assert.equal(
+      codeOf(() =>
+        first.service.replan(first.owner.id, draft.plan.id, {
+          steps: expanded,
+          budget: { maxAttemptsPerStep: 2 },
+        }),
+      ),
+      "invalid_plan",
+    );
+  });
+
+  it("refuses activation while the parent task has an active Worker", () => {
+    const { store, owner, task, service } = setup();
+    const draft = service.create(owner.id, task.id, { steps: steps() });
+    const claimed = new TaskRepository(store.db).claimNext(NOW, 60_000, 2);
+    assert.ok(claimed);
+    assert.equal(
+      codeOf(() => service.activate(owner.id, draft.plan.id)),
+      "invalid_transition",
+    );
+  });
+
+  it("refuses activation over another version with a running step", () => {
+    const { store, owner, task, service } = setup();
+    const first = service.create(owner.id, task.id, { steps: steps() });
+    service.activate(owner.id, first.plan.id);
+    assert.ok(
+      new PlanRepository(store.db).bindStepTask(first.plan.id, "A", "child-running", NOW),
+    );
+    service.pause(owner.id, first.plan.id);
+
+    const second = service.create(owner.id, task.id, { steps: steps() });
+    assert.equal(
+      codeOf(() => service.activate(owner.id, second.plan.id)),
+      "invalid_transition",
+    );
+  });
+
+  it("refuses activation over a superseded version with a running step", () => {
+    const { store, owner, task, service } = setup();
+    const first = service.create(owner.id, task.id, { steps: steps() });
+    service.activate(owner.id, first.plan.id);
+    const plans = new PlanRepository(store.db);
+    assert.ok(plans.bindStepTask(first.plan.id, "A", "child-running", NOW));
+    assert.ok(plans.setPlanStatus(first.plan.id, ["active"], "superseded", NOW));
+
+    const second = service.create(owner.id, task.id, { steps: steps() });
+    assert.equal(
+      codeOf(() => service.activate(owner.id, second.plan.id)),
+      "invalid_transition",
+    );
+  });
+
+  it("refuses revise/resume while the parent has an in-flight action", () => {
+    const { store, owner, task, service } = setup();
+    const draft = service.create(owner.id, task.id, { steps: steps() });
+    service.activate(owner.id, draft.plan.id);
+    service.pause(owner.id, draft.plan.id);
+    const action = new ActionRepository(store.db).insert({
+      ownerId: owner.id,
+      conversationId: task.conversationId,
+      taskId: task.id,
+      taskRevision: task.revision,
+      fencingToken: 1,
+      tool: "state.summary",
+      args: {},
+      argsHash: "in-flight-hash",
+      expiresAt: "2026-01-01T01:00:00.000Z",
+      nonce: "in-flight-nonce",
+      createdAt: NOW,
+    }).action;
+    store.db.run("UPDATE pa_actions SET status = 'executing' WHERE id = ?", action.id);
+
+    assert.equal(
+      codeOf(() => service.resume(owner.id, draft.plan.id)),
+      "invalid_transition",
+    );
+    assert.equal(
+      codeOf(() => service.revise(owner.id, draft.plan.id, { steps: steps() })),
+      "invalid_transition",
+    );
+  });
+
+  it("refuses to revise while a step is running", () => {
+    const { store, owner, task, service } = setup();
+    const draft = service.create(owner.id, task.id, { steps: steps() });
+    service.activate(owner.id, draft.plan.id);
+    assert.ok(
+      new PlanRepository(store.db).bindStepTask(draft.plan.id, "A", "child-running", NOW),
+    );
+    assert.equal(
+      codeOf(() => service.revise(owner.id, draft.plan.id, { steps: steps() })),
+      "invalid_transition",
     );
   });
 

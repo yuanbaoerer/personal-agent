@@ -40,6 +40,7 @@ import { TaskRepository } from "./storage/tasks.ts";
 import { ProjectService } from "./personal/projects.ts";
 import { PlanRepository } from "./storage/plans.ts";
 import { PlanService } from "./coordinator/plans.ts";
+import { PlanExecutor } from "./coordinator/plan-executor.ts";
 
 /**
  * Everything the business logic needs that only a host can supply. Node and
@@ -89,6 +90,7 @@ export interface AppServices {
   projects: ProjectRepository;
   plans: PlanRepository;
   planService: PlanService;
+  planExecutor: PlanExecutor;
   issueDrafts: IssueDraftService;
   issueDraftApproval?: IssueDraftApprovalBridge;
   taskService: TaskService;
@@ -173,6 +175,7 @@ export function createApp(deps: AppDeps): AppServices {
     store,
     plans,
     tasks,
+    actions,
     capabilities: catalog,
     now: deps.now,
   });
@@ -218,6 +221,7 @@ export function createApp(deps: AppDeps): AppServices {
     wake: deps.wake,
     now: deps.now,
     tasks,
+    plans,
     maxToolCallsPerTask,
     preauthorizations: preauthorization,
     schedulePolicies: schedulePolicy,
@@ -282,14 +286,28 @@ export function createApp(deps: AppDeps): AppServices {
     now: deps.now,
     capabilities: catalog,
     projects,
+    plans: planService,
     issueDrafts,
     issueDraftApproval,
   });
+
+  const planExecutor = new PlanExecutor({
+    store,
+    plans,
+    tasks,
+    taskService,
+    effects,
+    projects,
+    wake: deps.wake,
+    now: deps.now,
+  });
+  planService.setLifecycleHook((planId) => planExecutor.start(planId));
 
   const effectDispatcher = new EffectDispatcher({ effects });
   taskService.install(effectDispatcher);
   actionService.install(effectDispatcher);
   router.install(effectDispatcher);
+  planExecutor.install(effectDispatcher);
 
   const ingress = new IngressService({ store, handler: router });
 
@@ -305,6 +323,7 @@ export function createApp(deps: AppDeps): AppServices {
     projects,
     plans,
     planService,
+    planExecutor,
     issueDrafts,
     issueDraftApproval,
     taskService,
