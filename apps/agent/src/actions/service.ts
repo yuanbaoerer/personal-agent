@@ -299,10 +299,13 @@ export class ActionService {
 
   /** All step children of a plan share one cumulative tool-call budget. */
   #toolCallsUsed(task: TaskRecord): number {
-    if (task.planId === undefined) {
-      return this.#actions.listByTask(task.id).length;
+    if (task.budgetKey !== undefined) {
+      return this.#actions.countByBudgetKey(task.budgetKey);
     }
-    return this.#actions.countByPlan(task.planId);
+    if (task.planId !== undefined) {
+      return this.#actions.countByPlan(task.planId);
+    }
+    return this.#actions.listByTask(task.id).length;
   }
 
   #toolCallLimit(task: TaskRecord): number {

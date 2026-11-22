@@ -233,6 +233,8 @@ export interface TaskRecord {
   planId?: string;
   /** Set only on a child task that executes one plan step. */
   planStepKey?: string;
+  /** Stable counter key shared by every plan version of one parent task. */
+  budgetKey?: string;
   /** Capability catalog identity pinned at task creation/revision. */
   extension?: TaskExtensionSnapshot;
   createdAt: string;

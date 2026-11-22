@@ -627,7 +627,9 @@ const migrations: readonly (readonly string[])[] = [
     // keep the child task id and their own completion criteria.
     `ALTER TABLE pa_tasks ADD COLUMN plan_id TEXT`,
     `ALTER TABLE pa_tasks ADD COLUMN plan_step_key TEXT`,
+    `ALTER TABLE pa_tasks ADD COLUMN budget_key TEXT`,
     `CREATE INDEX IF NOT EXISTS pa_tasks_plan_idx ON pa_tasks (plan_id, plan_step_key)`,
+    `CREATE INDEX IF NOT EXISTS pa_tasks_budget_idx ON pa_tasks (budget_key)`,
     `ALTER TABLE pa_plan_steps ADD COLUMN task_id TEXT`,
     `ALTER TABLE pa_plan_steps ADD COLUMN completion_criteria TEXT NOT NULL DEFAULT ''`,
     `CREATE INDEX IF NOT EXISTS pa_plan_steps_task_idx ON pa_plan_steps (task_id)`,

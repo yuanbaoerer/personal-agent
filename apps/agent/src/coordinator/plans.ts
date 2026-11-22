@@ -502,6 +502,9 @@ export class PlanService {
     this.#assertTaskOpen(task);
     const spec = resolvePlanSpec(input, task, this.#capabilities);
     const oldSteps = this.#plans.listSteps(source.id);
+    if (oldSteps.some((step) => step.status === "running")) {
+      throw new PlanError("invalid_transition", "pause the plan before revising it");
+    }
     const latest = this.#plans.latestForTask(task.id);
     const now = this.#now().toISOString();
     const planVersion = (latest?.planVersion ?? source.planVersion) + 1;
@@ -720,6 +723,15 @@ export class PlanService {
     this.#assertFresh(plan, task);
     if (this.#plans.activeForTask(task.id) !== undefined) {
       throw new PlanError("conflict_active_plan", "another plan version is already active");
+    }
+    if (
+      task.status === "running" ||
+      this.#tasks.listActiveAssignments(task.id).length > 0
+    ) {
+      throw new PlanError(
+        "invalid_transition",
+        "parent task already has an active Worker; wait for or cancel it before activating a plan",
+      );
     }
     const steps = this.#plans.listSteps(plan.id);
     resolvePlanSpec(

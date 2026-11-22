@@ -479,6 +479,30 @@ describe("plan lifecycle", () => {
     );
   });
 
+  it("refuses activation while the parent task has an active Worker", () => {
+    const { store, owner, task, service } = setup();
+    const draft = service.create(owner.id, task.id, { steps: steps() });
+    const claimed = new TaskRepository(store.db).claimNext(NOW, 60_000, 2);
+    assert.ok(claimed);
+    assert.equal(
+      codeOf(() => service.activate(owner.id, draft.plan.id)),
+      "invalid_transition",
+    );
+  });
+
+  it("refuses to revise while a step is running", () => {
+    const { store, owner, task, service } = setup();
+    const draft = service.create(owner.id, task.id, { steps: steps() });
+    service.activate(owner.id, draft.plan.id);
+    assert.ok(
+      new PlanRepository(store.db).bindStepTask(draft.plan.id, "A", "child-running", NOW),
+    );
+    assert.equal(
+      codeOf(() => service.revise(owner.id, draft.plan.id, { steps: steps() })),
+      "invalid_transition",
+    );
+  });
+
   it("keeps plans owner-scoped and survives a service restart", () => {
     const { store, owner, task, service } = setup();
     const draft = service.create(owner.id, task.id, { steps: steps() });

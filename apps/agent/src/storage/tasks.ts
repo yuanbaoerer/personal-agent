@@ -37,6 +37,7 @@ interface TaskRow {
   schedule_policy_id: string | null;
   plan_id: string | null;
   plan_step_key: string | null;
+  budget_key: string | null;
   extension_json: string | null;
   created_at: string;
   updated_at: string;
@@ -113,6 +114,7 @@ function mapTask(row: TaskRow): TaskRecord {
     schedulePolicyId: row.schedule_policy_id ?? undefined,
     planId: row.plan_id ?? undefined,
     planStepKey: row.plan_step_key ?? undefined,
+    budgetKey: row.budget_key ?? undefined,
     extension:
       row.extension_json === null
         ? undefined
@@ -166,6 +168,7 @@ export interface NewTaskInput {
   schedulePolicyId?: string;
   planId?: string;
   planStepKey?: string;
+  budgetKey?: string;
   extension?: TaskExtensionSnapshot;
   createdAt: string;
 }
@@ -204,8 +207,9 @@ export class TaskRepository {
       `INSERT INTO pa_tasks
         (id, owner_id, conversation_id, source_key, goal, completion_criteria,
          mandate_json, revision, status, priority, attempts, deadline, budget_json,
-         schedule_policy_id, plan_id, plan_step_key, extension_json, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'queued', ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)
+         schedule_policy_id, plan_id, plan_step_key, budget_key, extension_json,
+         created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'queued', ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (source_key) DO NOTHING
        RETURNING *`,
       id,
@@ -221,6 +225,7 @@ export class TaskRepository {
       input.schedulePolicyId ?? null,
       input.planId ?? null,
       input.planStepKey ?? null,
+      input.budgetKey ?? null,
       input.extension === undefined ? null : JSON.stringify(input.extension),
       input.createdAt,
       input.createdAt,

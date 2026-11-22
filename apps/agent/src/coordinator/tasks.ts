@@ -117,6 +117,7 @@ export interface CreateTaskInput {
   /** Internal: parent/child link for a plan-managed task. */
   planId?: string;
   planStepKey?: string;
+  budgetKey?: string;
   /** False for tasks whose authority is an already-approved external action. */
   dispatch?: boolean;
 }
@@ -214,6 +215,7 @@ export class TaskService {
       schedulePolicyId: input.schedulePolicyId,
       planId: input.planId,
       planStepKey: input.planStepKey,
+      budgetKey: input.budgetKey,
       extension,
       createdAt: now,
     });
@@ -838,9 +840,10 @@ export class TaskService {
       role: "worker",
       // All children of one plan share the parent's model-call budget.
       taskId:
-        claimed.task.planId === undefined
+        claimed.task.budgetKey ??
+        (claimed.task.planId === undefined
           ? claimed.task.id
-          : `plan:${claimed.task.planId}`,
+          : `plan:${claimed.task.planId}`),
     });
     if (budget !== undefined && !budget.ok) {
       const at = this.#now().toISOString();
