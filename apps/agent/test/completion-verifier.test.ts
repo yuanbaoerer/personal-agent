@@ -1454,3 +1454,82 @@ describe("TaskCompletionVerifier", () => {
     assert.match(missing, /target_issue_unverified/);
   });
 });
+
+describe("typed claim selection", () => {
+  it("checks another file receipt at the same revision before reporting missing", () => {
+    const services = setup();
+    const task = createTask(services, {
+      mandateSkills: ["github.project-review"],
+      key: "review-multi-file-claim",
+    });
+    const assignment = claim(services);
+    const sha = "e".repeat(40);
+    for (const path of ["docs/21-mvp-functional-ready.md", "docs/24-github-project-management.md"]) {
+      insertSucceededGithubCustom(
+        services,
+        task.id,
+        assignment,
+        { operation: "file", projectKey: "personal-agent", repo: "owner/repo", sha, path },
+        {
+          operation: "file",
+          repo: "owner/repo",
+          projectKey: "personal-agent",
+          repositoryId: 101,
+          commitSha: sha,
+          path,
+          source: `https://github.com/owner/repo/blob/${sha}/${path}`,
+          permanentUrl: `https://github.com/owner/repo/blob/${sha}/${path}`,
+          item: { type: "file", path, content: "# plan\n" },
+        },
+      );
+    }
+    const source = `https://github.com/owner/repo/blob/${sha}/docs/24-github-project-management.md`;
+    services.taskService.report(
+      assignment.assignment.id,
+      assignment.assignment.fencingToken,
+      assignment.assignment.taskRevision,
+      {
+        ...ready("review", [{ kind: "github", value: source }]),
+        githubClaims: [{
+          kind: "github_typed",
+          repo: "owner/repo",
+          projectKey: "personal-agent",
+          operation: "file",
+          revision: sha,
+          target: "docs/24-github-project-management.md",
+          field: "exists",
+          value: true,
+        }],
+        findings: [{
+          id: "f1",
+          requirementRef: "docs/24 GH-02",
+          classification: "observed",
+          severity: "high",
+          repositoryId: 101,
+          commitSha: sha,
+          evidenceRefs: [source],
+          expected: "exists",
+          actual: "exists",
+          impact: "test",
+          existingIssueMatches: [],
+          suggestedAction: "none",
+          coverage: "complete",
+        }],
+        issueDrafts: [{
+          action: "create",
+          title: "Track the verified plan",
+          body: "Keep the plan check.",
+          findingIds: ["f1"],
+          requiresOwnerApproval: true,
+        }],
+      },
+    );
+    const current = services.tasks.get(task.id);
+    assert.equal(
+      current?.status,
+      "succeeded",
+      JSON.stringify(current?.verification),
+    );
+    assert.equal(current?.verification?.missing.length, 0);
+  });
+});
