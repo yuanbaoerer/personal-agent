@@ -11,7 +11,7 @@
 | CX-01 context | `feat/conv-01-context` | `af38963` | bounded window + per-conversation session (`21a5eaf`) + causal ordering fix |
 | CX-01 routing | `feat/conv-01-routing` | `a71d9a1` | replyKind, discussion guard, ack purposes, guard regression (`7f569e9`, `4a933d1`, `a71d9a1`) |
 | PL-01 plan store | `feat/plan-01-store` | `1b793b0` | schema/service/API/CLI + review fixes (`20c0af7`, `7be79d5`, `1b793b0`) |
-| PL-02 executor | `feat/plan-02-executor` | `9bce654` | child-task executor, shared budgets, progress/replan, review-hardened cancellation/settlement, idempotent schema upgrade and paused-plan replan preservation (`0a6e883`, `78d6d88`, `e03b900`, `1f971e8`, `43dbfd2`, `3ac2a87`, `e411e92`, `b58048f`, `9bce654`) |
+| PL-02 executor | `feat/plan-02-executor` | `a5cc3ce` | child-task executor, shared budgets, progress/replan, review-hardened cancellation/settlement, idempotent schema upgrade, paused-plan replan preservation and superseded-straggler recovery (`0a6e883`, `78d6d88`, `e03b900`, `1f971e8`, `43dbfd2`, `3ac2a87`, `e411e92`, `b58048f`, `9bce654`, `a5cc3ce`) |
 | Acceptance record | `docs/exp-01-evidence` | this commit | docs only |
 
 These branches are not merged. A real acceptance run must record the actual deployed/main SHA instead.
@@ -25,8 +25,8 @@ These branches are not merged. A real acceptance run must record the actual depl
 | `feat/plan-01-store` | `npm run typecheck` | pass |
 | `feat/plan-01-store` | `npm test` | 536 tests pass |
 | `feat/plan-02-executor` | `npm run typecheck` | pass |
-| `feat/plan-02-executor` | `npm test` | 563 tests pass |
-| all | `node --test apps/agent/test/plans.test.ts apps/agent/test/plan-executor.test.ts apps/agent/test/plans-api.test.ts` | 37 tests pass |
+| `feat/plan-02-executor` | `npm test` | 565 tests pass |
+| all | `node --test apps/agent/test/plans.test.ts apps/agent/test/plan-executor.test.ts apps/agent/test/plans-api.test.ts` | 39 tests pass |
 
 Environment: macOS x64, local Node, `:memory:` SQLite for tests, `FakeRuntime` for model answers. No provider call, no Feishu send, no GitHub request.
 
@@ -69,6 +69,7 @@ No `.env`, token, chat text or provider response is recorded here.
 - The final step always uses the parent completion criteria; a plan without a final step that can prove them settles `needs_review`.
 - The final step deliberately runs with the parent mandate so the parent verifier cannot be weakened; a final step declared with no tools may therefore invoke parent read tools. External writes still require ActionService approval.
 - Migration compatibility is covered from schema 18 and from both schema-23 shapes (column absent and column already present); the upgrade is conditional (sqlite_master, not PRAGMA) and backfills legacy plan-step children to `plan:<parentTaskId>`.
+- Sweep clears running/ready steps under superseded versions from intermediate-branch data, so a later version can activate; revise/resume reject an in-flight parent action in tests.
 
 ## Next evidence step
 
