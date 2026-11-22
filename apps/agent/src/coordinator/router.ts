@@ -2,6 +2,8 @@ import type {
   InboxRecord,
   Mandate,
   OutboxPurpose,
+  PlanDiff,
+  PlanRecord,
   ProjectBinding,
   ReplyDraft,
   RouterDecision,
@@ -73,6 +75,7 @@ import type { WakeScheduler } from "../runtime/types.ts";
 import type { CapabilityView } from "../plugins/fence.ts";
 import type { IssueDraftService, IssueDraftView } from "../personal/issue-drafts.ts";
 import type { IssueDraftApprovalBridge } from "../personal/draft-approval.ts";
+import type { PlanService } from "./plans.ts";
 
 export interface RouterModel {
   decide(input: RouterInput, capabilities?: CapabilityView): Promise<RouterDecision>;
@@ -129,6 +132,8 @@ export interface RouterDeps {
   /** Persisted verifier-approved drafts and the approval-to-write bridge. */
   issueDrafts?: IssueDraftService;
   issueDraftApproval?: IssueDraftApprovalBridge;
+  /** Persistent plans; enables owner-facing plan status and control. */
+  plans?: PlanService;
 }
 
 const GITHUB_REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -264,6 +269,14 @@ export function isDiscussionOnly(text: string): boolean {
     return false;
   }
   return CAPABILITY_QUESTION_PATTERN.test(value);
+}
+
+const PLAN_PROGRESS_PATTERN =
+  /(?:(?:当前|刚才|这个|那个)?(?:计划|方案)\s*(?:现在|当前)?\s*(?:的)?\s*(?:进展|进度|状态|到哪(?:一)?步|下一步(?:是什么|做什么)?)|(?:进展|进度|状态)\s*(?:怎么样|如何|到哪(?:一)?步)|plan\s+(?:status|progress))/i;
+
+/** Natural-language plan progress questions are answered deterministically. */
+export function isPlanProgressQuery(text: string): boolean {
+  return PLAN_PROGRESS_PATTERN.test(text.trim());
 }
 
 export function normalizeGithubCriteria(
@@ -578,6 +591,7 @@ export class Router implements InboundHandler {
   readonly #projects?: ProjectCatalog;
   readonly #issueDrafts?: IssueDraftService;
   readonly #issueDraftApproval?: IssueDraftApprovalBridge;
+  readonly #plans?: PlanService;
 
   constructor(deps: RouterDeps) {
     this.#store = deps.store;
@@ -601,6 +615,7 @@ export class Router implements InboundHandler {
     this.#projects = deps.projects;
     this.#issueDrafts = deps.issueDrafts;
     this.#issueDraftApproval = deps.issueDraftApproval;
+    this.#plans = deps.plans;
     this.#stateQuery = new StateQueryHandler({
       tasks: deps.tasks,
       state: deps.state,
@@ -650,6 +665,11 @@ export class Router implements InboundHandler {
     const command = await this.#command(event, text);
     if (command !== undefined) {
       return command;
+    }
+
+    const planProgress = this.#planProgressReply(event, text);
+    if (planProgress !== undefined) {
+      return [planProgress];
     }
 
     const now = this.#now().toISOString();
@@ -1521,6 +1541,19 @@ export class Router implements InboundHandler {
       return undefined;
     }
 
+    if (text === "/plans") {
+      return [
+        {
+          purpose: "status",
+          text: this.#planListText(this.#conversationPlans(ownerId, conversationId)),
+        },
+      ];
+    }
+    const planCommand = this.#planCommand(event, text);
+    if (planCommand !== undefined) {
+      return planCommand;
+    }
+
     if (text === "/status" || text === "状态") {
       return [{ purpose: "status", text: this.statusText(ownerId) }];
     }
@@ -2238,6 +2271,222 @@ export class Router implements InboundHandler {
     for (const item of this.#stateQuery.handle(context, requested)) {
       this.#reply(context, item.text, item.purpose);
     }
+  }
+
+  #planCommand(event: InboxRecord, text: string): ReplyDraft[] | undefined {
+    if (
+      this.#plans === undefined ||
+      event.ownerId === undefined ||
+      event.conversationId === undefined ||
+      (text !== "/plan" && !text.startsWith("/plan "))
+    ) {
+      return undefined;
+    }
+    const ownerId = event.ownerId;
+    const conversationId = event.conversationId;
+    const parts = text.split(/\s+/).filter((part) => part.length > 0);
+    const sub = parts[1];
+    if (sub === undefined || sub === "list") {
+      return [
+        {
+          purpose: "status",
+          text: this.#planListText(this.#conversationPlans(ownerId, conversationId)),
+        },
+      ];
+    }
+
+    if (sub === "diff") {
+      const ref = parts[2];
+      if (ref === undefined) {
+        return [{ purpose: "failure", text: "用法：/plan diff <id> [from] [to]" }];
+      }
+      const from = this.#planVersionArg(parts[3]);
+      const to = this.#planVersionArg(parts[4]);
+      if (from === null || to === null) {
+        return [{ purpose: "failure", text: "from/to 必须是正整数版本号。" }];
+      }
+      const resolved = this.#resolvePlan(ownerId, conversationId, ref);
+      if ("error" in resolved) {
+        return [{ purpose: "failure", text: resolved.error }];
+      }
+      try {
+        return [
+          {
+            purpose: "status",
+            text: this.#planDiffText(
+              this.#plans.diff(ownerId, resolved.id, from ?? undefined, to ?? undefined),
+            ),
+          },
+        ];
+      } catch (error) {
+        return [
+          {
+            purpose: "failure",
+            text: `读取 PlanDiff 失败：${error instanceof Error ? error.message : String(error)}`,
+          },
+        ];
+      }
+    }
+
+    if (sub === "pause" || sub === "resume" || sub === "cancel") {
+      const ref = parts[2];
+      if (ref === undefined) {
+        return [{ purpose: "failure", text: `用法：/plan ${sub} <id>` }];
+      }
+      if (sub === "cancel" && parts[3] !== "confirm") {
+        return [
+          {
+            purpose: "clarify",
+            text: `取消计划需要确认：/plan cancel ${ref} confirm`,
+          },
+        ];
+      }
+      const resolved = this.#resolvePlan(ownerId, conversationId, ref);
+      if ("error" in resolved) {
+        return [{ purpose: "failure", text: resolved.error }];
+      }
+      try {
+        const view =
+          sub === "pause"
+            ? this.#plans.pause(ownerId, resolved.id)
+            : sub === "resume"
+              ? this.#plans.resume(ownerId, resolved.id)
+              : this.#plans.cancel(ownerId, resolved.id);
+        return [
+          { purpose: "status", text: this.#planDetailText(ownerId, view.plan) },
+        ];
+      } catch (error) {
+        return [
+          {
+            purpose: "failure",
+            text: `计划操作失败：${error instanceof Error ? error.message : String(error)}`,
+          },
+        ];
+      }
+    }
+
+    const resolved = this.#resolvePlan(ownerId, conversationId, sub);
+    if ("error" in resolved) {
+      return [{ purpose: "failure", text: resolved.error }];
+    }
+    return [
+      { purpose: "status", text: this.#planDetailText(ownerId, resolved) },
+    ];
+  }
+
+  #planProgressReply(event: InboxRecord, text: string): ReplyDraft | undefined {
+    if (
+      this.#plans === undefined ||
+      event.ownerId === undefined ||
+      event.conversationId === undefined ||
+      !isPlanProgressQuery(text)
+    ) {
+      return undefined;
+    }
+    const plans = this.#conversationPlans(event.ownerId, event.conversationId);
+    if (plans.length === 0) {
+      // Do not hijack unrelated messages (for example schedule questions)
+      // just because they mention a "计划".
+      return undefined;
+    }
+    const active = plans.filter((plan) => plan.status === "active");
+    if (active.length === 1) {
+      const plan = active[0] as PlanRecord;
+      return { purpose: "status", text: this.#planDetailText(event.ownerId, plan) };
+    }
+    if (active.length > 1) {
+      return { purpose: "status", text: this.#planListText(active) };
+    }
+    const paused = plans.filter((plan) => plan.status === "paused");
+    if (paused.length === 1) {
+      const plan = paused[0] as PlanRecord;
+      return { purpose: "status", text: this.#planDetailText(event.ownerId, plan) };
+    }
+    return { purpose: "status", text: this.#planListText(plans) };
+  }
+
+  #conversationPlans(ownerId: string, conversationId: string): PlanRecord[] {
+    return (this.#plans?.list(ownerId, { limit: 50 }) ?? []).filter(
+      (plan) => this.#tasks.get(plan.parentTaskId)?.conversationId === conversationId,
+    );
+  }
+
+  #resolvePlan(
+    ownerId: string,
+    conversationId: string,
+    ref: string,
+  ): PlanRecord | { error: string } {
+    const matches = this.#conversationPlans(ownerId, conversationId).filter(
+      (plan) => plan.id === ref || plan.id.startsWith(ref),
+    );
+    if (matches.length === 0) {
+      return { error: `当前会话没有匹配 ${ref} 的计划。` };
+    }
+    if (matches.length > 1) {
+      return {
+        error: `计划引用不唯一：${matches
+          .map((plan) => `${plan.id.slice(0, 8)}(v${plan.planVersion})`)
+          .join(", ")}。请使用更长的前缀。`,
+      };
+    }
+    return matches[0] as PlanRecord;
+  }
+
+  #planListText(plans: readonly PlanRecord[]): string {
+    if (plans.length === 0) {
+      return "当前会话没有计划。可用 `pa plans create` 或 API 创建草稿。";
+    }
+    return [
+      "计划：",
+      ...plans.slice(0, 10).map((plan) => {
+        const task = this.#tasks.get(plan.parentTaskId);
+        const goal = task?.goal.slice(0, 80) ?? plan.parentTaskId.slice(0, 8);
+        return `- ${plan.id.slice(0, 8)}  v${plan.planVersion}  ${plan.status}  ${goal}`;
+      }),
+      "详情：/plan <id>；版本差异：/plan diff <id> [from] [to]",
+    ].join("\n");
+  }
+
+  #planDetailText(ownerId: string, plan: PlanRecord): string {
+    const view = this.#plans?.get(ownerId, plan.id);
+    if (view === undefined) {
+      return `计划 ${plan.id.slice(0, 8)} 已不存在。`;
+    }
+    const steps = view.steps;
+    const current = steps.find((step) => step.status === "running");
+    const next = steps.find((step) => step.status === "ready");
+    return [
+      `计划 ${plan.id.slice(0, 8)}  v${plan.planVersion}  ${plan.status}  task=${plan.parentTaskId.slice(0, 8)} rev=${plan.taskRevision} input=${plan.inputSeq}`,
+      `预算 steps<=${plan.budget.maxSteps} attempts<=${plan.budget.maxAttemptsPerStep} timeout=${plan.budget.timeoutMs}ms${plan.budget.maxToolCalls === undefined ? "" : ` calls<=${plan.budget.maxToolCalls}`}${plan.budget.maxCostUsd === undefined ? "" : ` cost<=$${plan.budget.maxCostUsd}`}`,
+      `scope=${plan.approvedScopeRef ?? "-"}  project=${plan.projectKey ?? "-"}`,
+      current === undefined ? "当前：无运行中步骤" : `当前：${current.key} ${current.goal.slice(0, 120)}`,
+      next === undefined ? "下一步：无就绪步骤" : `下一步：${next.key} ${next.goal.slice(0, 120)}`,
+      "步骤：",
+      ...steps.map(
+        (step) =>
+          `- ${step.key} [${step.status}] ${step.goal.slice(0, 100)}  deps=${step.dependsOn.join(",") || "-"}  tools=${step.tools.join(",") || "-"}  verifier=${step.verifierId}`,
+      ),
+    ].join("\n");
+  }
+
+  #planDiffText(diff: PlanDiff): string {
+    const mark = { added: "+", removed: "-", changed: "~", unchanged: " " } as const;
+    return [
+      `PlanDiff v${diff.fromVersion} -> v${diff.toVersion}`,
+      ...diff.steps.map(
+        (step) =>
+          `  ${mark[step.change]} ${step.key.padEnd(16)} ${step.change}` +
+          (step.fields.length === 0 ? "" : `: ${step.fields.join(",")}`),
+      ),
+    ].join("\n");
+  }
+
+  #planVersionArg(raw: string | undefined): number | null | undefined {
+    if (raw === undefined) {
+      return undefined;
+    }
+    const value = Number(raw);
+    return Number.isInteger(value) && value > 0 ? value : null;
   }
 
   #reply(

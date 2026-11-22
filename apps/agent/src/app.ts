@@ -285,6 +285,7 @@ export function createApp(deps: AppDeps): AppServices {
     now: deps.now,
     capabilities: catalog,
     projects,
+    plans: planService,
     issueDrafts,
     issueDraftApproval,
   });

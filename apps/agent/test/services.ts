@@ -284,6 +284,7 @@ export function createServices(options: {
     now,
     capabilities: catalog,
     projects,
+    plans: planService,
     issueDrafts,
     issueDraftApproval,
   });
