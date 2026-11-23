@@ -66,6 +66,7 @@ function setup(options: { budget?: CallBudget } = {}): {
     plans: services.plans,
     tasks: services.tasks,
     taskService: services.taskService,
+    planService: services.planService,
     effects: services.effects,
     projects: services.projects,
     now: () => new Date(clock),
@@ -178,6 +179,7 @@ describe("plan executor", () => {
       plans: services.plans,
       tasks: services.tasks,
       taskService: services.taskService,
+      planService: services.planService,
       effects: services.effects,
       projects: services.projects,
       now: () => NOW,
@@ -469,6 +471,7 @@ describe("plan executor", () => {
       plans: services.plans,
       tasks: services.tasks,
       taskService: services.taskService,
+      planService: services.planService,
       effects: services.effects,
       projects: services.projects,
       now: () => NOW,
@@ -481,24 +484,235 @@ describe("plan executor", () => {
     assert.deepEqual(children[0]?.extension?.policy, { plugins: [] });
   });
 
-  it("fails closed when the parent revision/input changes mid-plan", async () => {
+  it("turns a mid-run supplement into a new plan version", async () => {
     const { services, parent, executor } = setup();
     const plan = services.planService.create(services.owner.id, parent.id, {
       steps: steps(),
     });
     services.planService.activate(services.owner.id, plan.plan.id);
-    services.tasks.addInput({
-      taskId: parent.id,
-      actorId: services.owner.actorId,
-      text: "new constraint",
-      createdAt: NOW.toISOString(),
+    await executor.tick(plan.plan.id);
+    const firstChild = childTasks(services, parent)[0];
+    assert.ok(firstChild);
+    assert.equal(firstChild.status, "queued");
+
+    services.taskService.supplement(
+      parent.id,
+      "only cite evidence, ignore GUI",
+      "inbox:supplement-plan",
+    );
+    const outcome = await executor.tick(plan.plan.id);
+    assert.equal(outcome.status, "done");
+
+    const versions = services.planService.list(services.owner.id, {
+      parentTaskId: parent.id,
+      limit: 10,
     });
+    assert.deepEqual(
+      versions.map((version) => [version.planVersion, version.status]),
+      [
+        [2, "active"],
+        [1, "superseded"],
+      ],
+    );
+    const revised = services.planService.get(services.owner.id, versions[0]!.id);
+    assert.equal(revised?.plan.inputSeq, 1);
+    assert.equal(revised?.steps[0]?.status, "ready");
+    assert.match(revised?.steps[0]?.goal ?? "", /only cite evidence, ignore GUI/);
+    assert.equal(services.tasks.get(parent.id)?.planId, versions[0]?.id);
+    assert.notEqual(services.tasks.get(firstChild.id)?.status, "queued");
+    assert.equal(
+      services.plans.listSteps(plan.plan.id)[0]?.status,
+      "cancelled",
+    );
+    const events = services.store.listAuditAfter(0, 200).map((item) => item.event);
+    assert.ok(events.includes("plan.replanned"));
+  });
+
+  it("fails closed when the parent revision changes mid-plan", async () => {
+    const { services, parent, executor } = setup();
+    const plan = services.planService.create(services.owner.id, parent.id, {
+      steps: steps(),
+    });
+    services.planService.activate(services.owner.id, plan.plan.id);
+    services.tasks.revise(parent.id, { goal: "new goal" }, NOW.toISOString());
     const outcome = await executor.tick(plan.plan.id);
     assert.equal(outcome.status, "done");
     assert.equal(
       services.planService.get(services.owner.id, plan.plan.id)?.plan.status,
       "paused",
     );
+    assert.equal(services.tasks.get(parent.id)?.status, "needs_review");
+  });
+
+  it("automatically replans once after a retryable external failure", async () => {
+    const { services, parent, advance } = setup();
+    let calls = 0;
+    services.runtime.wait = async () => {
+      calls += 1;
+      if (calls === 1) {
+        return {
+          status: "answered",
+          text: JSON.stringify({
+            status: "failed",
+            summary: "github rate limit exceeded (429)",
+            evidence: [{ kind: "http", value: 429 }],
+          }),
+        };
+      }
+      return {
+        status: "answered",
+        text: JSON.stringify({
+          status: "ready",
+          summary: "step ok",
+          evidence: [{ kind: "test", value: "ok" }],
+        }),
+      };
+    };
+    const plan = services.planService.create(services.owner.id, parent.id, {
+      steps: steps(),
+    });
+    services.planService.activate(services.owner.id, plan.plan.id);
+    await drain(services, advance);
+
+    const versions = services.planService.list(services.owner.id, {
+      parentTaskId: parent.id,
+      limit: 10,
+    });
+    assert.deepEqual(
+      versions.map((version) => [version.planVersion, version.status]),
+      [
+        [2, "completed"],
+        [1, "superseded"],
+      ],
+    );
+    assert.equal(versions[0]?.autoReplans, 1);
+    assert.equal(services.tasks.get(parent.id)?.status, "succeeded");
+    const diff = services.planService.diff(
+      services.owner.id,
+      versions[0]!.id,
+      1,
+      2,
+    );
+    assert.deepEqual(
+      diff.steps.map((step) => [step.key, step.change]),
+      [
+        ["A", "changed"],
+        ["B", "unchanged"],
+        ["C", "unchanged"],
+      ],
+    );
+    assert.ok(
+      services.store
+        .listAuditAfter(0, 300)
+        .some((item) => item.event === "plan.auto_replanned"),
+    );
+  });
+
+  it("recovers once from a stale head failure", async () => {
+    const { services, parent, advance } = setup();
+    let calls = 0;
+    services.runtime.wait = async () => {
+      calls += 1;
+      return calls === 1
+        ? {
+            status: "answered",
+            text: JSON.stringify({
+              status: "failed",
+              summary: "pull request head changed (stale head)",
+              evidence: [{ kind: "github", value: "head-moved" }],
+            }),
+          }
+        : {
+            status: "answered",
+            text: JSON.stringify({
+              status: "ready",
+              summary: "step ok",
+              evidence: [{ kind: "test", value: "ok" }],
+            }),
+          };
+    };
+    const plan = services.planService.create(services.owner.id, parent.id, {
+      steps: steps(),
+    });
+    services.planService.activate(services.owner.id, plan.plan.id);
+    await drain(services, advance);
+
+    const versions = services.planService.list(services.owner.id, {
+      parentTaskId: parent.id,
+      limit: 10,
+    });
+    assert.deepEqual(
+      versions.map((version) => [version.planVersion, version.status]),
+      [
+        [2, "completed"],
+        [1, "superseded"],
+      ],
+    );
+    assert.match(
+      services.planService.get(services.owner.id, versions[0]!.id)?.steps[0]?.goal ??
+        "",
+      /stale head/,
+    );
+    assert.equal(services.tasks.get(parent.id)?.status, "succeeded");
+  });
+
+  it("asks the owner instead of replanning on a permission failure", async () => {
+    const { services, parent, advance } = setup();
+    services.runtime.defaultAnswer = {
+      status: "answered",
+      text: JSON.stringify({
+        status: "failed",
+        summary: "github permission denied (403)",
+        evidence: [{ kind: "http", value: 403 }],
+      }),
+    };
+    const plan = services.planService.create(services.owner.id, parent.id, {
+      steps: steps(),
+    });
+    services.planService.activate(services.owner.id, plan.plan.id);
+    await drain(services, advance);
+
+    const versions = services.planService.list(services.owner.id, {
+      parentTaskId: parent.id,
+      limit: 10,
+    });
+    assert.equal(versions.length, 1);
+    assert.equal(versions[0]?.status, "paused");
+    assert.equal(services.tasks.get(parent.id)?.status, "needs_review");
+    assert.equal(
+      services.planService.get(services.owner.id, plan.plan.id)?.steps[0]?.status,
+      "needs_review",
+    );
+    assert.ok(
+      !services.store
+        .listAuditAfter(0, 300)
+        .some((item) => item.event === "plan.auto_replanned"),
+    );
+  });
+
+  it("stops after one automatic recovery and asks for review", async () => {
+    const { services, parent, advance } = setup();
+    services.runtime.defaultAnswer = {
+      status: "answered",
+      text: JSON.stringify({
+        status: "failed",
+        summary: "github rate limit exceeded (429)",
+        evidence: [{ kind: "http", value: 429 }],
+      }),
+    };
+    const plan = services.planService.create(services.owner.id, parent.id, {
+      steps: steps(),
+    });
+    services.planService.activate(services.owner.id, plan.plan.id);
+    await drain(services, advance);
+
+    const versions = services.planService.list(services.owner.id, {
+      parentTaskId: parent.id,
+      limit: 10,
+    });
+    assert.equal(versions.length, 2);
+    assert.equal(versions[0]?.autoReplans, 1);
+    assert.equal(versions[0]?.status, "paused");
     assert.equal(services.tasks.get(parent.id)?.status, "needs_review");
   });
 
@@ -580,6 +794,7 @@ describe("plan executor", () => {
       plans: services.plans,
       tasks: services.tasks,
       taskService: services.taskService,
+      planService: services.planService,
       effects: services.effects,
       projects: services.projects,
       now: () => new Date(clock),

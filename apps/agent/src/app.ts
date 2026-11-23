@@ -296,6 +296,7 @@ export function createApp(deps: AppDeps): AppServices {
     plans,
     tasks,
     taskService,
+    planService,
     effects,
     projects,
     wake: deps.wake,

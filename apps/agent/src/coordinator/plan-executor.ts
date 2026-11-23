@@ -14,6 +14,7 @@ import type { TaskRepository } from "../storage/tasks.ts";
 import type { EffectDispatcher, EffectOutcome } from "../delivery/effects.ts";
 import type { WakeScheduler } from "../runtime/types.ts";
 import type { TaskService } from "./tasks.ts";
+import { PLAN_MAX_AUTO_REPLANS, type PlanService } from "./plans.ts";
 
 const PLAN_TICK_KIND = "plan.tick";
 const TICK_DELAY_MS = 1_000;
@@ -23,6 +24,7 @@ export interface PlanExecutorDeps {
   plans: PlanRepository;
   tasks: TaskRepository;
   taskService: TaskService;
+  planService: PlanService;
   effects: EffectRepository;
   projects?: ProjectRepository;
   wake?: WakeScheduler;
@@ -42,6 +44,7 @@ export class PlanExecutor {
   readonly #plans: PlanRepository;
   readonly #tasks: TaskRepository;
   readonly #taskService: TaskService;
+  readonly #planService: PlanService;
   readonly #effects: EffectRepository;
   readonly #projects?: ProjectRepository;
   readonly #wake?: WakeScheduler;
@@ -53,6 +56,7 @@ export class PlanExecutor {
     this.#plans = deps.plans;
     this.#tasks = deps.tasks;
     this.#taskService = deps.taskService;
+    this.#planService = deps.planService;
     this.#effects = deps.effects;
     this.#projects = deps.projects;
     this.#wake = deps.wake;
@@ -216,18 +220,62 @@ export class PlanExecutor {
       this.#settleCancelled(plan);
       return { status: "done" };
     }
-    // A revision or supplement after activation invalidates the stored plan
-    // scope; do not keep dispatching children from stale authority.
-    if (
-      parent.revision !== plan.taskRevision ||
-      this.#plans.maxInputSeq(parent.id) > plan.inputSeq
-    ) {
+    // A task revision changes the goal or authority itself; only the owner
+    // can re-authorize that through a new task/plan.
+    if (parent.revision !== plan.taskRevision) {
       this.#settleNeedsReview(
         plan,
         parent,
-        "plan is stale relative to the parent task revision or input",
+        "plan is stale relative to the parent task revision",
       );
       return { status: "done" };
+    }
+    // A supplement is a constraint, not new authority. Fold it into a new
+    // active version instead of stranding the plan in needs_review.
+    if (this.#plans.maxInputSeq(parent.id) > plan.inputSeq) {
+      const inputs = this.#tasks
+        .listInputsAfter(parent.id, plan.inputSeq)
+        .map((input) => input.text)
+        .join("\n");
+      try {
+        const revised = this.#planService.replanForSupplement(
+          plan.ownerId,
+          plan.id,
+          inputs,
+        );
+        this.#cancelSiblings(plan, this.#now().toISOString());
+        this.#taskService.notify(
+          parent.id,
+          "status",
+          `计划已根据补充更新为 v${revised.plan.planVersion} 并继续执行。`,
+          `plan-revised:${revised.plan.id}`,
+        );
+        return { status: "done" };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const applied = this.#planService.activeForTask(plan.ownerId, parent.id);
+        if (
+          applied !== undefined &&
+          applied.plan.id !== plan.id &&
+          applied.plan.inputSeq >= this.#plans.maxInputSeq(parent.id)
+        ) {
+          return { status: "done" };
+        }
+        if (/in-flight action|still has a running step/i.test(message)) {
+          return {
+            status: "retry",
+            at: new Date(this.#now().getTime() + this.#tickDelayMs).toISOString(),
+            reason: `plan supplement is waiting for an in-flight action: ${message}`,
+            maxAttempts: 100_000,
+          };
+        }
+        this.#settleNeedsReview(
+          plan,
+          parent,
+          `plan supplement could not be applied: ${message}`,
+        );
+        return { status: "done" };
+      }
     }
 
     let steps = this.#plans.listSteps(plan.id);
@@ -254,12 +302,14 @@ export class PlanExecutor {
           );
           continue;
         }
-        this.#settleFailed(
+        return this.#settleExhaustedStep(
           plan,
           parent,
-          `step ${step.key} failed after ${step.attempts} attempt(s)`,
+          step,
+          step.lastError ?? "step failed",
+          step.evidenceRefs,
+          now,
         );
-        return { status: "done" };
       }
     }
     steps = this.#plans.listSteps(plan.id);
@@ -335,12 +385,14 @@ export class PlanExecutor {
           child.lastError ?? "step failed",
           now,
         );
-        this.#settleFailed(
+        return this.#settleExhaustedStep(
           plan,
           parent,
-          `step ${step.key} failed after ${step.attempts} attempt(s)`,
+          step,
+          child.lastError ?? "step failed",
+          evidenceRefsOf(child),
+          now,
         );
-        return { status: "done" };
       }
     }
 
@@ -432,6 +484,73 @@ export class PlanExecutor {
       reason: "plan steps still running",
       maxAttempts: 100_000,
     };
+  }
+
+  /**
+   * A step that exhausted its attempts can still recover once from a
+   * retryable external error. Permission/scope failures never auto-retry;
+   * they pause the plan and ask the owner with the original evidence.
+   */
+  #settleExhaustedStep(
+    plan: PlanRecord,
+    parent: TaskRecord,
+    step: PlanStepRecord,
+    reason: string,
+    evidenceRefs: readonly string[],
+    now: string,
+  ): EffectOutcome {
+    const short = reason.replace(/\s+/gu, " ").trim().slice(0, 199);
+    const retryable = isRetryableExternalFailure(reason);
+    if (retryable && plan.autoReplans < PLAN_MAX_AUTO_REPLANS) {
+      try {
+        const revised = this.#planService.autoReplanAfterFailure(
+          plan.ownerId,
+          plan.id,
+          reason,
+          { stepKey: step.key },
+        );
+        this.#cancelSiblings(plan, now);
+        this.#taskService.notify(
+          parent.id,
+          "status",
+          `步骤 ${step.key} 遇到外部错误（${short}），已自动重规划为 v${revised.plan.planVersion} 并重试。`,
+          `plan-auto-replanned:${revised.plan.id}`,
+        );
+        return { status: "done" };
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        const message = `step ${step.key} failed after ${step.attempts} attempt(s): ${reason}; automatic recovery unavailable: ${detail}`;
+        this.#plans.setStepOutcome(
+          plan.id,
+          step.key,
+          "needs_review",
+          evidenceRefs,
+          message,
+          now,
+        );
+        this.#settleNeedsReview(plan, parent, message);
+        return { status: "done" };
+      }
+    }
+    if (retryable || isPermissionFailure(reason)) {
+      const message = `step ${step.key} needs owner: ${reason}`;
+      this.#plans.setStepOutcome(
+        plan.id,
+        step.key,
+        "needs_review",
+        evidenceRefs,
+        message,
+        now,
+      );
+      this.#settleNeedsReview(plan, parent, message);
+      return { status: "done" };
+    }
+    this.#settleFailed(
+      plan,
+      parent,
+      `step ${step.key} failed after ${step.attempts} attempt(s)`,
+    );
+    return { status: "done" };
   }
 
   #criteriaFor(
@@ -669,6 +788,26 @@ export class PlanExecutor {
 
 function isTerminal(status: TaskRecord["status"]): boolean {
   return status === "succeeded" || status === "failed" || status === "cancelled";
+}
+
+function isPermissionFailure(reason: string): boolean {
+  // GitHub commonly reports rate limits as 403; never treat that as a
+  // permanent permission failure.
+  if (/\b(?:429|rate[ -]?limit|too many requests)\b/i.test(reason)) {
+    return false;
+  }
+  return /\b(?:401|403|forbidden|unauthorized|permission|not authorized|insufficient scope|scope (?:missing|required|denied)|invalid (?:token|credential)|credential (?:revoked|expired|invalid)|token (?:revoked|expired|invalid))\b/i.test(
+    reason,
+  );
+}
+
+function isRetryableExternalFailure(reason: string): boolean {
+  if (isPermissionFailure(reason)) {
+    return false;
+  }
+  return /\b(?:408|409|412|425|429|5\d\d|rate[ -]?limit|too many requests|timeout|timed out|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ENOTFOUND|socket hang up|network|temporar(?:y|ily)|throttl|head (?:sha )?(?:changed|moved|stale|drift)|stale (?:head|sha)|conflict)\b/i.test(
+    reason,
+  );
 }
 
 function isStoppedParent(status: TaskRecord["status"]): boolean {

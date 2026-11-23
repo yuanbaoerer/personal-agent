@@ -17,6 +17,7 @@ export interface NewPlan {
   taskRevision: number;
   inputSeq: number;
   planVersion: number;
+  autoReplans: number;
   status: PlanStatus;
   projectKey?: string;
   approvedScopeRef?: string;
@@ -53,6 +54,7 @@ interface PlanRow {
   task_revision: number;
   input_seq: number;
   plan_version: number;
+  auto_replans: number;
   status: PlanStatus;
   project_key: string | null;
   approved_scope_ref: string | null;
@@ -105,6 +107,7 @@ function mapPlan(row: PlanRow): PlanRecord {
     taskRevision: Number(row.task_revision),
     inputSeq: Number(row.input_seq),
     planVersion: Number(row.plan_version),
+    autoReplans: Number(row.auto_replans),
     status: row.status,
     projectKey: row.project_key ?? undefined,
     approvedScopeRef: row.approved_scope_ref ?? undefined,
@@ -152,8 +155,9 @@ export class PlanRepository {
     const row = this.#db.all<PlanRow>(
       `INSERT INTO pa_plans
         (id, owner_id, parent_task_id, task_revision, input_seq, plan_version,
-         status, project_key, approved_scope_ref, budget_json, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         auto_replans, status, project_key, approved_scope_ref, budget_json,
+         created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        RETURNING *`,
       randomUUID(),
       input.ownerId,
@@ -161,6 +165,7 @@ export class PlanRepository {
       input.taskRevision,
       input.inputSeq,
       input.planVersion,
+      input.autoReplans,
       input.status,
       input.projectKey ?? null,
       input.approvedScopeRef ?? null,

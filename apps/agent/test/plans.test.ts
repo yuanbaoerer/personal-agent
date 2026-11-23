@@ -458,6 +458,116 @@ describe("plan lifecycle", () => {
     assert.equal(new TaskRepository(store.db).get(task.id)?.status, "waiting_external");
   });
 
+  it("replans an active plan from a mid-run supplement with a PlanDiff", () => {
+    const { store, owner, task, service } = setup();
+    const draft = service.create(owner.id, task.id, { steps: steps() });
+    service.activate(owner.id, draft.plan.id);
+    const plans = new PlanRepository(store.db);
+    assert.ok(plans.bindStepTask(draft.plan.id, "A", "child-a", NOW));
+
+    new TaskRepository(store.db).addInput({
+      taskId: task.id,
+      text: "only cite evidence, ignore GUI",
+      actorId: owner.actorId,
+      createdAt: NOW,
+    });
+    const revised = service.replanForSupplement(
+      owner.id,
+      draft.plan.id,
+      "only cite evidence, ignore GUI",
+    );
+
+    assert.equal(revised.plan.planVersion, 2);
+    assert.equal(revised.plan.status, "active");
+    assert.equal(revised.plan.inputSeq, 1);
+    assert.deepEqual(revised.plan.budget, draft.plan.budget);
+    assert.equal(service.get(owner.id, draft.plan.id)?.plan.status, "superseded");
+    assert.equal(plans.listSteps(draft.plan.id)[0]?.status, "cancelled");
+    assert.deepEqual(
+      revised.steps.map((step) => [step.key, step.status]),
+      [
+        ["A", "ready"],
+        ["B", "blocked"],
+        ["C", "blocked"],
+      ],
+    );
+    const diff = service.diff(owner.id, revised.plan.id, 1, 2);
+    assert.deepEqual(
+      diff.steps.map((step) => [step.key, step.change, step.fields]),
+      [
+        ["A", "changed", ["goal"]],
+        ["B", "changed", ["goal"]],
+        ["C", "changed", ["goal"]],
+      ],
+    );
+    assert.match(
+      revised.steps[0]?.goal ?? "",
+      /only cite evidence, ignore GUI/,
+    );
+    assert.equal(
+      new TaskRepository(store.db).get(task.id)?.planId,
+      revised.plan.id,
+    );
+  });
+
+  it("keeps completed steps out of a supplement replan", () => {
+    const { store, owner, task, service } = setup();
+    const draft = service.create(owner.id, task.id, { steps: steps() });
+    service.activate(owner.id, draft.plan.id);
+    const plans = new PlanRepository(store.db);
+    assert.ok(plans.bindStepTask(draft.plan.id, "A", "child-a", NOW));
+    plans.setStepOutcome(draft.plan.id, "A", "completed", ["task:child-a"], undefined, NOW);
+    new TaskRepository(store.db).addInput({
+      taskId: task.id,
+      text: "narrow the remaining scope",
+      actorId: owner.actorId,
+      createdAt: NOW,
+    });
+
+    const revised = service.replanForSupplement(
+      owner.id,
+      draft.plan.id,
+      "narrow the remaining scope",
+    );
+    const preserved = revised.steps.find((step) => step.key === "A");
+    assert.equal(preserved?.status, "completed");
+    assert.equal(preserved?.goal, "read evidence");
+    assert.equal(preserved?.taskId, "child-a");
+    assert.ok(
+      revised.steps
+        .filter((step) => step.key !== "A")
+        .every((step) => step.goal.includes("narrow the remaining scope")),
+    );
+  });
+
+  it("replans an active plan after an external failure only once per lineage", () => {
+    const { owner, task, service } = setup();
+    const draft = service.create(owner.id, task.id, { steps: steps() });
+    service.activate(owner.id, draft.plan.id);
+
+    const revised = service.autoReplanAfterFailure(
+      owner.id,
+      draft.plan.id,
+      "github rate limit exceeded (429)",
+      { stepKey: "A" },
+    );
+    assert.equal(revised.plan.planVersion, 2);
+    assert.equal(revised.plan.status, "active");
+    assert.equal(revised.plan.autoReplans, 1);
+    assert.equal(service.get(owner.id, draft.plan.id)?.plan.status, "superseded");
+    assert.match(revised.steps[0]?.goal ?? "", /429/);
+    assert.equal(
+      codeOf(() =>
+        service.autoReplanAfterFailure(
+          owner.id,
+          revised.plan.id,
+          "github rate limit exceeded (429)",
+        ),
+      ),
+      "replan_exhausted",
+    );
+  });
+
   it("rejects replans that change completed steps or expand the budget", () => {
     const first = setup();
     const draft = first.service.create(first.owner.id, first.task.id, { steps: steps() });

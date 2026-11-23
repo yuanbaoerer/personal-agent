@@ -205,15 +205,15 @@ describe("legacy schema migration", () => {
     const directory = await mkdtemp(join(tmpdir(), "pa-migrate-budget-absent-"));
     const path = join(directory, "agent.sqlite");
     try {
-      // Build the previous tip, then remove the column and roll the version
-      // back to simulate a database created before the new migration entry.
+      // Build the current schema, then remove the column and roll the version
+      // back to the schema immediately before the budget-key migration.
       const created = openStore(path);
       created.close();
       const legacy = new DatabaseSync(path);
       legacy.exec(`
         DROP INDEX IF EXISTS pa_tasks_budget_idx;
         ALTER TABLE pa_tasks DROP COLUMN budget_key;
-        UPDATE pa_meta SET value = '${LATEST_SCHEMA_VERSION - 1}' WHERE key = 'schema_version';
+        UPDATE pa_meta SET value = '24' WHERE key = 'schema_version';
       `);
       legacy.close();
 
@@ -321,7 +321,7 @@ describe("legacy schema migration", () => {
 
       const legacy = new DatabaseSync(path);
       legacy.exec(
-        `UPDATE pa_meta SET value = '${LATEST_SCHEMA_VERSION - 1}' WHERE key = 'schema_version'`,
+        `UPDATE pa_meta SET value = '24' WHERE key = 'schema_version'`,
       );
       legacy.close();
 

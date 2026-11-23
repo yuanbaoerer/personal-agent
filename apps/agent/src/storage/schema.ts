@@ -659,6 +659,22 @@ const migrations: readonly (readonly MigrationStatement[])[] = [
        AND budget_key IS NULL
        AND EXISTS (SELECT 1 FROM pa_plans p WHERE p.id = pa_tasks.plan_id)`,
   ],
+  [
+    // A bounded automatic recovery count lives on the plan lineage so a
+    // failure replan cannot reset attempts or budgets without limit. Some
+    // databases were created at the new tip and only have the version rolled
+    // back, so the ALTER must stay conditional.
+    (db) => {
+      const table = db.all<{ sql: string | null }>(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'pa_plans'",
+      )[0];
+      if (table?.sql !== null && !/\bauto_replans\b/i.test(table?.sql ?? "")) {
+        db.exec(
+          "ALTER TABLE pa_plans ADD COLUMN auto_replans INTEGER NOT NULL DEFAULT 0",
+        );
+      }
+    },
+  ],
 ];
 
 /** Highest schema version this build can read/migrate. */

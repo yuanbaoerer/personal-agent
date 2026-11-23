@@ -204,7 +204,7 @@ function formatPlan(plan: PlanRecord): string {
   const calls =
     budget.maxToolCalls === undefined ? "" : ` calls<=${budget.maxToolCalls}`;
   return [
-    `${shortId(plan.id)}  v${plan.planVersion}  ${plan.status}  task=${shortId(plan.parentTaskId)} rev=${plan.taskRevision} input=${plan.inputSeq}`,
+    `${shortId(plan.id)}  v${plan.planVersion}  ${plan.status}  task=${shortId(plan.parentTaskId)} rev=${plan.taskRevision} input=${plan.inputSeq} auto=${plan.autoReplans}`,
     `  budget steps<=${budget.maxSteps} attempts<=${budget.maxAttemptsPerStep} timeout=${budget.timeoutMs}ms${calls}${cost}`,
     `  scope=${plan.approvedScopeRef ?? "-"}  project=${plan.projectKey ?? "-"}  updated=${plan.updatedAt}`,
   ].join("\n");
