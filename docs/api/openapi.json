@@ -94,7 +94,8 @@
     "/usage": {
       "get": {
         "operationId": "usage",
-        "summary": "Usage aggregates",
+        "summary": "Owner-scoped usage and collected token/cost aggregates",
+        "description": "Task, Action, Effect and Outbox counts plus collected model usage. `tokens.collected` is false when the runtime reported no usage; amounts are never invented. Provider-billed and catalog-estimated costs are distinguished, and Worker end-to-end latency is reported separately.",
         "tags": [
           "system"
         ],
@@ -105,7 +106,15 @@
         ],
         "responses": {
           "200": {
-            "description": "OK"
+            "description": "Usage snapshot with collected token/cost/latency data.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"

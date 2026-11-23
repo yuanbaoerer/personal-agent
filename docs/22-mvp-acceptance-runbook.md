@@ -190,4 +190,5 @@ sqlite3 data/agent.sqlite "select event,after_json from pa_audit where event lik
 
 - E1：CX-01/PL-01/PL-02 的确定性测试与逐用例状态见 [2026-11-22 · Conversational & Autonomous Planning E1 record](acceptance/2026-11-22-conversational-planning-e1.md)。
 - 2026-11-23：空会话草稿（#125）与步骤时限（#127）合并，全量 637 个确定性测试通过；未新增 E3/E4，C04/C11 仍为 PARTIAL，下一步仍是同一次只读运行中的最终报告与真实飞书收件。
+- 2026-11-24：`/usage` 增加模型 token、provider/catalog 费用来源与 Worker 端到端延迟采集（E1）；真实运行的 C12 快照仍需 owner 在受控运行后保存。
 - E3/E4：**C01–C03 已 PASS（E3）；C04/C11 PARTIAL**。2026-11-22 在合并后 main 上完成前置步骤与真实飞书 C01–C03；随后配置只读 GitHub、绑定 `personal-agent` 并执行 C04：Plan `e1ba272e` 的 A/B 两步均通过 `github-read`（file、issues、pulls，14 条结构化 claim），C 在 3 次尝试内未产出最终报告，plan paused；全程 23 个 `github.read` GET、0 POST。另修复 verifier 的 CJK 标点 URL 解析缺陷（PR #119）。C05–C10 仍待后续；C12 无真实成本数据；E4 未测。C06/C07 的代码接线已补：补充会生成新 active 版本与 PlanDiff，可重试的外部失败有一次自动恢复版本（`pa_plans.auto_replans`，schema 26），权限失败转 `needs_review`；但真实 Feishu 补充、429/head-drift E3 与进程重启 E4 仍需重跑并记录本节。证据见 [runbook execution](acceptance/2026-11-22-conversational-planning-runbook.md)。不得把 A/B 或 PARTIAL 记作 C04/C11 PASS 或完整 Pilot 通过；其余 E3/E4 不得据 E1 或 C01–C03 结果宣称 Pilot 通过。
