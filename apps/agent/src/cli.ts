@@ -16,6 +16,7 @@ import type {
   TaskRecord,
 } from "./domain/types.ts";
 import type { PluginView } from "./plugins/types.ts";
+import type { GitHubConnectionView } from "./personal/github-connection.ts";
 import { runTui } from "./tui.ts";
 
 interface CliIo {
@@ -60,6 +61,8 @@ Usage:
   pa tokens revoke <id>
   pa plugins list [--json]
   pa plugins status <id> [--json]
+  pa plugins login github [--token-stdin] [--oauth] [--no-wait] [--json]
+  pa plugins logout github --yes [--json]
   pa plugins enable <id> --yes [--json]
   pa plugins disable <id> --yes [--json]
   pa projects list [--status active|revoked] [--json]
@@ -84,8 +87,9 @@ Usage:
   pa skills list [--json]
 
 Environment:
-  PA_API_URL    default http://127.0.0.1:8787
-  PA_API_TOKEN  device token; falls back to ADMIN_TOKEN for local bootstrap
+  PA_API_URL      default http://127.0.0.1:8787
+  PA_API_TOKEN    device token; falls back to ADMIN_TOKEN for local bootstrap
+  PA_GITHUB_TOKEN one-shot PAT input for 'pa plugins login github'; never printed
 `;
 
 function parseArgs(argv: string[]): ParsedArgs {
@@ -168,7 +172,20 @@ function formatPlugin(plugin: PluginView): string {
   return [
     `${plugin.id}  ${plugin.lifecycle.padEnd(8)}  v${plugin.version}  connection=${plugin.connection.status}`,
     `  tools ${tools}  permissions ${plugin.permissions.join(",") || "-"}`,
+    ...(plugin.connection.account === undefined
+      ? []
+      : [`  account ${safeText(plugin.connection.account)}`]),
     ...(plugin.lastError === undefined ? [] : [`  error ${safeText(plugin.lastError)}`]),
+  ].join("\n");
+}
+
+function formatConnection(connection: GitHubConnectionView): string {
+  const identity =
+    connection.accountLogin === undefined ? "-" : `@${connection.accountLogin}`;
+  return [
+    `github connection: ${connection.status}  ${connection.authMethod ?? "-"}  ${identity}  epoch=${connection.credentialVersion ?? "-"}`,
+    `  scopes ${connection.scopes.join(",") || "-"}  repos=${connection.repositoryIds.join(",") || "-"}  oauth=${connection.oauthConfigured ? "configured" : "off"}  pat=${connection.encryptionConfigured ? "supported" : "needs-key"}`,
+    ...(connection.detail === undefined ? [] : [`  ${connection.detail}`]),
   ].join("\n");
 }
 
@@ -281,6 +298,61 @@ function requirePositional(args: ParsedArgs, index: number, name: string): strin
     throw new Error(`${name} is required`);
   }
   return value;
+}
+
+async function readTokenFromStdin(): Promise<string> {
+  if (process.stdin.isTTY) {
+    return readHiddenToken();
+  }
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) {
+    chunks.push(Buffer.from(chunk as Buffer | string));
+  }
+  return Buffer.concat(chunks).toString("utf8").trim();
+}
+
+/** TTY input is hidden: the token never appears in the terminal or shell history. */
+function readHiddenToken(): Promise<string> {
+  const stdin = process.stdin;
+  if (typeof stdin.setRawMode !== "function") {
+    throw new Error("--token-stdin needs a TTY or a piped stdin");
+  }
+  process.stderr.write("GitHub PAT (input hidden): ");
+  stdin.setRawMode(true);
+  stdin.resume();
+  stdin.setEncoding("utf8");
+  return new Promise((resolve, reject) => {
+    let value = "";
+    const finish = (error?: Error) => {
+      stdin.setRawMode(false);
+      stdin.removeListener("data", onData);
+      stdin.pause();
+      process.stderr.write("\n");
+      if (error === undefined) {
+        resolve(value.trim());
+      } else {
+        reject(error);
+      }
+    };
+    const onData = (chunk: string) => {
+      for (const char of chunk) {
+        if (char === "\r" || char === "\n") {
+          finish();
+          return;
+        }
+        if (char === "\u0003") {
+          finish(new Error("cancelled"));
+          return;
+        }
+        if (char === "\u007f" || char === "\b") {
+          value = value.slice(0, -1);
+          continue;
+        }
+        value += char;
+      }
+    };
+    stdin.on("data", onData);
+  });
 }
 
 /** Testable CLI entry. It never accepts a token on argv. */
@@ -632,8 +704,96 @@ export async function runCli(
         if (sub === "status") {
           const id = requirePositional(args, 1, "plugin id");
           const plugin = await client.getPlugin(id);
-          if (json) printJson(io, { plugin });
-          else io.out(formatPlugin(plugin));
+          const connection =
+            id === "github" ? await client.getGithubConnection() : undefined;
+          if (json) {
+            printJson(
+              io,
+              connection === undefined ? { plugin } : { plugin, connection },
+            );
+          } else {
+            io.out(formatPlugin(plugin));
+            if (connection !== undefined) io.out(formatConnection(connection));
+          }
+          return 0;
+        }
+        if (sub === "login") {
+          const id = requirePositional(args, 1, "plugin id");
+          if (id !== "github") {
+            throw new Error("plugins login currently supports only github");
+          }
+          const wantStdin = args.flags["token-stdin"] === true;
+          const wantOAuth = args.flags.oauth === true;
+          if (wantStdin && wantOAuth) {
+            throw new Error("--token-stdin and --oauth are mutually exclusive");
+          }
+          const envToken = env.PA_GITHUB_TOKEN?.trim();
+          const connection = await client.getGithubConnection();
+          const usePat =
+            wantStdin ||
+            envToken !== undefined ||
+            (!wantOAuth && !connection.oauthConfigured);
+          if (usePat) {
+            const token =
+              envToken !== undefined && !wantStdin
+                ? envToken
+                : await readTokenFromStdin();
+            if (token.length === 0) {
+              io.err("No GitHub PAT was received.");
+              return 1;
+            }
+            const connected = await client.connectGithubPat(token);
+            if (json) printJson(io, { connection: connected });
+            else io.out(formatConnection(connected));
+            return 0;
+          }
+          if (!connection.oauthConfigured) {
+            io.err(
+              "GitHub OAuth is not configured; use --token-stdin or set GITHUB_CONNECTION_ENCRYPTION_KEY for PAT login.",
+            );
+            return 1;
+          }
+          const started = await client.startGithubOAuth();
+          io.out(`Open ${started.authorizeUrl} to authorize GitHub.`);
+          if (args.flags["no-wait"] === true) {
+            if (json) printJson(io, { connection: started.connection });
+            else io.out(formatConnection(started.connection));
+            return 0;
+          }
+          const deadline = Date.now() + 5 * 60_000;
+          while (Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 2_000));
+            const next = await client.getGithubConnection();
+            if (next.status === "connected") {
+              if (json) printJson(io, { connection: next });
+              else io.out(formatConnection(next));
+              return 0;
+            }
+            if (next.status === "revoked" || next.status === "error") {
+              io.err(`GitHub connection ${next.status}: ${next.detail ?? "unknown"}`);
+              return 1;
+            }
+          }
+          io.err("Timed out waiting for GitHub OAuth; run `pa plugins status github`.");
+          return 1;
+        }
+        if (sub === "logout") {
+          const id = requirePositional(args, 1, "plugin id");
+          if (id !== "github") {
+            throw new Error("plugins logout currently supports only github");
+          }
+          if (args.flags.yes !== true) {
+            io.out(`Refusing to logout ${id} without --yes.`);
+            return 1;
+          }
+          const result = await client.disconnectGithub();
+          if (json) printJson(io, result);
+          else {
+            io.out(formatConnection(result.connection));
+            io.out(
+              `disconnected=${result.disconnected} remoteRevoked=${result.remoteRevoked}`,
+            );
+          }
           return 0;
         }
         if (sub === "enable" || sub === "disable") {
@@ -655,7 +815,9 @@ export async function runCli(
           }
           return 0;
         }
-        throw new Error("plugins subcommand must be list, status, enable or disable");
+        throw new Error(
+          "plugins subcommand must be list, status, login, logout, enable or disable",
+        );
       }
       case "projects": {
         const sub = requirePositional(args, 0, "projects subcommand");

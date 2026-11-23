@@ -21,6 +21,7 @@ import type {
   PluginView,
 } from "../plugins/types.ts";
 import type { SkillMetadata } from "../plugins/skills-contract.ts";
+import type { GitHubConnectionView } from "../personal/github-connection.ts";
 
 export class ClientApiError extends Error {
   readonly status: number;
@@ -127,6 +128,45 @@ export class ClientApiClient {
     return this.#request(`/plugins/${encodeURIComponent(id)}/disable`, {
       method: "POST",
     });
+  }
+
+  async getGithubConnection(): Promise<GitHubConnectionView> {
+    const result = await this.#request<{ connection: GitHubConnectionView }>(
+      "/connections/github",
+    );
+    return result.connection;
+  }
+
+  async connectGithubPat(
+    token: string,
+    repositoryIds?: number[],
+  ): Promise<GitHubConnectionView> {
+    const result = await this.#request<{ connection: GitHubConnectionView }>(
+      "/connections/github/pat",
+      {
+        method: "POST",
+        body: {
+          token,
+          ...(repositoryIds === undefined ? {} : { repositoryIds }),
+        },
+      },
+    );
+    return result.connection;
+  }
+
+  async startGithubOAuth(): Promise<{
+    authorizeUrl: string;
+    connection: GitHubConnectionView;
+  }> {
+    return this.#request("/connections/github/start", { method: "POST" });
+  }
+
+  async disconnectGithub(): Promise<{
+    disconnected: boolean;
+    remoteRevoked: false;
+    connection: GitHubConnectionView;
+  }> {
+    return this.#request("/connections/github/disconnect", { method: "POST" });
   }
 
   async listSkills(): Promise<{ available: boolean; skills: SkillMetadata[] }> {

@@ -392,6 +392,7 @@ async function main(): Promise<void> {
           services: app,
           ownerId: owner.id,
           adminToken: config.adminToken,
+          ...(connections === undefined ? {} : { connections }),
         });
   if (clientApi === undefined) {
     logger.info("client_api_disabled", {

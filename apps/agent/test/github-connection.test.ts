@@ -8,6 +8,7 @@ import { GitHubTokenVault, GitHubVaultError } from "../src/personal/github-token
 import { CredentialRepository } from "../src/storage/credentials.ts";
 import type { Store } from "../src/storage/store.ts";
 import { APP_ID, OWNER_OPEN_ID, createStore } from "./helpers.ts";
+import { createServices } from "./services.ts";
 
 const NOW = new Date("2026-01-01T00:00:00.000Z");
 const KEY = Buffer.alloc(32, 7).toString("base64");
@@ -17,6 +18,7 @@ const TOKEN = "ghp_connection_test_token";
 interface FetchAnswers {
   token?: Response;
   user?: Response;
+  networkError?: boolean;
 }
 
 function fakeFetch(answers: FetchAnswers = {}): typeof fetch {
@@ -33,6 +35,9 @@ function fakeFetch(answers: FetchAnswers = {}): typeof fetch {
       );
     }
     if (url.endsWith("/user")) {
+      if (answers.networkError === true) {
+        throw new TypeError("network down");
+      }
       return (
         answers.user ??
         Response.json(
@@ -194,6 +199,34 @@ describe("GitHub connection contract", () => {
     assert.equal(fixture.changes.length, 0);
   });
 
+  it("maps GitHub 403/429 and network failures without persisting", async () => {
+    for (const status of [403, 429]) {
+      const fixture = setup({
+        oauth: false,
+        answers: { user: new Response("limited", { status }) },
+      });
+      await assert.rejects(
+        () => fixture.connection.connectPat({ token: "token" }),
+        (error: unknown) =>
+          error instanceof GitHubConnectionError &&
+          error.code === "github_unavailable",
+      );
+      assert.equal(fixture.vault?.metadata(), undefined);
+      assert.equal(fixture.credentials.status("github:default"), undefined);
+    }
+    const offline = setup({
+      oauth: false,
+      answers: { networkError: true },
+    });
+    await assert.rejects(
+      () => offline.connection.connectPat({ token: "token" }),
+      (error: unknown) =>
+        error instanceof GitHubConnectionError &&
+        error.code === "github_unavailable",
+    );
+    assert.equal(offline.vault?.metadata(), undefined);
+  });
+
   it("rotates the epoch on re-login and preserves the owner scope", async () => {
     const fixture = setup({ oauth: false });
     await fixture.connection.connectPat({ token: TOKEN });
@@ -257,6 +290,45 @@ describe("GitHub connection contract", () => {
     await fixture.connection.disconnect();
     assert.equal(fixture.connection.status().status, "revoked");
     assert.equal(fixture.credentials.status("github:default")?.status, "revoked");
+  });
+
+  it("rotates the catalog generation and invalidates drafts on connection change", async () => {
+    const services = createServices({ now: () => NOW });
+    const vault = new GitHubTokenVault({
+      db: services.store.db,
+      ownerId: services.owner.id,
+      encryptionKey: KEY,
+      now: () => NOW,
+    });
+    const credentials = new CredentialBroker(
+      () => NOW,
+      new CredentialRepository(services.store.db),
+    );
+    const before = services.catalog.generation();
+    const connection = new GitHubConnectionService({
+      store: services.store,
+      ownerId: services.owner.id,
+      credentials,
+      vault,
+      oauthConfigured: false,
+      envPatConfigured: false,
+      fetch: fakeFetch(),
+      now: () => NOW,
+      onChange: async () => {
+        services.issueDrafts.supersedeForCredential(
+          services.owner.id,
+          "github:default",
+        );
+        await services.plugins.credentialChanged("github", "test");
+      },
+    });
+    await connection.connectPat({ token: TOKEN });
+    assert.ok(services.catalog.generation() > before);
+    assert.ok(
+      services.store
+        .listAuditAfter(0, 200)
+        .some((item) => item.event === "plugin.credential_changed"),
+    );
   });
 
   it("completes the existing OAuth flow and applies the new credential", async () => {
