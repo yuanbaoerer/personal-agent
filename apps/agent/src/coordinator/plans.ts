@@ -476,43 +476,63 @@ export class PlanService {
   create(ownerId: string, parentTaskId: string, input: PlanSpecInput): PlanView {
     const task = this.#task(ownerId, parentTaskId);
     this.#assertTaskOpen(task);
-    const spec = resolvePlanSpec(input, task, this.#capabilities);
-    const latest = this.#plans.latestForTask(task.id);
-    const now = this.#now().toISOString();
-    const view = this.#store.db.transaction(() => {
-      const plan = this.#plans.insertPlan({
-        ownerId,
-        parentTaskId: task.id,
-        taskRevision: task.revision,
-        inputSeq: this.#plans.maxInputSeq(task.id),
-        planVersion: (latest?.planVersion ?? 0) + 1,
-        autoReplans: 0,
-        status: "draft",
-        projectKey: task.mandate.project,
-        budget: spec.budget,
-        createdAt: now,
-      });
-      const steps = spec.steps.map((step, ordinal) =>
-        this.#plans.insertStep({
-          planId: plan.id,
-          stepKey: step.key,
-          ordinal,
-          goal: step.goal,
-          dependsOn: step.dependsOn,
-          tools: step.tools,
-          resources: step.resources,
-          verifierId: step.verifierId,
-          completionCriteria: step.completionCriteria,
-          maxAttempts: step.maxAttempts,
-          timeoutMs: step.timeoutMs,
-          status: "blocked",
-          createdAt: now,
-        }),
-      );
-      return { plan, steps };
+    return this.#store.db.transaction(() => {
+      const latest = this.#plans.latestForTask(task.id);
+      return this.#insertDraft(task, input, (latest?.planVersion ?? 0) + 1);
     });
-    this.#audit("plan.created", view.plan, { steps: view.steps.length });
-    return view;
+  }
+
+  /** Create a non-dispatched parent and its first draft in one write. */
+  createWithDraftParent(createParent: () => TaskRecord, input: PlanSpecInput): PlanView {
+    return this.#store.db.transaction(() => {
+      const parent = createParent();
+      // Replaying the inbox effect must not fork another draft version.
+      const existing = this.#plans.latestForTask(parent.id);
+      if (existing !== undefined) {
+        return { plan: existing, steps: this.#plans.listSteps(existing.id) };
+      }
+      const view = this.#insertDraft(parent, input, 1);
+      if (this.#tasks.bindPlan(parent.id, view.plan.id, view.plan.createdAt) === undefined) {
+        throw new PlanError("invalid_transition", "could not reserve the draft parent");
+      }
+      return view;
+    });
+  }
+
+  #insertDraft(task: TaskRecord, input: PlanSpecInput, planVersion: number): PlanView {
+    const spec = resolvePlanSpec(input, task, this.#capabilities);
+    const now = this.#now().toISOString();
+    const plan = this.#plans.insertPlan({
+      ownerId: task.ownerId,
+      parentTaskId: task.id,
+      taskRevision: task.revision,
+      inputSeq: this.#plans.maxInputSeq(task.id),
+      planVersion,
+      autoReplans: 0,
+      status: "draft",
+      projectKey: task.mandate.project,
+      budget: spec.budget,
+      createdAt: now,
+    });
+    const steps = spec.steps.map((step, ordinal) =>
+      this.#plans.insertStep({
+        planId: plan.id,
+        stepKey: step.key,
+        ordinal,
+        goal: step.goal,
+        dependsOn: step.dependsOn,
+        tools: step.tools,
+        resources: step.resources,
+        verifierId: step.verifierId,
+        completionCriteria: step.completionCriteria,
+        maxAttempts: step.maxAttempts,
+        timeoutMs: step.timeoutMs,
+        status: "blocked",
+        createdAt: now,
+      }),
+    );
+    this.#audit("plan.created", plan, { steps: steps.length });
+    return { plan, steps };
   }
 
   revise(ownerId: string, planId: string, input: PlanSpecInput): PlanView {
@@ -583,6 +603,13 @@ export class PlanService {
         createdAt: now,
       };
       this.#plans.insertDiff(plan.id, diff);
+      if (
+        source.status === "draft" &&
+        task.planId === source.id &&
+        this.#tasks.bindPlan(task.id, plan.id, now) === undefined
+      ) {
+        throw new PlanError("invalid_transition", "could not reserve the revised draft parent");
+      }
       return { plan, steps };
     });
     this.#audit("plan.revised", view.plan, {

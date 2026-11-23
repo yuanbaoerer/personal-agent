@@ -794,6 +794,31 @@ describe("task and assignment coordination", () => {
     assert.equal(services.runtime.opened.length, 0);
   });
 
+  it("keeps the original deadline when the same dispatch is replayed", () => {
+    const services = createServices();
+    const input = {
+      ownerId: services.owner.id,
+      conversationId: services.conversation.id,
+      sourceKey: "source:deadline-replay",
+      goal: "same attempt",
+      completionCriteria: "done",
+    };
+    const first = services.taskService.create({
+      ...input,
+      deadline: "2026-01-01T00:00:10.000Z",
+    });
+    const replayed = services.taskService.create({
+      ...input,
+      deadline: "2026-01-01T00:01:00.000Z",
+    });
+
+    assert.equal(replayed.id, first.id);
+    assert.equal(
+      services.tasks.get(first.id)?.deadline,
+      "2026-01-01T00:00:10.000Z",
+    );
+  });
+
   it("waits for an in-flight action after a revision before dispatching again", () => {
     const services = createServices();
     const task = services.taskService.create({

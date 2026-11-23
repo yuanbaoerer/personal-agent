@@ -98,10 +98,10 @@ Owner message
 
 ## 5. 交付依赖、PR 顺序及并行化
 
-| Workstream / PR | 目标 | 前置 | 不在范围 | 状态（2026-11-23，main `2bcadb4`） |
+| Workstream / PR | 目标 | 前置 | 不在范围 | 状态（2026-11-23，main `242a9f2`） |
 | --- | --- | --- | --- | --- |
 | CX-01 | Conversation 上下文/自然 chat vs task routing | #39 已有 Intent、#41 入口 | 第三方渠道/向量检索 | ✅ 已合并 #106/#107（E1） |
-| CX-02 | Discussion → Plan Draft / Clarification / PlanDiff UX | CX-01 可并行 PLAN-01 schema | 全自动后台 | 已合并 #112；空会话草稿 [#123](https://github.com/yuanbaoerer/personal-agent/issues/123) 由 [PR #125](https://github.com/yuanbaoerer/personal-agent/pull/125) 补齐，111 个相关测试与合成会话真实模型冒烟通过，CI 绿，待合并和真实飞书复验 |
+| CX-02 | Discussion → Plan Draft / Clarification / PlanDiff UX | CX-01 可并行 PLAN-01 schema | 全自动后台 | 已合并 #112；空会话草稿 [#123](https://github.com/yuanbaoerer/personal-agent/issues/123) 由 [PR #125](https://github.com/yuanbaoerer/personal-agent/pull/125) 合并（E1，全量 637 测试通过），真实飞书复验待做 |
 | PL-01 | Plan/Step Store + validated DAG + API/CLI | TaskService + #7/#28 守卫 | Organization Mode | ✅ 已合并 #108（E1） |
 | PL-02 | Dependent Step dispatch + verifier + budget fence | PL-01 | 未经许可的写入 | ✅ 已合并 #109（E1） |
 | PL-03 | Replan / pause / resume / cancellation / recovery | PL-02 | 无界递归 | ✅ 随 PL-02/CX-02 交付（有界 replan、暂停/恢复/取消、重启/孤儿清理、局部重试；E1）。C06/C07 后续补齐：运行中补充生成新 active 版本 + PlanDiff；429/5xx/timeout/head 漂移有一次自动恢复版本，权限失败转 `needs_review`（E1，真实 E3 待重跑） |
@@ -112,8 +112,8 @@ Owner message
 
 | 顺序 | 工作项 / 分工 | 交付条件 |
 | --- | --- | --- |
-| 1 · 可并行 | **维护者**分别审核 [#124](https://github.com/yuanbaoerer/personal-agent/pull/124)（文档）、[#125](https://github.com/yuanbaoerer/personal-agent/pull/125)（空会话草稿）和 [#127](https://github.com/yuanbaoerer/personal-agent/pull/127)（步骤时限）；owner 在 #125 部署后复验 #123。 | 从无预置父任务的飞书私聊完成「普通聊天 → 草稿 → 修订」，记录 PlanDiff，确认未派工、未调用外部工具。#125 合并不能替代这条验收。 |
-| 2 · 并行准备 | **维护者**先复核只读 pilot 的执行授权及连接恢复边界。#126 已由 [PR #127](https://github.com/yuanbaoerer/personal-agent/pull/127) 实现（E1，635 测试与 CI 绿），待审查合并。 | 安全相关差异走仓库私下审查；#127 已用可控时钟锁定排队、运行中、重放与父截止时间。若同时修改执行器，先集成授权边界变更，再集成时限 PR。 |
+| 1 · 可并行 | [#124](https://github.com/yuanbaoerer/personal-agent/pull/124)（文档）、[#125](https://github.com/yuanbaoerer/personal-agent/pull/125)（空会话草稿）和 [#127](https://github.com/yuanbaoerer/personal-agent/pull/127)（步骤时限）均已合并；owner 在部署后复验 #123。 | 从无预置父任务的飞书私聊完成「普通聊天 → 草稿 → 修订」，记录 PlanDiff，确认未派工、未调用外部工具。代码合并不能替代这条验收。 |
+| 2 · 并行准备 | **维护者**复核只读 pilot 的执行授权及连接恢复边界。#126 已由 [PR #127](https://github.com/yuanbaoerer/personal-agent/pull/127) 合并（E1，637 测试与 CI 绿）。 | 安全相关差异走仓库私下审查；#127 已用可控时钟锁定排队、运行中、重放与父截止时间。真实运行仍须验证超时、重规划与恢复行为。 |
 | 3 · 准备下一次真机运行 | **维护者**在 [#7](https://github.com/yuanbaoerer/personal-agent/issues/7) 确认可取得的 token/用量及延迟数据；**owner**按 [runbook §9](22-mvp-acceptance-runbook.md#9-新增-conversational--autonomous-planning-真实验收c01c12) 验收 [#92](https://github.com/yuanbaoerer/personal-agent/issues/92) 的 C04/C11。 | 在同一次受控只读运行中，三步各有核验证据、第三步生成最终报告、真实飞书收到该报告，记录 0 次写入及从入站到收件的耗时。缺失用量标记为未采集，不填 0；C12 不因 C04/C11 通过而自动通过。 |
 | 4 · 只读链路通过后 | **owner 与维护者**继续 C05–C10、C12 和运行中重启 E4；#117 的 C06/C07 确定性路径只作为回归基线。 | 保存状态追问、补充/暂停/恢复、有限重规划、重启与作用域验证的独立证据；[#41](https://github.com/yuanbaoerer/personal-agent/issues/41) 的 M01–M14 保持独立。 |
 
@@ -124,6 +124,8 @@ Owner message
 ### 例 A：正常聊天不会意外启动后台任务
 
 Owner：“我在想 Personal Agent 适合做什么，帮我分析下利弊。” → Agent 直接聊天，不创建 Task。Owner：“先给我一个最小 MVP 实施计划，不用执行。” → Agent 形成可编辑 Plan draft，不调用 GitHub 写。Owner：“第三步改成只读评估，而且先给我看代价。” → PlanDiff，原版保留为历史；若 budget 不明，不激活付费后台。
+
+没有任务的会话也可保存草稿。明确请求草稿时，父任务和 Plan 一起持久化，父任务不会进入普通 Worker 队列；模型不能借这个草稿授予工具权限。用 `/plans`、`/plan <id>` 查询，用自然语言修订并查看 PlanDiff。仅讨论或假设不保存草稿。
 
 ### 例 B：真正的自主执行与重规划
 
