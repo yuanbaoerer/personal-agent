@@ -346,4 +346,51 @@ describe("legacy schema migration", () => {
       await rm(directory, { recursive: true, force: true });
     }
   });
+
+  it("adds auth_method to legacy GitHub credentials without changing their meaning", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pa-migrate-github-auth-"));
+    const path = join(directory, "agent.sqlite");
+    try {
+      const created = openStore(path);
+      const owner = created.bindOwner({
+        channel: "feishu",
+        accountId: "app",
+        actorId: "owner",
+        verifiedAt: "2026-01-01T00:00:00.000Z",
+      });
+      created.db.run(
+        `INSERT INTO pa_github_credentials
+          (owner_id, github_user_id, login, scopes, token_ciphertext, created_at, updated_at)
+         VALUES (?, '42', 'octocat', 'read:user,repo', 'v1:test:test:test', ?, ?)`,
+        owner.id,
+        "2026-01-01T00:00:00.000Z",
+        "2026-01-01T00:00:00.000Z",
+      );
+      created.close();
+
+      const legacy = new DatabaseSync(path);
+      legacy.exec(`
+        ALTER TABLE pa_github_credentials DROP COLUMN auth_method;
+        UPDATE pa_meta SET value = '26' WHERE key = 'schema_version';
+      `);
+      legacy.close();
+
+      const upgraded = openStore(path);
+      try {
+        const version = upgraded.db.all<{ value: string }>(
+          "SELECT value FROM pa_meta WHERE key = 'schema_version'",
+        )[0]?.value;
+        assert.equal(Number(version), LATEST_SCHEMA_VERSION);
+        const row = upgraded.db.all<{ auth_method: string; login: string }>(
+          "SELECT auth_method, login FROM pa_github_credentials",
+        )[0];
+        assert.equal(row?.auth_method, "oauth");
+        assert.equal(row?.login, "octocat");
+      } finally {
+        upgraded.close();
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
 });

@@ -1,6 +1,8 @@
 # 29 · GitHub 一键连接（GitHub One-Click Connection）设计与实施规划
 
-> 状态：**PLANNED / NOT IMPLEMENTED**。规划日期：2026-11-22。审阅基线：`main@fcdd278490ef0a147b7f41af630d25bf5e39edf4`。本文件是实施契约，不等于 API、CLI、TUI、Desktop 或 GitHub App 功能已经实现。每次实施前复核最新 `main` 与 Issue，避免按历史状态重复开发。
+> 状态：**GC-00 IMPLEMENTED / GC-01 PENDING**。规划日期：2026-11-22。审阅基线：`main@fcdd278490ef0a147b7f41af630d25bf5e39edf4`。本文件是实施契约，不等于 API、CLI、TUI、Desktop 或 GitHub App 功能已经实现。每次实施前复核最新 `main` 与 Issue，避免按历史状态重复开发。
+>
+> **2026-11-23 实施状态**：GC-00 连接契约、加密 PAT/OAuth vault、broker epoch、连接状态与失效钩子已落地（schema 27、`github.connection.test.ts`），E1 PASS；GC-01 CLI/API、运行期刷新与真实 E3 仍未实现。
 >
 > 跟踪：[#68 EXT-02 Credential / OAuth](https://github.com/yuanbaoerer/personal-agent/issues/68)（GC-00～GC-03 主入口）；[#71 EXT-05 SDK / GitHub App](https://github.com/yuanbaoerer/personal-agent/issues/71)（GC-04 与后续 SDK / 隔离）；[#60 GH-02 ProjectBinding](https://github.com/yuanbaoerer/personal-agent/issues/60)（GC-02 对接）；[#65 GH Tracking](https://github.com/yuanbaoerer/personal-agent/issues/65)（真实业务验收）。相关架构：`docs/19-github-oauth.md`、`docs/24-github-project-management.md`、`docs/25-extension-platform.md`、`docs/10-client-platforms.md`、`docs/20-local-client-api.md`。
 
@@ -128,13 +130,19 @@ Desktop：未来 Integrations 页面复用 **同一** Client SDK 与状态机；
 
 ### GC-00（#68）连接契约与迁移：**第一个 PR**
 
-- [ ] 核实最新 main：`CredentialBroker`、`GitHubOAuthService`、`PluginCatalog`、`Client API`、`ProjectService` 及其测试；记录现状/重复代码风险。
-- [ ] 明确 ConnectionStatus、auth method、owner/identity、repo allowlist、credentialRef/version、插件/项目/Task/审批交集；确定 API、事件、稳定错误码、审计。
-- [ ] 设计并实现**必要的最小**连接业务接口与元数据存储/迁移（如果原 broker 已覆盖，直接复用），不创建平行 vault/registry/permission manager。
-- [ ] 测试旧 PAT/OAuth 数据兼容、重启 restore/rotate/revoke epoch、空 scopes fail-closed、老配置/回滚；不能仅写 ADR 而不验证接口契约。
-- [ ] 为 GC-01 提供可测试 provider boundary（fake provider）与明确的 E1 验收证据。
+- [x] 核实最新 main：`CredentialBroker`、`GitHubOAuthService`、`PluginCatalog`、`Client API`、`ProjectService` 及其测试；记录现状/重复代码风险。
+- [x] 明确 ConnectionStatus、auth method、owner/identity、repo allowlist、credentialRef/version、插件/项目/Task/审批交集；确定 API、事件、稳定错误码、审计。
+- [x] 设计并实现**必要的最小**连接业务接口与元数据存储/迁移（如果原 broker 已覆盖，直接复用），不创建平行 vault/registry/permission manager。
+- [x] 测试旧 PAT/OAuth 数据兼容、重启 restore/rotate/revoke epoch、空 scopes fail-closed、老配置/回滚；不能仅写 ADR 而不验证接口契约。
+- [x] 为 GC-01 提供可测试 provider boundary（fake provider）与明确的 E1 验收证据。
 
 **GC-00 完成定义**：typecheck、既有测试、存储迁移/回滚通过；Token 不入 Task/log；在一条权威连接/凭据路径上证明连接/断连/重启的版本栅栏。无真 GitHub 账号时允许 E1_PASS / E3_BLOCKED。
+
+**GC-00 落地记录（2026-11-23）**：
+- `personal/github-token-vault.ts`：复用 `pa_github_credentials` AES-256-GCM vault，`auth_method`（schema 27）区分 PAT/OAuth；状态查询不解密，key 不匹配显式 `reauth_required`。
+- `personal/github-connection.ts`：`GitHubConnectionService` 提供 status / PAT connect / OAuth begin+complete / local disconnect，稳定错误码，broker `register|rotate|revoke` epoch，审计事件与 `github:default` 失效钩子；不授予 repo/Task/Issues-write。
+- `main.ts`：OAuth 网页 flow 与 connection service 合并为单一后置处理；env PAT 使用 `restore`，撤销在重启后保持；stored credential 优先于 env PAT，key 错误不回退 env token。
+- E1：`github-connection.test.ts`、`github-oauth.test.ts`、`migration-compat.test.ts`、`config.test.ts`；`npm test` 620/620（GC-00 时点）、`npm run typecheck` 通过。
 
 ### GC-01（#68）CLI 自托管登录闭环：**第二个 PR**
 
@@ -194,7 +202,7 @@ Desktop：未来 Integrations 页面复用 **同一** Client SDK 与状态机；
 
 ## 9. 首轮交付合同（给 Coding Agent）
 
-**只执行 GC-00 + GC-01；可以两个小 PR，GC-01 基于已审阅的 GC-00。** 不在首轮实现 GitHub App、Device Flow、TUI Connections、Desktop、仓库发现、完整 SDK、第三方插件、MCP 写、自动 merge，也不修改现有模型路由/Plan Loop。
+**只执行 GC-00 + GC-01；可以两个小 PR，GC-01 基于已审阅的 GC-00。GC-00 已于 2026-11-23 交付，下一 PR 为 GC-01。** 不在首轮实现 GitHub App、Device Flow、TUI Connections、Desktop、仓库发现、完整 SDK、第三方插件、MCP 写、自动 merge，也不修改现有模型路由/Plan Loop。
 
 开始前：读取 `docs/29`、#68、#71、当前 main 源码与已有测试；列出可复用模块与真实缺口；若与最新 main 冲突，以代码事实为准并在 PR 说明差异。制定最小接口、迁移/回滚和风险方案，先测试 E1 负例，再接 Core API / CLI。
 

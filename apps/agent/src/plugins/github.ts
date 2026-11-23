@@ -115,6 +115,10 @@ const WRITE_CAPABILITIES = [
 export function createGithubPlugin(
   config?: GitHubReadConfig,
   writeConfig?: GitHubIssueWriteConfig,
+  connectionProvider?: () =>
+    | PluginConnection
+    | undefined
+    | Promise<PluginConnection | undefined>,
 ): BuiltinPlugin {
   const allowedRepos = config?.allowedRepos ?? [];
   const hasCredential =
@@ -159,6 +163,16 @@ export function createGithubPlugin(
     async connection(): Promise<PluginConnection> {
       if (allowedRepos.length === 0) {
         return { status: "unconfigured", detail: "no allowed repositories" };
+      }
+      if (connectionProvider !== undefined) {
+        try {
+          const provided = await connectionProvider();
+          if (provided !== undefined) {
+            return provided;
+          }
+        } catch {
+          return { status: "error", detail: "connection status unavailable" };
+        }
       }
       if (!hasCredential || config === undefined) {
         return { status: "unconfigured", detail: "no PAT or OAuth connection" };

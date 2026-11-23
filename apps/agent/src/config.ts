@@ -31,6 +31,8 @@ export interface AppConfig {
   github: {
     token?: string;
     allowedRepos: string[];
+    /** Encrypts stored PAT/OAuth tokens; OAuth falls back to its own key. */
+    encryptionKey?: string;
     oauth?: GitHubOAuthConfig;
     /** Separate least-privilege Issues-write credential; never inherited. */
     issueWriteToken?: string;
@@ -93,6 +95,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const githubOAuthClientId = read("GITHUB_OAUTH_CLIENT_ID");
   const githubOAuthClientSecret = read("GITHUB_OAUTH_CLIENT_SECRET");
   const githubOAuthEncryptionKey = read("GITHUB_OAUTH_ENCRYPTION_KEY");
+  const githubConnectionEncryptionKey =
+    read("GITHUB_CONNECTION_ENCRYPTION_KEY") ?? githubOAuthEncryptionKey;
+  if (
+    read("GITHUB_CONNECTION_ENCRYPTION_KEY") !== undefined &&
+    githubOAuthEncryptionKey !== undefined &&
+    read("GITHUB_CONNECTION_ENCRYPTION_KEY") !== githubOAuthEncryptionKey
+  ) {
+    throw new ConfigError(
+      "GITHUB_CONNECTION_ENCRYPTION_KEY must match GITHUB_OAUTH_ENCRYPTION_KEY when both are set",
+    );
+  }
   if (
     (githubOAuthClientId === undefined) !==
     (githubOAuthClientSecret === undefined)
@@ -185,6 +198,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
         .map((repo) => repo.trim())
         .filter((repo) => repo.length > 0),
       oauth: githubOAuth,
+      ...(githubConnectionEncryptionKey === undefined
+        ? {}
+        : { encryptionKey: githubConnectionEncryptionKey }),
       ...(issueWriteToken === undefined
         ? {}
         : { issueWriteToken }),
