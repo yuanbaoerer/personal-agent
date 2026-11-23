@@ -256,8 +256,10 @@ async function main(): Promise<void> {
     // Revocation and the credential epoch survive a restart for both PAT and
     // OAuth. A stored credential is re-attached through the vault; a legacy
     // env PAT is passed by value so a changed token rotates the epoch.
-    credentials.restore("github:default", {
+    const ref = "github:default";
+    credentials.restore(ref, {
       ...githubCredentialMetadata,
+      repositoryIds: credentials.status(ref)?.repositoryIds ?? [],
       ...(githubVault?.metadata() !== undefined || config.github.token === undefined
         ? { provider: githubCredentialProvider }
         : { token: config.github.token }),

@@ -8,6 +8,13 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { CredentialBroker } from "../src/actions/credentials.ts";
+import { ClientApiClient } from "../src/client/sdk.ts";
+import { GitHubConnectionService } from "../src/personal/github-connection.ts";
+import { GitHubTokenVault } from "../src/personal/github-token-vault.ts";
+import { CredentialRepository } from "../src/storage/credentials.ts";
+import { openStore } from "../src/storage/node.ts";
+
 const ADMIN = "main-kill-admin";
 const mainPath = fileURLToPath(new URL("../src/main.ts", import.meta.url));
 const cwd = fileURLToPath(new URL("../../..", import.meta.url));
@@ -43,7 +50,7 @@ async function waitUntil(
   throw new Error(`${label} timed out: ${stderr()}`);
 }
 
-async function startMain(database: string, piDatabase: string) {
+async function startMain(database: string, piDatabase: string, githubEncryptionKey = "") {
   const port = await freePort();
   let stderr = "";
   const child = spawn(process.execPath, [mainPath], {
@@ -63,6 +70,7 @@ async function startMain(database: string, piDatabase: string) {
       OPENCODE_API_KEY: "",
       GITHUB_TOKEN: "",
       GITHUB_ALLOWED_REPOS: "",
+      GITHUB_CONNECTION_ENCRYPTION_KEY: githubEncryptionKey,
     },
     stdio: ["ignore", "ignore", "pipe"],
   });
@@ -174,4 +182,49 @@ describe("main process SSE recovery", () => {
       await rm(dir, { recursive: true, force: true });
     }
   });
+});
+
+it("restores the GitHub repository allowlist and credential epoch when main starts", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pa-main-github-"));
+  const database = join(dir, "agent.sqlite");
+  const encryptionKey = Buffer.alloc(32, 7).toString("base64");
+  try {
+    const store = openStore(database);
+    let initialVersion: number;
+    try {
+      const owner = store.bindOwner({
+        channel: "feishu",
+        accountId: "app_test",
+        actorId: "ou_owner",
+        verifiedAt: "2026-01-01T00:00:00.000Z",
+      });
+      const connection = new GitHubConnectionService({
+        store,
+        ownerId: owner.id,
+        credentials: new CredentialBroker(undefined, new CredentialRepository(store.db)),
+        vault: new GitHubTokenVault({ db: store.db, ownerId: owner.id, encryptionKey }),
+        oauthConfigured: false,
+        envPatConfigured: false,
+        fetch: async () => Response.json({ id: 42, login: "fixture-user" }),
+      });
+      const initial = await connection.connectPat({ token: "fixture-pat", repositoryIds: [101, 202] });
+      assert.ok(initial.credentialVersion !== undefined);
+      initialVersion = initial.credentialVersion;
+    } finally {
+      store.close();
+    }
+
+    const main = await startMain(database, join(dir, "pi.sqlite"), encryptionKey);
+    try {
+      const client = new ClientApiClient({ baseUrl: main.url, token: ADMIN });
+      const connection = await client.getGithubConnection();
+      assert.equal(connection.status, "connected");
+      assert.deepEqual(connection.repositoryIds, [101, 202]);
+      assert.equal(connection.credentialVersion, initialVersion);
+    } finally {
+      await main.stop();
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
