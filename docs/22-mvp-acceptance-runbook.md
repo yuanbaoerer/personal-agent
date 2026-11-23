@@ -186,6 +186,14 @@ sqlite3 data/agent.sqlite "select event,after_json from pa_audit where event lik
 
 记录形式：commit SHA、Plan/Step/Task/Action/Receipt/Trace IDs、model/provider、输入与预期、actual/权限/budget、E1/E3/E4、用户真实飞书入站/出站消息 ID（脱敏）、PASS/FAIL/PARTIAL/BLOCKED。只有 Mock 或 Fake Runtime 的步骤**不能**标记真实 E3 通过。Owner 未明确授予写权限/付费无人值守时仅允许已授权只读测试。
 
+**C12：按 Node Pi 会话取 token（本地只读）。** 使用[停机或安全检查点备份](17-data-lifecycle.md)，从同批 `agent.sqlite` 的 `pa_assignments.session_id` 找到本次各 Worker 的 Pi session；Router 的 ID 在 `pa_meta` 的 `router.session_id:<ownerId>:<conversationId>`。传 Pi 数字 ID，不传飞书会话 ID、Task ID 或凭据：
+
+```sh
+node scripts/session-usage.ts /path/to/backup/pi.sqlite 12 34
+```
+
+输出只含指定会话的计数。`observedTokens` 是可测回复的小计；`totalTokens` 仅在所选每个会话均非空、每条 assistant 记录都有正整数计量时给出。未知或零默认值不作零 token；`summary.cost: null` 表示没有账单。脚本不读取应用账单，也不把失败但没有 assistant 记录的请求算作零成本。Router 会话可能跨多轮复用：**不能把整段会话累计直接归到本次 Plan**。复用会话需留前后两个快照，确认期间无其他流量且新增记录均可测，才可取差；否则标未采集。工具回执、最终收件、耗时仍需独立留证。
+
 ### 9.1 已记录的真实证据（2026-11-22）
 
 - E1：CX-01/PL-01/PL-02 的确定性测试与逐用例状态见 [2026-11-22 · Conversational & Autonomous Planning E1 record](acceptance/2026-11-22-conversational-planning-e1.md)。
