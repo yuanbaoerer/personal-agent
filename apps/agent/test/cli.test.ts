@@ -174,6 +174,196 @@ describe("client CLI and SDK", () => {
     ]);
   });
 
+  it("logs in/out and reports GitHub connection state without printing the token", async () => {
+    const plugin = {
+      id: "github",
+      name: "GitHub",
+      version: "0.1.0",
+      apiVersion: "1",
+      trust: "builtin",
+      digest: "digest",
+      enabled: true,
+      lifecycle: "enabled",
+      connection: { status: "unconfigured" },
+      auth: ["pat", "oauth"],
+      permissions: ["repository.read"],
+      tools: ["github.read"],
+      activeTools: [],
+      defaultPolicy: "enabled",
+      installedAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+    const base = {
+      id: "github",
+      ownerId: "owner",
+      pluginId: "github",
+      credentialRef: "github:default",
+      status: "unconfigured",
+      scopes: ["repository.read"],
+      repositoryIds: [],
+      oauthConfigured: true,
+      encryptionConfigured: true,
+      envPatConfigured: false,
+    };
+    const connected = {
+      ...base,
+      status: "connected",
+      authMethod: "pat",
+      accountLogin: "octocat",
+      credentialVersion: 1,
+    };
+    const revoked = { ...base, status: "revoked" };
+    const seen: { method: string; url: string; body: string }[] = [];
+    const fakeFetch: typeof fetch = async (input, init) => {
+      const request = new Request(input, init);
+      const body = init?.body === undefined ? "" : String(init.body);
+      seen.push({ method: request.method, url: request.url, body });
+      if (request.url.endsWith("/connections/github/pat")) {
+        return jsonResponse({ connection: connected });
+      }
+      if (request.url.endsWith("/connections/github/disconnect")) {
+        return jsonResponse({
+          disconnected: true,
+          remoteRevoked: false,
+          connection: revoked,
+        });
+      }
+      if (request.url.endsWith("/connections/github/start")) {
+        return jsonResponse({
+          authorizeUrl: "https://github.com/login/oauth/authorize?client_id=test",
+          connection: base,
+        });
+      }
+      if (request.url.endsWith("/connections/github")) {
+        return jsonResponse({ connection: base });
+      }
+      if (request.url.endsWith("/plugins/github")) {
+        return jsonResponse({ plugin });
+      }
+      return jsonResponse({});
+    };
+    const env = {
+      PA_API_URL: "http://api.local",
+      PA_API_TOKEN: "pa_secret",
+      PA_GITHUB_TOKEN: "ghp_super_secret",
+    };
+
+    const login = captureIo();
+    assert.equal(
+      await runCli(["plugins", "login", "github"], env, login.io, fakeFetch),
+      0,
+    );
+    assert.match(login.out.join("\n"), /connected/);
+    assert.match(login.out.join("\n"), /octocat/);
+    assert.ok(!login.out.join("\n").includes("ghp_super_secret"));
+    const pat = seen.find((entry) => entry.url.endsWith("/pat"));
+    assert.match(pat?.body ?? "", /ghp_super_secret/);
+
+    const status = captureIo();
+    assert.equal(
+      await runCli(
+        ["plugins", "status", "github", "--json"],
+        env,
+        status.io,
+        fakeFetch,
+      ),
+      0,
+    );
+    const parsed = JSON.parse(status.out[0] ?? "{}") as {
+      plugin: { id: string };
+      connection: { status: string };
+    };
+    assert.equal(parsed.plugin.id, "github");
+    assert.equal(parsed.connection.status, "unconfigured");
+    assert.ok(!status.out.join("\n").includes("ghp_super_secret"));
+
+    const refused = captureIo();
+    assert.equal(
+      await runCli(["plugins", "logout", "github"], env, refused.io, fakeFetch),
+      1,
+    );
+    assert.match(refused.out.join("\n"), /--yes/);
+
+    const logout = captureIo();
+    assert.equal(
+      await runCli(
+        ["plugins", "logout", "github", "--yes"],
+        env,
+        logout.io,
+        fakeFetch,
+      ),
+      0,
+    );
+    assert.match(logout.out.join("\n"), /remoteRevoked=false/);
+  });
+
+  it("prints the OAuth URL and explains a missing OAuth setup", async () => {
+    const base = {
+      id: "github",
+      ownerId: "owner",
+      pluginId: "github",
+      credentialRef: "github:default",
+      status: "unconfigured",
+      scopes: ["repository.read"],
+      repositoryIds: [],
+      oauthConfigured: true,
+      encryptionConfigured: true,
+      envPatConfigured: false,
+    };
+    const seen: string[] = [];
+    const fakeFetch: typeof fetch = async (input, init) => {
+      const request = new Request(input, init);
+      seen.push(`${request.method} ${request.url}`);
+      if (request.url.endsWith("/connections/github/start")) {
+        return jsonResponse({
+          authorizeUrl: "https://github.com/login/oauth/authorize?client_id=test",
+          connection: base,
+        });
+      }
+      if (request.url.endsWith("/connections/github")) {
+        return jsonResponse({ connection: base });
+      }
+      return jsonResponse({});
+    };
+    const env = { PA_API_URL: "http://api.local", PA_API_TOKEN: "pa_secret" };
+    const started = captureIo();
+    assert.equal(
+      await runCli(
+        ["plugins", "login", "github", "--oauth", "--no-wait"],
+        env,
+        started.io,
+        fakeFetch,
+      ),
+      0,
+    );
+    assert.match(started.out.join("\n"), /github\.com\/login\/oauth/);
+    assert.deepEqual(seen, [
+      "GET http://api.local/api/v1/connections/github",
+      "POST http://api.local/api/v1/connections/github/start",
+    ]);
+
+    const missing = captureIo();
+    const missingFetch: typeof fetch = async (input) => {
+      const request = new Request(input);
+      if (request.url.endsWith("/connections/github")) {
+        return jsonResponse({
+          connection: { ...base, oauthConfigured: false, encryptionConfigured: false },
+        });
+      }
+      return jsonResponse({});
+    };
+    assert.equal(
+      await runCli(
+        ["plugins", "login", "github", "--oauth"],
+        env,
+        missing.io,
+        missingFetch,
+      ),
+      1,
+    );
+    assert.match(missing.err.join("\n"), /GITHUB_CONNECTION_ENCRYPTION_KEY/);
+  });
+
   it("SDK consumes SSE data frames without treating comments as events", async () => {
     const fakeFetch: typeof fetch = async () =>
       new Response(

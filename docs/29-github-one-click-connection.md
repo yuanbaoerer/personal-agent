@@ -1,8 +1,8 @@
 # 29 · GitHub 一键连接（GitHub One-Click Connection）设计与实施规划
 
-> 状态：**GC-00 IMPLEMENTED / GC-01 PENDING**。规划日期：2026-11-22。审阅基线：`main@fcdd278490ef0a147b7f41af630d25bf5e39edf4`。本文件是实施契约，不等于 API、CLI、TUI、Desktop 或 GitHub App 功能已经实现。每次实施前复核最新 `main` 与 Issue，避免按历史状态重复开发。
+> 状态：**GC-00 + GC-01 IMPLEMENTED (E1) / E3 BLOCKED**。规划日期：2026-11-22。审阅基线：`main@fcdd278490ef0a147b7f41af630d25bf5e39edf4`。本文件是实施契约，不等于 TUI、Desktop、仓库发现或 GitHub App 功能已经实现。每次实施前复核最新 `main` 与 Issue，避免按历史状态重复开发。
 >
-> **2026-11-23 实施状态**：GC-00 连接契约、加密 PAT/OAuth vault、broker epoch、连接状态与失效钩子已落地（schema 27、`github.connection.test.ts`），E1 PASS；GC-01 CLI/API、运行期刷新与真实 E3 仍未实现。
+> **2026-11-23 实施状态**：GC-00 连接契约、加密 PAT/OAuth vault、broker epoch、连接状态与失效钩子已落地（schema 27）；GC-01 `/api/v1/connections/github*`、`pa plugins login/status/logout github`、运行期 catalog/approval 失效已落地。E1 PASS；真实 owner GitHub 登录与 repo 只读 E3 仍 **BLOCKED**，GC-02 仓库发现尚未实现。
 >
 > 跟踪：[#68 EXT-02 Credential / OAuth](https://github.com/yuanbaoerer/personal-agent/issues/68)（GC-00～GC-03 主入口）；[#71 EXT-05 SDK / GitHub App](https://github.com/yuanbaoerer/personal-agent/issues/71)（GC-04 与后续 SDK / 隔离）；[#60 GH-02 ProjectBinding](https://github.com/yuanbaoerer/personal-agent/issues/60)（GC-02 对接）；[#65 GH Tracking](https://github.com/yuanbaoerer/personal-agent/issues/65)（真实业务验收）。相关架构：`docs/19-github-oauth.md`、`docs/24-github-project-management.md`、`docs/25-extension-platform.md`、`docs/10-client-platforms.md`、`docs/20-local-client-api.md`。
 
@@ -146,14 +146,20 @@ Desktop：未来 Integrations 页面复用 **同一** Client SDK 与状态机；
 
 ### GC-01（#68）CLI 自托管登录闭环：**第二个 PR**
 
-- [ ] 实现 Core-backed `pa plugins login/status/logout github` 和 Client SDK，优先已有 PAT 与已配置 OAuth Web Flow。无已注册 OAuth App 时报 setup_required，**绝不假称 P0 为无预配置一键登录**。
-- [ ] PATH：OAuth start/complete/cancel/logout 使用已有 callback/state/encryption，支持 token 不可用、撤销、切号、重复授权、重启；PAT 输入不回显、不落日志与 stdout；兼容 `gh auth` 的“用户确认导入”可以是可选优化，不能默认自动拾取高权限 Token。
-- [ ] 登录后动态连接现有 GitHub Plugin；credential 变化使旧审批和 Issue 草稿失效；只读工具正常工作，旧 env 连接继续可用；不要新建 GitHub read 实现。
-- [ ] `--json` 稳定 machine-readable 状态/错误；交互式命令退出码、取消体验、无浏览器提示、Windows PowerShell/macOS 原生终端 smoke。
-- [ ] E1：state CSRF/replay/expiry、401/403/429、重复 login、同一/异账号、restart、disconnect、撤销后访问 fail-closed、密钥缺失、token leak、plugin enable/disable/generation、旧配置。
+- [x] 实现 Core-backed `pa plugins login/status/logout github` 和 Client SDK，优先已有 PAT 与已配置 OAuth Web Flow。无已注册 OAuth App 时报 setup_required，**绝不假称 P0 为无预配置一键登录**。
+- [x] PATH：OAuth start/complete/cancel/logout 使用已有 callback/state/encryption，支持 token 不可用、撤销、切号、重复授权、重启；PAT 输入不回显、不落日志与 stdout；兼容 `gh auth` 的“用户确认导入”可以是可选优化，不能默认自动拾取高权限 Token。
+- [x] 登录后动态连接现有 GitHub Plugin；credential 变化使旧审批和 Issue 草稿失效；只读工具正常工作，旧 env 连接继续可用；不要新建 GitHub read 实现。
+- [ ] `--json` 稳定 machine-readable 状态/错误；交互式命令退出码、取消体验、无浏览器提示、Windows PowerShell/macOS 原生终端 smoke。JSON/退出码/无浏览器提示已实现；真实交互终端 smoke 归 E3。
+- [x] E1：state CSRF/replay/expiry、401/403/429、重复 login、同一/异账号、restart、disconnect、撤销后访问 fail-closed、密钥缺失、token leak、plugin enable/disable/generation、旧配置。
 - [ ] E3：owner 本机真实 GitHub PAT 或自备 OAuth 完成登录→`status`→精确 repo 的 read→退出/重启/断开验证；记录脱敏 API 回执。无真实 owner 凭据不得标 E3_PASS。
 
-**GC-01 完成定义**：CLI 完整连接/断连闭环对实际 GitHub 至少有一条可复验成功路径，插件状态可见，跨重启安全；不依赖 GC-02/GC-04/GC-05。
+**GC-01 完成定义**：CLI 完整连接/断连闭环对实际 GitHub 至少有一条可复验成功路径，插件状态可见，跨重启安全；不依赖 GC-02/GC-04/GC-05。当前 E1_PASS；E3_BLOCKED（等待 owner 真实凭据与终端操作）。
+
+**GC-01 落地记录（2026-11-23）**：
+- Client API：`GET /connections/github`、`POST /connections/github/pat`、`POST /connections/github/start`、`POST /connections/github/disconnect`、`GET /connections/github/diagnostics`；read/write scope 分离，PAT 尝试按 actor 限流 10/min，响应与错误不含 token。
+- Client SDK / CLI：`getGithubConnection`、`connectGithubPat`、`startGithubOAuth`、`disconnectGithub`；`pa plugins login github [--token-stdin|--oauth] [--no-wait]`、`pa plugins status github`（plugin + connection）、`pa plugins logout github --yes`；`PA_GITHUB_TOKEN` 只作一次性输入，不打印。
+- 运行期：连接/断连/切号会使 `github:default` broker epoch 递增并调用 `ExtensionService.credentialChanged`，旧审批与 Issue 草稿失效；plugin 状态通过同一 connection view 展示。连接本身不授予 repo/Task/Issues-write。
+- E1：`client-api.test.ts`（scope/错误/限流/404）、`cli.test.ts`（登录/状态/登出/token 不打印/OAuth URL/setup 提示）、`github-connection.test.ts`（catalog generation 轮换）、`openapi.test.ts`；`npm test` 629/629、`npm run typecheck` 通过。
 
 ### GC-02（#68 联动 #60）仓库发现和绑定：**第三个 PR**
 
@@ -202,7 +208,7 @@ Desktop：未来 Integrations 页面复用 **同一** Client SDK 与状态机；
 
 ## 9. 首轮交付合同（给 Coding Agent）
 
-**只执行 GC-00 + GC-01；可以两个小 PR，GC-01 基于已审阅的 GC-00。GC-00 已于 2026-11-23 交付，下一 PR 为 GC-01。** 不在首轮实现 GitHub App、Device Flow、TUI Connections、Desktop、仓库发现、完整 SDK、第三方插件、MCP 写、自动 merge，也不修改现有模型路由/Plan Loop。
+**只执行 GC-00 + GC-01；可以两个小 PR，GC-01 基于已审阅的 GC-00。GC-00/GC-01 已于 2026-11-23 交付（E1_PASS / E3_BLOCKED）；下一阶段为 GC-02 仓库发现或 GC-03 TUI。** 不在首轮实现 GitHub App、Device Flow、TUI Connections、Desktop、仓库发现、完整 SDK、第三方插件、MCP 写、自动 merge，也不修改现有模型路由/Plan Loop。
 
 开始前：读取 `docs/29`、#68、#71、当前 main 源码与已有测试；列出可复用模块与真实缺口；若与最新 main 冲突，以代码事实为准并在 PR 说明差异。制定最小接口、迁移/回滚和风险方案，先测试 E1 负例，再接 Core API / CLI。
 

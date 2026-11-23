@@ -2,6 +2,11 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { ClientApiService } from "../src/client-api.ts";
+import {
+  GitHubConnectionError,
+  type GitHubConnectionService,
+  type GitHubConnectionView,
+} from "../src/personal/github-connection.ts";
 import { hashArgs } from "../src/actions/tools.ts";
 import type { IssueDraft } from "../src/domain/types.ts";
 import type { ClientApiRequest } from "../src/client-api.ts";
@@ -546,5 +551,191 @@ describe("issue draft API", () => {
       token: ADMIN,
     });
     assert.equal(second.status, 409);
+  });
+});
+
+describe("GitHub connection API", () => {
+  function connectionView(
+    ownerId: string,
+    overrides: Partial<GitHubConnectionView> = {},
+  ): GitHubConnectionView {
+    return {
+      id: "github",
+      ownerId,
+      pluginId: "github",
+      credentialRef: "github:default",
+      status: "unconfigured",
+      scopes: ["repository.read"],
+      repositoryIds: [],
+      oauthConfigured: true,
+      encryptionConfigured: true,
+      envPatConfigured: false,
+      ...overrides,
+    };
+  }
+
+  function fixture() {
+    const services = createServices({ now: () => NOW });
+    const calls: { pat: { token: string; actor: string }[]; start: number; disconnect: number } = {
+      pat: [],
+      start: 0,
+      disconnect: 0,
+    };
+    let view = connectionView(services.owner.id);
+    const connections = {
+      status: () => view,
+      connectPat: async (
+        input: { token: string; repositoryIds?: number[] },
+        actor: string,
+      ) => {
+        calls.pat.push({ token: input.token, actor });
+        if (input.token === "bad") {
+          throw new GitHubConnectionError("invalid_token", "GitHub rejected the token");
+        }
+        view = connectionView(services.owner.id, {
+          status: "connected",
+          authMethod: "pat",
+          accountLogin: "octocat",
+          credentialVersion: 1,
+        });
+        return view;
+      },
+      beginOAuth: () => {
+        calls.start += 1;
+        return {
+          authorizeUrl: "https://github.com/login/oauth/authorize?client_id=test",
+        };
+      },
+      disconnect: async () => {
+        calls.disconnect += 1;
+        view = connectionView(services.owner.id, { status: "revoked" });
+        return {
+          disconnected: true,
+          remoteRevoked: false as const,
+          connection: view,
+        };
+      },
+    } as unknown as GitHubConnectionService;
+    const api = new ClientApiService({
+      store: services.store,
+      services,
+      ownerId: services.owner.id,
+      adminToken: ADMIN,
+      connections,
+      now: () => NOW,
+    });
+    return { api, calls, services };
+  }
+
+  it("requires read/write scopes and never echoes the PAT", async () => {
+    const { api, calls, services } = fixture();
+    assert.equal((await call(api, "GET", "/api/v1/connections/github")).status, 401);
+    const readOnly = await call(api, "POST", "/api/v1/tokens", {
+      token: ADMIN,
+      body: { name: "reader", scopes: ["read"] },
+    });
+    const readToken = readOnly.body.token as string;
+    const view = await call(api, "GET", "/api/v1/connections/github", {
+      token: readToken,
+    });
+    assert.equal(view.status, 200);
+    assert.equal(
+      (view.body.connection as { status: string }).status,
+      "unconfigured",
+    );
+    assert.equal(
+      (await call(api, "POST", "/api/v1/connections/github/pat", {
+        token: readToken,
+        body: { token: "ghp_test" },
+      })).status,
+      403,
+    );
+    const connected = await call(api, "POST", "/api/v1/connections/github/pat", {
+      token: ADMIN,
+      body: { token: "ghp_test" },
+    });
+    assert.equal(connected.status, 200);
+    assert.equal(calls.pat.length, 1);
+    assert.equal(calls.pat[0]?.actor, "admin");
+    assert.equal(calls.pat[0]?.token, "ghp_test");
+    assert.ok(!JSON.stringify(connected.body).includes("ghp_test"));
+    assert.equal(
+      (connected.body.connection as { accountLogin: string }).accountLogin,
+      "octocat",
+    );
+    assert.equal(services.owner.id.length > 0, true);
+  });
+
+  it("maps invalid tokens and exposes start/disconnect/diagnostics", async () => {
+    const { api, calls } = fixture();
+    const bad = await call(api, "POST", "/api/v1/connections/github/pat", {
+      token: ADMIN,
+      body: { token: "bad" },
+    });
+    assert.equal(bad.status, 400);
+    assert.equal(bad.body.error, "invalid_token");
+
+    const start = await call(api, "POST", "/api/v1/connections/github/start", {
+      token: ADMIN,
+    });
+    assert.equal(start.status, 200);
+    assert.match(String(start.body.authorizeUrl), /github\.com\/login\/oauth/);
+    assert.equal(calls.start, 1);
+
+    const diagnostics = await call(
+      api,
+      "GET",
+      "/api/v1/connections/github/diagnostics",
+      { token: ADMIN },
+    );
+    assert.equal(diagnostics.status, 200);
+    assert.equal(
+      (diagnostics.body.diagnostics as { remoteRevokeSupported: boolean })
+        .remoteRevokeSupported,
+      false,
+    );
+
+    const disconnected = await call(
+      api,
+      "POST",
+      "/api/v1/connections/github/disconnect",
+      { token: ADMIN },
+    );
+    assert.equal(disconnected.status, 200);
+    assert.equal(disconnected.body.disconnected, true);
+    assert.equal(disconnected.body.remoteRevoked, false);
+    assert.equal(calls.disconnect, 1);
+  });
+
+  it("rate limits repeated PAT attempts per actor", async () => {
+    const { api } = fixture();
+    for (let index = 0; index < 10; index += 1) {
+      const accepted = await call(api, "POST", "/api/v1/connections/github/pat", {
+        token: ADMIN,
+        body: { token: "ghp_test" },
+      });
+      assert.equal(accepted.status, 200);
+    }
+    const limited = await call(api, "POST", "/api/v1/connections/github/pat", {
+      token: ADMIN,
+      body: { token: "ghp_test" },
+    });
+    assert.equal(limited.status, 429);
+  });
+
+  it("returns 404 when the host has no connection surface", async () => {
+    const services = createServices({ now: () => NOW });
+    const api = new ClientApiService({
+      store: services.store,
+      services,
+      ownerId: services.owner.id,
+      adminToken: ADMIN,
+      now: () => NOW,
+    });
+    const response = await call(api, "GET", "/api/v1/connections/github", {
+      token: ADMIN,
+    });
+    assert.equal(response.status, 404);
+    assert.equal(response.body.error, "connections_not_configured");
   });
 });

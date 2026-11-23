@@ -64,7 +64,7 @@ export PA_API_TOKEN=pa_...
 
 ## 3. HTTP 契约
 
-机器可读契约：[docs/api/openapi.json](api/openapi.json)（OpenAPI 3.1，`servers: /api/v1`，Bearer security，覆盖全部 21 条 path）。
+机器可读契约：[docs/api/openapi.json](api/openapi.json)（OpenAPI 3.1，`servers: /api/v1`，Bearer security，覆盖全部 40 条 path）。
 
 API 前缀 `/api/v1`，请求/响应 JSON，`cache-control: no-store`。
 
@@ -93,6 +93,11 @@ API 前缀 `/api/v1`，请求/响应 JSON，`cache-control: no-store`。
 | GET | `/events/stream?after=` | SSE 推送；支持 `Last-Event-ID`、心跳与 1s replay |
 | GET/POST | `/tokens` | admin：列表 / 创建 |
 | DELETE | `/tokens/:id` | admin：撤销 |
+| GET | `/connections/github` | GitHub 连接状态、账号、auth method、epoch（不含 token） |
+| POST | `/connections/github/pat` | PAT 经加密 vault 连接；body `{token,repositoryIds?}`，按 actor 限流 |
+| POST | `/connections/github/start` | 已配置 OAuth App 的授权 URL |
+| POST | `/connections/github/disconnect` | 本地断连并撤销 broker ref；不冒充 GitHub 侧 revoke |
+| GET | `/connections/github/diagnostics` | OAuth/加密/PAT 能力标志，无秘密 |
 
 ### 3.1 幂等与并发
 

@@ -27,6 +27,10 @@ import {
   ProjectConflictError,
 } from "./storage/projects.ts";
 import { ProjectValidationError } from "./personal/projects.ts";
+import {
+  GitHubConnectionError,
+  type GitHubConnectionService,
+} from "./personal/github-connection.ts";
 
 export const CLIENT_API_VERSION = 1;
 const API_PREFIX = "/api/v1";
@@ -85,6 +89,8 @@ export interface ClientApiDeps {
     | "issueDrafts"
   >;
   ownerId: string;
+  /** GitHub connection surface; omitted when the host has no owner/OAuth. */
+  connections?: GitHubConnectionService;
   /** Local bootstrap credential; device token hashes are also accepted. */
   adminToken?: string;
   /** Per-credential fixed-window request limit; defaults to 600/min. */
@@ -113,6 +119,18 @@ function errorResponse(error: unknown): ClientApiResponse {
   if (error instanceof ApiError) {
     return {
       status: error.status,
+      body: { error: error.code, message: error.message },
+    };
+  }
+  if (error instanceof GitHubConnectionError) {
+    const status =
+      error.code === "github_unavailable"
+        ? 503
+        : error.code === "invalid_token" || error.code === "oauth_failed"
+          ? 400
+          : 409;
+    return {
+      status,
       body: { error: error.code, message: error.message },
     };
   }
@@ -295,6 +313,27 @@ function parseApiInteger(value: unknown, name: string, min: number, max: number)
     throw new ApiError(400, "invalid_request", `${name} must be an integer between ${min} and ${max}`);
   }
   return value;
+}
+
+function parseConnectionRepositoryIds(value: unknown): number[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(value) || value.length > 100) {
+    throw new ApiError(
+      400,
+      "invalid_request",
+      "repositoryIds must be an array of at most 100 immutable repository ids",
+    );
+  }
+  return value.map((item, index) =>
+    parseApiInteger(
+      item,
+      `repositoryIds[${index}]`,
+      1,
+      Number.MAX_SAFE_INTEGER,
+    ),
+  );
 }
 
 function rethrowPlanError(error: unknown): never {
@@ -536,6 +575,7 @@ export class ClientApiService {
   readonly #store: Store;
   readonly #services: ClientApiDeps["services"];
   readonly #ownerId: string;
+  readonly #connections?: GitHubConnectionService;
   readonly #adminToken?: string;
   readonly #now: () => Date;
   readonly #tokens: ClientTokenRepository;
@@ -547,6 +587,7 @@ export class ClientApiService {
     this.#store = deps.store;
     this.#services = deps.services;
     this.#ownerId = deps.ownerId;
+    this.#connections = deps.connections;
     this.#adminToken = deps.adminToken;
     this.#now = deps.now ?? (() => new Date());
     this.#tokens = new ClientTokenRepository(deps.store.db);
@@ -921,6 +962,68 @@ export class ClientApiService {
           throw error;
         }
       }
+    }
+
+    if (resource === "connections") {
+      const connections = this.#connections;
+      if (connections === undefined) {
+        throw new ApiError(404, "connections_not_configured");
+      }
+      if (id !== "github") {
+        throw new ApiError(404, "connection_not_found");
+      }
+      if (action === undefined && method === "GET") {
+        this.#require(auth, "read");
+        return { status: 200, body: { connection: connections.status() } };
+      }
+      if (action === "diagnostics" && method === "GET") {
+        this.#require(auth, "read");
+        const connection = connections.status();
+        return {
+          status: 200,
+          body: {
+            connection,
+            diagnostics: {
+              oauthConfigured: connection.oauthConfigured,
+              encryptionConfigured: connection.encryptionConfigured,
+              envPatConfigured: connection.envPatConfigured,
+              remoteRevokeSupported: false,
+            },
+          },
+        };
+      }
+      const actorId =
+        auth.kind === "admin" ? "admin" : `token:${auth.record.id}`;
+      if (action === "pat" && method === "POST") {
+        this.#require(auth, "write");
+        // Sensitive body: keep PAT validation attempts well below the generic
+        // API limit without making the token part of the rate-limit key.
+        this.#checkRate(`github-pat:${actorId}`, 10);
+        const body = parseJsonBody(request);
+        const token = parseString(body.token, "token", 1_024);
+        const repositoryIds = parseConnectionRepositoryIds(body.repositoryIds);
+        const connection = await connections.connectPat(
+          {
+            token,
+            ...(repositoryIds === undefined ? {} : { repositoryIds }),
+          },
+          actorId,
+        );
+        return { status: 200, body: { connection } };
+      }
+      if (action === "start" && method === "POST") {
+        this.#require(auth, "write");
+        const started = connections.beginOAuth();
+        return {
+          status: 200,
+          body: { authorizeUrl: started.authorizeUrl, connection: connections.status() },
+        };
+      }
+      if (action === "disconnect" && method === "POST") {
+        this.#require(auth, "write");
+        return { status: 200, body: await connections.disconnect(actorId) };
+      }
+      throw new ApiError(404, "not_found");
     }
 
     if (resource === "projects") {

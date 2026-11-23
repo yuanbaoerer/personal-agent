@@ -1105,6 +1105,165 @@
         ]
       }
     },
+    "/connections/github": {
+      "get": {
+        "operationId": "getGithubConnection",
+        "summary": "Read the owner-scoped GitHub connection and credential epoch",
+        "tags": [
+          "connections"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/connections/github/pat": {
+      "post": {
+        "operationId": "connectGithubPat",
+        "summary": "Connect a PAT through the encrypted vault and rotate the credential epoch",
+        "tags": [
+          "connections"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "Invalid token or request"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "description": "Vault key is not configured"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "description": "GitHub is temporarily unavailable"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GitHubPatConnect"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/connections/github/start": {
+      "post": {
+        "operationId": "startGithubOAuth",
+        "summary": "Start the configured GitHub OAuth web flow",
+        "tags": [
+          "connections"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "description": "GitHub OAuth is not configured"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/connections/github/disconnect": {
+      "post": {
+        "operationId": "disconnectGithub",
+        "summary": "Disconnect locally and revoke the broker credential; does not revoke on GitHub",
+        "tags": [
+          "connections"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "description": "No connection surface is available"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/connections/github/diagnostics": {
+      "get": {
+        "operationId": "getGithubConnectionDiagnostics",
+        "summary": "Read connection capability flags without secrets",
+        "tags": [
+          "connections"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
     "/plans": {
       "get": {
         "operationId": "listPlans",
@@ -1657,6 +1816,119 @@
       }
     },
     "schemas": {
+      "GitHubPatConnect": {
+        "type": "object",
+        "required": [
+          "token"
+        ],
+        "properties": {
+          "token": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          },
+          "repositoryIds": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "GitHubConnection": {
+        "type": "object",
+        "required": [
+          "id",
+          "ownerId",
+          "pluginId",
+          "credentialRef",
+          "status",
+          "scopes",
+          "repositoryIds",
+          "oauthConfigured",
+          "encryptionConfigured",
+          "envPatConfigured"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "const": "github"
+          },
+          "ownerId": {
+            "type": "string"
+          },
+          "pluginId": {
+            "type": "string",
+            "const": "github"
+          },
+          "credentialRef": {
+            "type": "string"
+          },
+          "authMethod": {
+            "type": "string",
+            "enum": [
+              "pat",
+              "oauth"
+            ]
+          },
+          "accountId": {
+            "type": "string"
+          },
+          "accountLogin": {
+            "type": "string"
+          },
+          "credentialVersion": {
+            "type": "integer"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "unconfigured",
+              "connected",
+              "expired",
+              "revoked",
+              "reauth_required",
+              "error"
+            ]
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "repositoryIds": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
+          },
+          "githubScopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "oauthConfigured": {
+            "type": "boolean"
+          },
+          "encryptionConfigured": {
+            "type": "boolean"
+          },
+          "envPatConfigured": {
+            "type": "boolean"
+          },
+          "updatedAt": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          }
+        }
+      },
       "PlanBudget": {
         "type": "object",
         "required": [

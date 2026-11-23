@@ -21,12 +21,10 @@ export type GitHubConnectionStatus =
 
 export type GitHubConnectionErrorCode =
   | "setup_required"
-  | "oauth_not_configured"
   | "encryption_key_missing"
   | "reauth_required"
   | "invalid_token"
   | "github_unavailable"
-  | "not_connected"
   | "oauth_failed";
 
 export class GitHubConnectionError extends Error {
@@ -246,7 +244,7 @@ export class GitHubConnectionService {
   beginOAuth(): { authorizeUrl: string } {
     if (this.#oauth === undefined || !this.#oauthConfigured) {
       throw new GitHubConnectionError(
-        "oauth_not_configured",
+        "setup_required",
         "GitHub OAuth is not configured; set GITHUB_OAUTH_CLIENT_ID/SECRET or use a PAT",
       );
     }
@@ -260,7 +258,7 @@ export class GitHubConnectionService {
   ): Promise<GitHubConnectionView> {
     if (this.#oauth === undefined || !this.#oauthConfigured) {
       throw new GitHubConnectionError(
-        "oauth_not_configured",
+        "setup_required",
         "GitHub OAuth is not configured",
       );
     }
