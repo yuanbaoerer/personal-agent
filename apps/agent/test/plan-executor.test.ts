@@ -780,7 +780,7 @@ describe("plan executor", () => {
     assert.match(first?.completionCriteria ?? "", /"verifier":"text-review"/);
   });
 
-  it("runs the final step with the parent mandate and verifier", async () => {
+  it("runs the final step with the parent verifier but only its declared mandate", async () => {
     let clock = NOW.getTime();
     const services = createServices({ now: () => new Date(clock) });
     const parent = services.tasks.insert({
@@ -788,7 +788,10 @@ describe("plan executor", () => {
       conversationId: services.conversation.id,
       sourceKey: "plan-final-mandate",
       goal: "state-aware parent",
-      completionCriteria: "provide a checked result",
+      completionCriteria: JSON.stringify({
+        verifier: "state-read",
+        requiredEvidenceKinds: ["state_snapshot"],
+      }),
       mandate: { resources: ["chat", "state"], tools: ["state.summary"] },
       createdAt: NOW.toISOString(),
     }).task;
@@ -815,8 +818,10 @@ describe("plan executor", () => {
     }
     const final = childTasks(services, parent).find((task) => task.planStepKey === "C");
     assert.ok(final);
-    assert.deepEqual(final.mandate.tools, ["state.summary"]);
-    assert.deepEqual(final.mandate.resources, ["chat", "state"]);
+    // The parent can use state tools, but the final step declares none. It
+    // must not inherit the parent's authority just to satisfy the verifier.
+    assert.deepEqual(final.mandate.tools, []);
+    assert.deepEqual(final.mandate.resources, []);
     // The stronger state-read verifier cannot be satisfied by the fake report,
     // so the plan must fail closed instead of claiming success.
     assert.equal(

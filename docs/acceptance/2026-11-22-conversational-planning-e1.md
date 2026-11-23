@@ -79,9 +79,9 @@ No `.env`, token, chat text or provider response is recorded here.
 - Permission/credential failures and exhausted automatic recovery pause the plan and move the parent task to `needs_review`; owner acknowledgement/cancellation remains the exit.
 - Plan progress is deterministic chat/API output; it is not a model-generated conversational answer (intentionally avoids inventing state).
 - Ready steps dispatch as child Tasks under the global Worker cap; the tests exercise dependent chains, not parallel-ready-step contention end-to-end.
-- Review hardening added: stable parent-task budget lineage, ExtensionPolicy inheritance, activation/revise guards, final-step parent mandate, stale-tick fail-closed, and atomic/sweep-repaired settlement. These are E1-only until a real run repeats them.
+- Review hardening added: stable parent-task budget lineage, ExtensionPolicy inheritance, activation/revise guards, final-step declared scope, stale-tick fail-closed, and atomic/sweep-repaired settlement. These are E1-only until a real run repeats them.
 - The final step always uses the parent completion criteria; a plan without a final step that can prove them settles `needs_review`.
-- The final step deliberately runs with the parent mandate so the parent verifier cannot be weakened; a final step declared with no tools may therefore invoke parent read tools. External writes still require ActionService approval.
+- The final step runs only with the resources and tools declared on that step. It no longer inherits the parent mandate; if the parent verifier needs a capability the final step did not declare, the plan settles `needs_review` instead of gaining authority. The Router prompt requires the final step to declare verifier-needed tools. External writes still require ActionService approval.
 - Migration compatibility is covered from schema 18 and from both schema-23 shapes (column absent and column already present); the upgrade is conditional (sqlite_master, not PRAGMA) and backfills legacy plan-step children to `plan:<parentTaskId>`.
 - Sweep clears running/ready steps under superseded versions from intermediate-branch data, so a later version can activate; revise/resume reject an in-flight parent action in tests.
 
