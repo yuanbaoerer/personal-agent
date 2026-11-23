@@ -254,10 +254,13 @@ async function main(): Promise<void> {
   };
   if (githubCredentialProvider !== undefined) {
     // Revocation and the credential epoch survive a restart for both PAT and
-    // OAuth; the host only re-attaches the provider.
+    // OAuth. A stored credential is re-attached through the vault; a legacy
+    // env PAT is passed by value so a changed token rotates the epoch.
     credentials.restore("github:default", {
       ...githubCredentialMetadata,
-      provider: githubCredentialProvider,
+      ...(githubVault?.metadata() !== undefined || config.github.token === undefined
+        ? { provider: githubCredentialProvider }
+        : { token: config.github.token }),
     });
   }
   if (
@@ -314,7 +317,7 @@ async function main(): Promise<void> {
           ...(githubOAuth === undefined ? {} : { oauth: githubOAuth }),
           oauthConfigured: config.github.oauth !== undefined,
           envPatConfigured: config.github.token !== undefined,
-          onChange: async () => {
+          onChange: async (change) => {
             const services = appRef.current;
             if (services === undefined) {
               return;
@@ -328,7 +331,10 @@ async function main(): Promise<void> {
                 owner.id,
                 config.github.issueWriteCredentialRef,
               );
-              await services.plugins.credentialChanged("github", "connection");
+              await services.plugins.credentialChanged(
+                "github",
+                change.actorId,
+              );
             } catch (error) {
               logger.error("github_connection_change_failed", {
                 message: error instanceof Error ? error.message : String(error),

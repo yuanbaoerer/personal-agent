@@ -731,8 +731,8 @@ export async function runCli(
           const connection = await client.getGithubConnection();
           const usePat =
             wantStdin ||
-            envToken !== undefined ||
-            (!wantOAuth && !connection.oauthConfigured);
+            (!wantOAuth &&
+              (envToken !== undefined || !connection.oauthConfigured));
           if (usePat) {
             const token =
               envToken !== undefined && !wantStdin
