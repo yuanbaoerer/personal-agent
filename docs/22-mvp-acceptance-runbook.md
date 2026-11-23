@@ -178,15 +178,15 @@ sqlite3 data/agent.sqlite "select event,after_json from pa_audit where event lik
 本 Runbook 原 M01–M14 不变。新增产品体验基线参见 [28 · MVP 自然对话与自主规划](28-conversational-planning-mvp.md) / [#92](https://github.com/yuanbaoerer/personal-agent/issues/92)。实现 #89–#91 **后**，在真实 Owner 飞书私聊、真实模型、受授权的 GitHub 只读项目上按下列最小顺序实测：
 
 1. 发送普通聊天需求并追问至少 6 轮，核对上下文连续、没有意外 Task/Action（C01）。
-2. 明确“先讨论并制定三步方案，不执行”，核对 Plan draft、步骤/依赖/预算与持久版本；修改第二步并查询 PlanDiff，未创建外部动作（C02/C03）。
-3. 明确“按已批准方案在授权的 projectKey 只读执行”，记录 Plan→Step→Assignment→GitHub read→Receipt→Verifier 的每次实际调用，检查三个步骤均具备来源并且没有 POST（C04/C11）。
+2. 在部署 [#125](https://github.com/yuanbaoerer/personal-agent/pull/125) 对应修复后，使用没有预置任务的验收会话，不手工插入父任务。先普通聊天，再明确「先制定三步方案，不执行」；核对草稿可查询，修改一步并查询 PlanDiff，确认没有 Worker 或外部工具调用（#123 / C02–C03 的补充验收）。
+3. 明确「按已批准方案在授权的 projectKey 只读执行」，记录 Plan→Step→Assignment→GitHub read→Receipt→Verifier。**同一次运行**三个步骤都须有可核验来源，第三步须形成最终报告且真实飞书已收件；记录零写入（C04/C11）。
 4. 在第 2 步执行中询问“进展到哪步”；补充新限制并暂停/恢复，核对 inputSeq、planVersion、旧 Worker 输出不能推进新计划；模拟可恢复失败/429 并观察有限重规划或 needs_review（C05–C07）。
 5. 关闭客户端、对处于安全状态的进程执行可控重启并核对 Plan/Step/Outbox，没有重复副作用；测试不授权、额度未知、跨 owner/project 的负例（C08–C10）。
-6. 记录总模型/工具次数、成本、用户纠正、错误自动建任务、被核验证据数、最终消息收件与耗时（C12）。
+6. 从入站开始记录总模型/工具次数、可取得的 token/费用、用户纠正、错误自动建任务、被核验证据数、最终收件及耗时（C12 / #7）。不可取得的用量及费用记为「未采集」，不等于零。
 
 记录形式：commit SHA、Plan/Step/Task/Action/Receipt/Trace IDs、model/provider、输入与预期、actual/权限/budget、E1/E3/E4、用户真实飞书入站/出站消息 ID（脱敏）、PASS/FAIL/PARTIAL/BLOCKED。只有 Mock 或 Fake Runtime 的步骤**不能**标记真实 E3 通过。Owner 未明确授予写权限/付费无人值守时仅允许已授权只读测试。
 
-### 9.1 当前证据（2026-11-22）
+### 9.1 已记录的真实证据（2026-11-22）
 
 - E1：CX-01/PL-01/PL-02 的确定性测试与逐用例状态见 [2026-11-22 · Conversational & Autonomous Planning E1 record](acceptance/2026-11-22-conversational-planning-e1.md)。
 - E3/E4：**C01–C03 已 PASS（E3）；C04/C11 PARTIAL**。2026-11-22 在合并后 main 上完成前置步骤与真实飞书 C01–C03；随后配置只读 GitHub、绑定 `personal-agent` 并执行 C04：Plan `e1ba272e` 的 A/B 两步均通过 `github-read`（file、issues、pulls，14 条结构化 claim），C 在 3 次尝试内未产出最终报告，plan paused；全程 23 个 `github.read` GET、0 POST。另修复 verifier 的 CJK 标点 URL 解析缺陷（PR #119）。C05–C10 仍待后续；C12 无真实成本数据；E4 未测。C06/C07 的代码接线已补：补充会生成新 active 版本与 PlanDiff，可重试的外部失败有一次自动恢复版本（`pa_plans.auto_replans`，schema 26），权限失败转 `needs_review`；但真实 Feishu 补充、429/head-drift E3 与进程重启 E4 仍需重跑并记录本节。证据见 [runbook execution](acceptance/2026-11-22-conversational-planning-runbook.md)。不得把 A/B 或 PARTIAL 记作 C04/C11 PASS 或完整 Pilot 通过；其余 E3/E4 不得据 E1 或 C01–C03 结果宣称 Pilot 通过。

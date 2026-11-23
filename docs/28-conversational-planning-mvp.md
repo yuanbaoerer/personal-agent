@@ -98,17 +98,26 @@ Owner message
 
 ## 5. 交付依赖、PR 顺序及并行化
 
-| Workstream / PR | 目标 | 前置 | 不在范围 | 状态（2026-11-22） |
+| Workstream / PR | 目标 | 前置 | 不在范围 | 状态（2026-11-23，main `2bcadb4`） |
 | --- | --- | --- | --- | --- |
 | CX-01 | Conversation 上下文/自然 chat vs task routing | #39 已有 Intent、#41 入口 | 第三方渠道/向量检索 | ✅ 已合并 #106/#107（E1） |
-| CX-02 | Discussion → Plan Draft / Clarification / PlanDiff UX | CX-01 可并行 PLAN-01 schema | 全自动后台 | ✅ 已合并 #112（E1） |
+| CX-02 | Discussion → Plan Draft / Clarification / PlanDiff UX | CX-01 可并行 PLAN-01 schema | 全自动后台 | 已合并 #112；空会话草稿 [#123](https://github.com/yuanbaoerer/personal-agent/issues/123) 由 [PR #125](https://github.com/yuanbaoerer/personal-agent/pull/125) 补齐，111 个相关测试与合成会话真实模型冒烟通过，CI 绿，待合并和真实飞书复验 |
 | PL-01 | Plan/Step Store + validated DAG + API/CLI | TaskService + #7/#28 守卫 | Organization Mode | ✅ 已合并 #108（E1） |
 | PL-02 | Dependent Step dispatch + verifier + budget fence | PL-01 | 未经许可的写入 | ✅ 已合并 #109（E1） |
 | PL-03 | Replan / pause / resume / cancellation / recovery | PL-02 | 无界递归 | ✅ 随 PL-02/CX-02 交付（有界 replan、暂停/恢复/取消、重启/孤儿清理、局部重试；E1）。C06/C07 后续补齐：运行中补充生成新 active 版本 + PlanDiff；429/5xx/timeout/head 漂移有一次自动恢复版本，权限失败转 `needs_review`（E1，真实 E3 待重跑） |
-| ACC-01 | E1/E3/E4 真实验收和修复，维护效果指标 | CX/PL 与 #60/#62 | 仅凭 CI 宣称发布 | C01–C03 E3 PASS；C04/C11 PARTIAL；其余真实验收未完成（#92 open） |
+| ACC-01 | E1/E3/E4 真实验收和修复，维护效果指标 | CX/PL 与 #60/#62 | 仅凭 CI 宣称发布 | C01 E3 PASS；C02/C03 E3 PASS 仅覆盖预建父任务；C04/C11 PARTIAL；其余真实验收未完成（#92 open） |
 | 并行现有业务线 | #60/#62 L2-R 项目真实感知、#68 账号、#7/#28 安全 | 独立 Workstream | 为聊天重造 GH Plugin | 按各自 Issue 独立推进 |
 
-**下一次验收从 C04/C11 的最终综合开始**：在已授权只读项目上让第三步提交有来源的最终报告，并记录真实飞书收件。再按 [runbook](22-mvp-acceptance-runbook.md) 执行 C05–C10、记录 C12 成本与运行中重启 E4。#117 补齐 C06/C07 的确定性执行路径，不替代真实验收。
+### 下一阶段：只读执行与真实飞书交付
+
+| 顺序 | 工作项 / 分工 | 交付条件 |
+| --- | --- | --- |
+| 1 · 可并行 | **维护者**审核 [#124](https://github.com/yuanbaoerer/personal-agent/pull/124)（文档）和 [#125](https://github.com/yuanbaoerer/personal-agent/pull/125)（空会话草稿），分别合并；owner 在部署后复验 #123。 | 从无预置父任务的飞书私聊完成「普通聊天 → 草稿 → 修订」，记录 PlanDiff，确认未派工、未调用外部工具。#125 合并不能替代这条验收。 |
+| 2 · 并行准备 | **维护者**先复核只读 pilot 的执行授权及连接恢复边界；**DeepSeek Flash** 可独立承接 [#126 步骤时限](https://github.com/yuanbaoerer/personal-agent/issues/126)。 | 安全相关差异走仓库私下审查；#126 用可控时钟锁定排队、运行中、重放与父截止时间。若同时修改执行器，先集成授权边界变更，再集成时限 PR。 |
+| 3 · 准备下一次真机运行 | **维护者**在 [#7](https://github.com/yuanbaoerer/personal-agent/issues/7) 确认可取得的 token/用量及延迟数据；**owner**按 [runbook §9](22-mvp-acceptance-runbook.md#9-新增-conversational--autonomous-planning-真实验收c01c12) 验收 [#92](https://github.com/yuanbaoerer/personal-agent/issues/92) 的 C04/C11。 | 在同一次受控只读运行中，三步各有核验证据、第三步生成最终报告、真实飞书收到该报告，记录 0 次写入及从入站到收件的耗时。缺失用量标记为未采集，不填 0；C12 不因 C04/C11 通过而自动通过。 |
+| 4 · 只读链路通过后 | **owner 与维护者**继续 C05–C10、C12 和运行中重启 E4；#117 的 C06/C07 确定性路径只作为回归基线。 | 保存状态追问、补充/暂停/恢复、有限重规划、重启与作用域验证的独立证据；[#41](https://github.com/yuanbaoerer/personal-agent/issues/41) 的 M01–M14 保持独立。 |
+
+本阶段不启动 GC-02/03、Coding Agent 或无人值守写入；[#61](https://github.com/yuanbaoerer/personal-agent/issues/61) 的真实写入仍仅在 owner 指定的隔离仓库另行验收。
 
 ## 6. 产品验收示例
 
