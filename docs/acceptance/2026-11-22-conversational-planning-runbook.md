@@ -37,7 +37,7 @@
 | C05–C10 remaining chat cases | PENDING | Require further owner Feishu turns (progress, pause/replan, restart, isolation) |
 | C04 bounded read-only execution | **PARTIAL (E3)** | Plan `e1ba272e` v1 on parent `543a1221`; A `a4d5f457` PASS `github-read`; B `90438db5` PASS `github-read` with 14 structured claims; C `2cc28839` FAILED after 3 attempts. 23 `github.read` GET receipts, 0 POST. Details below |
 | C11 real GitHub project review | **PARTIAL** | Real issues/pulls/checks/file reads succeeded and B verified; no final review report because C failed. Not a C11 PASS |
-| C12 cost/effects baseline | BLOCKED | No real conversation/plan run; no token/latency data to record |
+| C12 cost/effects baseline | BLOCKED | Real conversations and a partial plan ran, but model usage/cost was not persisted and no complete cost and latency baseline was recorded. |
 | E4 plan recovery | NOT TESTED | Service restart succeeded, but no active plan/step existed to recover |
 
 ### C01 evidence (2026-11-22T12:44:10Z–12:53:33Z)

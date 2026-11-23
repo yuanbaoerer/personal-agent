@@ -1,6 +1,6 @@
 # 21 · MVP Functional Ready：私有自用主体功能实施纲领
 
-> **2026-11-21 MVP 产品定义补充（P0，当前规划未实现）**：[28 · Conversational & Autonomous Planning MVP](28-conversational-planning-mvp.md) 将多轮聊天（#89）、通用持久 Plan（#90）、有界自主推进和重规划（#91）、真实用户体验验收（#92）纳入 Functional Ready。**这是通用 Agent 产品能力，#65 GitHub 项目管理只是首个真实验证场景**。现有 #39 Intent/Task/Action/Verifier、#60/#62 GitHub Read-only Project Review（PR #86–#88）已存在，不能重复开发；当前尚无持久 WorkflowPlan 与真实多步自主执行闭环。原 M01–M14、#41、#7/#28 安全及正式发布门槛不降低；C01–C12 为新增用户体验验收，不替代旧场景。
+> **实施与验收分开跟踪**：[对话与计划](28-conversational-planning-mvp.md)的 #89–#91 已合并；[#92](https://github.com/yuanbaoerer/personal-agent/issues/92) 记录真实体验，不因实现合并而关闭。GitHub 项目评估是第一个验证场景；C01–C12 不替代 #41 的 M01–M14 或原安全与发布门槛。
 
 > **2026-11-20 Extension Platform 衔接**：[25 · Extension Platform](25-extension-platform.md) / [#73](https://github.com/yuanbaoerer/personal-agent/issues/73) 为下一工程检查点，#65 仍为下一业务检查点。GH-00/01 真实安全验收与 EXT-01 并行；#68 迁移 GitHub 首插件，#69/#70 MCP/Skills 与 GH-02/04 协作。当前不开发任意第三方包或市场，但 V2/V3 是长期必选，不降级 M01–M14。
 
@@ -13,7 +13,7 @@
 
 一个 owner、一个常驻 Agent Core、一个真实模型、一个真实飞书私聊入口。通过自然语言对话/创建任务/查询状态/补充/修改/取消、真实 GitHub 只读查询、明确确认的记忆和一次/周期提醒、授权的定期汇报，关闭客户端仍可执行并收回结果。已有本地 CLI/TUI 辅助管理；不要求远程多设备或 Desktop。私有首版只读优先，真实外部写默认不启用；若必须验证写操作，仅隔离测试资源、明确审批和可核对结果。
 
-当前证据：MVP-01 的六个 owner-scope state tools、确定性状态问答路径与 state-read verifier 已合并（PR #43），MVP-02 结构化 Intent 与 Intent Handler 已合并（PR #44/#46），仓库记录 385 个确定性测试通过；本地 API/CLI/TUI/SSE、OpenAPI、macOS arm64/Windows x64 CI、clean-install smoke 已有记录。真实 Feishu 长连接入站、D19 复测与 M02/M03 仍 pending；飞书/真实模型/短提醒只有部分真实记录。SSE 主进程 SIGKILL 恢复不是任务/模型恢复证据。真实 GitHub OAuth/G1、并发 G2、计划 G3、持续运行仍待验收。不要增加 E1 数量来代替真实业务结果。
+状态查询与事实核验（#38）、自然语言入口（#39）、本地 API/CLI/TUI、跨平台 CI 已有实现。真实飞书入站已有[对话和计划草稿记录](acceptance/2026-11-22-conversational-planning-runbook.md)；这不等于 D19、M02/M03、G1–G3 全流程或持续运行通过。各项须按[验收手册](22-mvp-acceptance-runbook.md)分别留证；例如，SSE 主进程恢复不能证明运行中的任务或模型恢复。
 
 ## 2. 工作包与依赖
 

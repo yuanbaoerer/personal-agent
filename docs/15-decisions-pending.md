@@ -6,11 +6,11 @@
 
 > **2026-11-19 MVP 决策执行顺序**：采用 [21 · MVP Functional Ready](21-mvp-functional-ready.md) 作为当前实施优先级，跟踪 [#41](https://github.com/yuanbaoerer/personal-agent/issues/41)。D19/D20 的状态语义修复由 #38 承接，#39 补自然语言能力；D21 已选 OAuth App 保留，真实 GitHub 可先用 repo-scoped read-only PAT 验证。D01/D03 的 Provider/预算、真实凭据、常驻机器、副作用范围仍需 owner 配置或确认；D07 推荐长连接、D09 保持 provisional，D22 等扩展/发行后置。不能把仓库修改授权视为授权使用真实凭据或产生支出；未决项复选框不自动勾选。
 
-> 更新：2026-11-19。仅列需要主人/产品负责人决定的事项；工程可确定的内容仍直接实施。
+> 下表为 2026-11-19 的实施快照；后续证据以[当前实现](../README.md#当前实现)及各决策下的更新为准。
 >
-> **全局状态**：本地 Node 核心闭环 + `/api/v1`/CLI/TUI + SSE + OpenAPI + macOS/Windows CI + clean-install smoke 均为 E1 可用；真实 Feishu/模型/DO 驱逐、第二开发者安装、真实 Terminal 和 E3 仍 pending。
+> E1 只描述确定性验证；真实渠道、模型与恢复按场景单独记录，不以客户端或 CI 成功代替。
 
-## 1. 当前进度
+## 1. 2026-11-19 实施快照
 
 | 项 | 状态 | 证据 |
 | --- | --- | --- |
@@ -164,9 +164,8 @@ npm run eval:report:critical  # CI 关键集
 
 ### D18 仓库可见性与发布
 
-- 现状：private；PA-15 明确不自动改 visibility。
-- 需决定：何时/由谁将仓库改为 public；是否先发布 private beta；main 分支保护/CODEOWNERS 要求。
-- 建议：在所有 D01–D17 关键项和真实 E3/E4 完成后，由仓库所有者手动执行；CI 永不修改 visibility。
+- 2026-11-23 核对 GitHub：仓库为 **public**。能访问源码并不表示 D16 许可证、D17 历史处置或发行审查已签收。
+- 需 owner 确认可见性是否符合预期，以及发行和分支保护条件；如需调整，由 owner 手动执行。CI 不修改 visibility。
 - [ ] 已审核：________________
 
 ### D19 Worker 读取任务/提醒状态的权限

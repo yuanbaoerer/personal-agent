@@ -1,6 +1,6 @@
 # 11 · 面向全球开源社区的产品、可信与治理路线图
 
-> 修订日期：2026-11-14。类型：长期规划与发布验收规则，**不是已实现声明**。本仓库目前仍为 private，公开代码仓库必须由所有者另行明确决定。
+> 本文是 2026-11-14 的长期规划与发布验收规则，不是已实现声明。GitHub 仓库的实际可见性与开源许可、发布签收是不同事项，见[治理检查清单](18-open-source-governance.md)。
 > 产品定位：**A reliable, self-hosted, cross-platform personal AI agent.**
 > 先读：[07 · 长期路线图](07-long-term-roadmap.md) · [08 · 评测](08-evaluation.md) · [09 · 自托管与开源](09-open-source-plan.md) · [10 · 跨平台客户端](10-client-platforms.md)。
 
