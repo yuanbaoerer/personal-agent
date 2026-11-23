@@ -142,7 +142,7 @@ describe("GitHub connection contract", () => {
       () => fixture.connection.beginOAuth(),
       (error: unknown) =>
         error instanceof GitHubConnectionError &&
-        error.code === "oauth_not_configured",
+        error.code === "setup_required",
     );
   });
 
