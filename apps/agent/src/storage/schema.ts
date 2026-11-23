@@ -690,6 +690,43 @@ const migrations: readonly (readonly MigrationStatement[])[] = [
       }
     },
   ],
+  [
+    // Token/cost/latency telemetry. The runtime reports cumulative
+    // per-conversation usage; cursors let the repository persist only the
+    // delta for each operation so a long-lived Router session is not counted
+    // twice. Unknown prices stay distinguishable from provider-reported cost.
+    `CREATE TABLE IF NOT EXISTS pa_usage (
+      id TEXT PRIMARY KEY,
+      owner_id TEXT NOT NULL,
+      conversation_id TEXT NOT NULL,
+      task_id TEXT,
+      assignment_id TEXT,
+      session_id TEXT NOT NULL,
+      operation_id TEXT NOT NULL,
+      source TEXT NOT NULL CHECK (source IN ('worker', 'router')),
+      usage_json TEXT NOT NULL,
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+      reasoning_tokens INTEGER,
+      total_tokens INTEGER NOT NULL DEFAULT 0,
+      cost_total REAL NOT NULL DEFAULT 0,
+      cost_kind TEXT NOT NULL CHECK (cost_kind IN ('provider', 'catalog', 'mixed', 'none')),
+      duration_ms INTEGER,
+      created_at TEXT NOT NULL,
+      UNIQUE (source, operation_id)
+    ) STRICT`,
+    `CREATE INDEX IF NOT EXISTS pa_usage_owner_created_idx ON pa_usage (owner_id, created_at)`,
+    `CREATE INDEX IF NOT EXISTS pa_usage_task_idx ON pa_usage (task_id)`,
+    `CREATE TABLE IF NOT EXISTS pa_usage_cursors (
+      source TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      usage_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (source, session_id)
+    ) STRICT`,
+  ],
 ];
 
 /** Highest schema version this build can read/migrate. */

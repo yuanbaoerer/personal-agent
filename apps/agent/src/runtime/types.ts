@@ -1,3 +1,5 @@
+import type { RuntimeUsage } from "../domain/types.ts";
+
 /** Experimental until D11; bump only with a documented migration. */
 export const RUNTIME_CONTRACT_VERSION = 1;
 
@@ -20,7 +22,12 @@ export interface RuntimeSubmission {
 }
 
 export type RuntimeAnswer =
-  | { status: "answered"; text: string }
+  | {
+      status: "answered";
+      text: string;
+      /** Cumulative conversation usage, when the runtime can expose it. */
+      usage?: RuntimeUsage;
+    }
   | { status: "unanswered"; reason: string }
   /** The wait timed out; the operation may still be running. */
   | { status: "pending" };

@@ -2,17 +2,19 @@ import { BACKGROUND_CONTEXT, withCancel } from "@earendil-works/chord/context";
 import type { Models } from "@earendil-works/pi-ai/models";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { opencodeGoProvider } from "@earendil-works/pi-ai/providers/opencode-go";
-import { createRegistry, Harness } from "@earendil-works/pi-durable";
+import { createRegistry, Harness, UsageDoc } from "@earendil-works/pi-durable";
 import type {
   Conversation,
   ConversationId,
   EntryId,
   EntryRecord,
+  UsageState as PiUsageState,
   Wake,
 } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import type { SqliteStorage } from "@earendil-works/pi-durable/storage/sqlite";
 
+import type { RuntimeUsage, UsageAmounts } from "../domain/types.ts";
 import type {
   AgentRuntime,
   OpenedSession,
@@ -37,6 +39,57 @@ export interface NodePiRuntimeOptions {
 }
 
 const DEFAULT_MAX_TURNS = 8;
+
+function copyUsageAmounts(value: UsageAmounts): UsageAmounts {
+  return {
+    input: value.input,
+    output: value.output,
+    cacheRead: value.cacheRead,
+    cacheWrite: value.cacheWrite,
+    ...(value.reasoning === undefined ? {} : { reasoning: value.reasoning }),
+    totalTokens: value.totalTokens,
+    cost: {
+      input: value.cost.input,
+      output: value.cost.output,
+      cacheRead: value.cost.cacheRead,
+      cacheWrite: value.cost.cacheWrite,
+      total: value.cost.total,
+      ...(value.cost.totalFromProvider === undefined
+        ? {}
+        : { totalFromProvider: value.cost.totalFromProvider }),
+    },
+  };
+}
+
+function hasUsage(usage: RuntimeUsage): boolean {
+  return [...Object.values(usage.models), ...Object.values(usage.tools)].some(
+    (bucket) =>
+      bucket.totalTokens > 0 ||
+      bucket.cost.total > 0 ||
+      bucket.input > 0 ||
+      bucket.output > 0 ||
+      bucket.cacheRead > 0 ||
+      bucket.cacheWrite > 0,
+  );
+}
+
+/** Pi reports JSON-safe usage; copy it so the app ledger never aliases Pi storage. */
+function toRuntimeUsage(state: Readonly<PiUsageState>): RuntimeUsage {
+  return {
+    models: Object.fromEntries(
+      Object.entries(state.models).map(([key, value]) => [
+        key,
+        copyUsageAmounts(value as UsageAmounts),
+      ]),
+    ),
+    tools: Object.fromEntries(
+      Object.entries(state.tools).map(([key, value]) => [
+        key,
+        copyUsageAmounts(value as UsageAmounts),
+      ]),
+    ),
+  };
+}
 
 /** opencode-go catalog used by the local Node process, mirroring the Worker. */
 export function createOpencodeModels(apiKey: string): Models {
@@ -143,7 +196,13 @@ export class NodePiRuntime implements AgentRuntime {
       if (settled.answer === undefined) {
         return { status: "unanswered", reason: "answer_entry_missing" };
       }
-      return { status: "answered", text: await this.#answerText(sessionId, settled.answer) };
+      const text = await this.#answerText(sessionId, settled.answer);
+      const usage = await this.#conversationUsage(conversationId);
+      return {
+        status: "answered",
+        text,
+        ...(usage === undefined ? {} : { usage }),
+      };
     } catch (error) {
       if (timedOut) {
         // The submission is still admitted; the caller retries the wait.
@@ -187,6 +246,26 @@ export class NodePiRuntime implements AgentRuntime {
         // Closing a harness that already failed must not block shutdown.
       }
     }
+  }
+
+  async #conversationUsage(
+    conversationId: ConversationId,
+  ): Promise<RuntimeUsage | undefined> {
+    const storage = await this.#openStorage();
+    const address = {
+      kind: UsageDoc.definition.kind,
+      scope: { kind: "conversation" as const, conversationId },
+    };
+    const record = await storage.findDocument(address, "current", BACKGROUND_CONTEXT);
+    if (record === undefined) {
+      return undefined;
+    }
+    const document = await storage.document(record.id, "current", BACKGROUND_CONTEXT);
+    if (document === undefined) {
+      return undefined;
+    }
+    const usage = toRuntimeUsage(document.value as unknown as PiUsageState);
+    return hasUsage(usage) ? usage : undefined;
   }
 
   async #answerText(sessionId: string, answer: EntryId): Promise<string> {

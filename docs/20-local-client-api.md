@@ -73,7 +73,7 @@ API 前缀 `/api/v1`，请求/响应 JSON，`cache-control: no-store`。
 | GET | `/health` | 鉴权与 API 版本 |
 | GET | `/status` | diagnostics + usage |
 | GET | `/diagnostics` | 过期 Assignment、unknown Action、outbox/confirmations |
-| GET | `/usage` | Task/Action/Effect/Outbox 聚合；token 未采集 |
+| GET | `/usage` | Task/Action/Effect/Outbox 聚合；已采集模型 token/费用（区分 provider 账单与 catalog 估算）及 Worker 端到端延迟；无数据时 `tokens.collected=false`，不编造金额 |
 | GET | `/tasks?status=&limit=` | owner 任务列表 |
 | POST | `/tasks` | 创建任务；必须带 `Idempotency-Key` |
 | GET | `/tasks/:id` | task + assignments + actions + inputs |

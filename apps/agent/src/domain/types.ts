@@ -933,6 +933,32 @@ export interface RouterProjectContext {
   defaultBranch: string;
 }
 
+/** One model or tool usage bucket, independent of the runtime provider. */
+export interface UsageAmounts {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  /** Subset of output, only when the provider reports a breakdown. */
+  reasoning?: number;
+  totalTokens: number;
+  cost: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+    total: number;
+    /** True only when the provider reported the total as billed. */
+    totalFromProvider?: boolean;
+  };
+}
+
+/** Per-conversation usage ledger, keyed by `provider/model` and tool name. */
+export interface RuntimeUsage {
+  models: Record<string, UsageAmounts>;
+  tools: Record<string, UsageAmounts>;
+}
+
 export type Clock = () => Date;
 
 export function iso(clock: Clock): string {

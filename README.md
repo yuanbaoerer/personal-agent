@@ -12,7 +12,7 @@ Personal Agent 是单 owner 自托管助手。默认 Node 服务通过飞书私�
 | 多轮对话与计划 | #89–#91、空会话草稿 [#123](https://github.com/yuanbaoerer/personal-agent/issues/123) 与步骤时限 [#126](https://github.com/yuanbaoerer/personal-agent/issues/126) 已合并（E1）；已有对话窗口、持久 Plan/Steps、修订差异、子任务执行、有界重规划和绝对派工截止时间。[真实飞书记录](docs/acceptance/2026-11-22-conversational-planning-runbook.md)：C01 六轮聊天通过；C02/C03 草稿与修订通过（使用预建、未派发的父任务）。 | [#92](https://github.com/yuanbaoerer/personal-agent/issues/92)：C04/C11 仅部分通过，前两步核验成功，第三步未交付最终报告。空会话草稿真实飞书复验、C05–C10、C12 成本基线与运行中重启 E4 仍未完成。 |
 | GitHub 项目评估与 Issue 写入 | 已绑定项目可读固定 SHA 源码、PR 和 CI；[真实模型只读评估](docs/acceptance/2026-11-22-real-project-review.md)核对了结构化声明并生成待批草稿，未独立核实叙述结论。独立写凭据、逐次审批的 Issue 创建/更新/评论已合并（E1）。 | [#65](https://github.com/yuanbaoerer/personal-agent/issues/65)：还需飞书收到完整评估；[#61](https://github.com/yuanbaoerer/personal-agent/issues/61) 的真实写入只在 owner 指定的隔离仓库验收。Coding Agent / Draft PR 尚未交付。 |
 | 扩展与 GitHub 连接 | 受信内置插件、按需加载的 Skills、任务级权限和只读远程 MCP 已接入。[GC-00/01](docs/29-github-one-click-connection.md) 已交付加密凭据存储、连接 API 和 `pa plugins login/status/logout github`（E1）。 | [#68](https://github.com/yuanbaoerer/personal-agent/issues/68)：真实登录、重启、断连及旧授权失效待验；仓库发现、TUI 连接页、公共 GitHub App 未交付。[#73](https://github.com/yuanbaoerer/personal-agent/issues/73) 另跟踪 SDK 与分发。 |
-| 运维与客户端 | 本地 [Client API / CLI / TUI](docs/20-local-client-api.md) 支持设备 token、审批、事件与 SSE；双库可备份、校验并恢复到空目录。 | 远程配对、Desktop、真机终端验收与 DO 驱逐恢复不在上述 E1 证据内。 |
+| 运维与客户端 | 本地 [Client API / CLI / TUI](docs/20-local-client-api.md) 支持设备 token、审批、事件与 SSE；双库可备份、校验并恢复到空目录；`/usage` 采集模型 token、provider/catalog 费用来源与 Worker 端到端延迟。 | 远程配对、Desktop、真机终端验收与 DO 驱逐恢复不在上述 E1 证据内；C12 仍需真实运行记录。 |
 
 [#125 空会话草稿](https://github.com/yuanbaoerer/personal-agent/pull/125) 与 [#127 步骤时限](https://github.com/yuanbaoerer/personal-agent/pull/127) 已合并（E1）。下一步由 owner 在部署后从无预置父任务的飞书会话复验 #123，并在同一次受控只读运行中交付 C04/C11 最终报告与真实飞书收件。分工、证据与暂缓项见[规划实施表](docs/28-conversational-planning-mvp.md#5-交付依赖pr-顺序及并行化)。
 
@@ -144,6 +144,12 @@ curl -fsS http://127.0.0.1:8787/healthz
 - 本地 Magpie 0.1.3792 只读探测返回 quotas/usage/limit 形状，但当前工作区没有 OpenCode Go 卡（只有 Codex/Copilot），因此真实 Go 配额仍未验证。
 - `npm test`：当时 200 pass / 0 fail（当前 230）。
 - 证据边界：E1（fake Magpie HTTP + 本地只读探测）；真实 Go 订阅窗口、重置与 429 未验证。
+
+**2026-11-24 验证（模型用量采集，PA-06 部分）：**
+
+- Node runtime 从 Pi 的 `pi.usage` 读取每次会话的累计 usage；TaskService 记录 Worker 会话，Router 记录长会话的增量，避免重复计数。
+- `pa_usage` 保存 token/费用、provider-vs-catalog 费用来源、按模型/来源聚合与 Worker 端到端耗时；`/usage` 与 `/api/v1/usage` 返回同一快照。
+- 无 usage 时保持 `tokens.collected=false` 并显示“未采集”，不编造金额；C12 仍需真实运行的成本/延迟记录。
 
 **2026-11-18 验证（周期计划 SchedulePolicy，PA-08 部分）：**
 

@@ -38,6 +38,7 @@ import { noopWake } from "./runtime/types.ts";
 import { createHttpServer, type AppLogger } from "./server.ts";
 import { openStore } from "./storage/node.ts";
 import { ProjectRepository } from "./storage/projects.ts";
+import { UsageRepository } from "./storage/usage.ts";
 
 const MAINTENANCE_INTERVAL_MS = 1_000;
 
@@ -371,7 +372,12 @@ async function main(): Promise<void> {
     model:
       config.model.apiKey === undefined
         ? new StaticRouterModel()
-        : new PiRouterModel(store, local.runtime),
+        : new PiRouterModel(
+            store,
+            local.runtime,
+            new UsageRepository(store.db),
+            () => new Date(),
+          ),
   });
 
   appRef.current = app;

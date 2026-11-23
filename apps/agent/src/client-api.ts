@@ -86,6 +86,7 @@ export interface ClientApiDeps {
     | "skills"
     | "projectService"
     | "planService"
+    | "usage"
     | "issueDrafts"
   >;
   ownerId: string;
@@ -1605,8 +1606,10 @@ export class ClientApiService {
         actions: this.#services.actions,
         effects: this.#services.effects,
         confirmations: this.#services.confirmation,
+        usage: this.#services.usage,
       },
       this.#now().toISOString(),
+      { ownerId: this.#ownerId },
     );
   }
 

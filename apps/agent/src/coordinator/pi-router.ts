@@ -8,6 +8,7 @@ import type {
 import { isStateToolName } from "../actions/state.ts";
 import { parseStateQuery } from "./state-query.ts";
 import type { Store } from "../storage/store.ts";
+import type { UsageRepository } from "../storage/usage.ts";
 import type { AgentRuntime } from "../runtime/types.ts";
 import type { RouterModel } from "./router.ts";
 import type { CapabilityView } from "../plugins/fence.ts";
@@ -59,10 +60,19 @@ const ALLOWED_TOOLS: Record<string, true> = {
 export class PiRouterModel implements RouterModel {
   readonly #store: Store;
   readonly #runtime: AgentRuntime;
+  readonly #usage?: UsageRepository;
+  readonly #now: () => Date;
 
-  constructor(store: Store, runtime: AgentRuntime) {
+  constructor(
+    store: Store,
+    runtime: AgentRuntime,
+    usage?: UsageRepository,
+    now: () => Date = () => new Date(),
+  ) {
     this.#store = store;
     this.#runtime = runtime;
+    this.#usage = usage;
+    this.#now = now;
   }
 
   async decide(
@@ -109,6 +119,25 @@ export class PiRouterModel implements RouterModel {
     if (answer.status === "unanswered") {
       console.warn("router_model_unanswered", { reason: answer.reason });
       return { action: "reply", text: "这次没有理解成功，请再说一次。" };
+    }
+
+    if (answer.usage !== undefined && this.#usage !== undefined) {
+      try {
+        this.#usage.record({
+          ownerId: input.ownerId,
+          conversationId: input.conversationId,
+          source: "router",
+          operationId,
+          sessionId,
+          cumulative: answer.usage,
+          at: this.#now().toISOString(),
+        });
+      } catch (error) {
+        console.warn("usage_record_failed", {
+          source: "router",
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
 
     const decision = parseRouterDecision(answer.text, capabilities);
