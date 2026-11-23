@@ -1,6 +1,6 @@
 # 28 · Conversational & Autonomous Planning MVP：自然对话、任务规划与受控自主推进
 
-> **2026-11-21 产品定义升级 / 规划，不代表已实现**。代码核对基线 main `345faacf803fe3d230ab1843295b18d353e5da66`；执行前应重新检查最新 main。实施 Issue：[CONV-01 #89](https://github.com/yuanbaoerer/personal-agent/issues/89)、[PLAN-01 #90](https://github.com/yuanbaoerer/personal-agent/issues/90)、[PLAN-02 #91](https://github.com/yuanbaoerer/personal-agent/issues/91)、[EXP-01 #92](https://github.com/yuanbaoerer/personal-agent/issues/92)。与 [#41 MVP Functional Ready](https://github.com/yuanbaoerer/personal-agent/issues/41)、[21 · 私有 MVP 实施纲领](21-mvp-functional-ready.md)、[12 · Mode Architecture](12-mode-architecture.md)、[24 · GitHub Project Management](24-github-project-management.md) 并存。**原 M01–M14、K/SEC、E3/E4 验收及正式发布门槛不降低。**
+> 实施工作包 [CONV-01 #89](https://github.com/yuanbaoerer/personal-agent/issues/89)、[PLAN-01 #90](https://github.com/yuanbaoerer/personal-agent/issues/90)、[PLAN-02 #91](https://github.com/yuanbaoerer/personal-agent/issues/91) 已关闭；真实体验由 [EXP-01 #92](https://github.com/yuanbaoerer/personal-agent/issues/92) 单独验收。[#41](https://github.com/yuanbaoerer/personal-agent/issues/41) 的 M01–M14、K/SEC、E3/E4 及正式发布门槛不变。
 
 > **2026-11-22 实施状态**：P0-A/B/C 的代码路径已通过 PR #106–#110 合并到 main（`a0b6bdf`，线性栈 CX-01 → PL-01 → PL-02）；CX-02 聊天侧计划修订（`revise_plan` + `/plan replan` + PlanDiff）已通过 PR #112 合并，PL-03 的 replan/暂停/取消/恢复同时交付（main `5e9ac94`）；E1 记录见 [E1 acceptance](acceptance/2026-11-22-conversational-planning-e1.md)。runbook 前置步骤已在 live 数据库上执行（服务重启、schema 17→25、健康检查、preflight），且 **C01–C03 真实飞书 E3 已 PASS**，**C04/C11 PARTIAL**（A/B 真实 GitHub 只读与 verifier 通过，C 最终综合未完成；23 个 GET、0 POST），见 [runbook execution](acceptance/2026-11-22-conversational-planning-runbook.md)；C05–C10、C12、E4 仍为 **BLOCKED/PENDING**，不能据此宣称 Pilot。原 #41 M01–M14 与安全/预算门槛不变。
 
@@ -20,9 +20,9 @@
 2. **Plan ≠ Authorization**：Plan/Skill 只描述候选工作，程序要检查 owner/project/mandate/credential/catalog/预算交集；计划不能提升权限。外部写操作使用现有 Confirmation/ActionService，不能靠“已批准计划”默认批准新目标/新 payload。
 3. **Autonomy ≠ Unbounded Background Run**：没有明确授权、预算、时间、工具范围时不能自主启动付费后台循环。后台运行与重启使用既有 Task/Effect/Schedule/Outbox；失败、未知副作用必须可中断、恢复、人工接管。
 
-## 2. 源码基线：已有能力和真实缺口
+## 2. 立项时的源码基线（实施前）
 
-| 能力 | 当前已实现（核对至 main 345faac） | MVP 增量 |
+| 能力 | 立项时已有（main `345faac`） | 当时定义的 MVP 增量 |
 | --- | --- | --- |
 | 自然语言路由 | `pi-router.ts` JSON Router 的 reply/create_task/supplement/revise/cancel/status/记忆/提醒/周期草稿；`router.ts` 有确定性状态问答与控制消歧，#39 已有代码 | **#89**：明确多轮 Conversation Context、连续讨论与 task/plan 切换、跨重启/隔离/隐私；目前 Router 更多读取当前文本与最近 Task，而非稳定的多轮对话上下文 |
 | Durable Task/Worker | TaskService、Assignment、TaskInput seq、revision、lease/fencing，最多两个 Worker，ActionService/Verifier、Inbox/Outbox/Audit | **#90**：Parent Task 下的 Plan/Step/依赖与版本持久化，Plan 不是 Worker 临时文本 |
@@ -105,10 +105,10 @@ Owner message
 | PL-01 | Plan/Step Store + validated DAG + API/CLI | TaskService + #7/#28 守卫 | Organization Mode | ✅ 已合并 #108（E1） |
 | PL-02 | Dependent Step dispatch + verifier + budget fence | PL-01 | 未经许可的写入 | ✅ 已合并 #109（E1） |
 | PL-03 | Replan / pause / resume / cancellation / recovery | PL-02 | 无界递归 | ✅ 随 PL-02/CX-02 交付（有界 replan、暂停/恢复/取消、重启/孤儿清理、局部重试；E1）。C06/C07 后续补齐：运行中补充生成新 active 版本 + PlanDiff；429/5xx/timeout/head 漂移有一次自动恢复版本，权限失败转 `needs_review`（E1，真实 E3 待重跑） |
-| ACC-01 | E1/E3/E4 真实验收和修复，维护效果指标 | CX/PL 与 #60/#62 | 仅凭 CI 宣称发布 | 🔶 前置检查 PASS；E3/E4 BLOCKED（#92 open） |
+| ACC-01 | E1/E3/E4 真实验收和修复，维护效果指标 | CX/PL 与 #60/#62 | 仅凭 CI 宣称发布 | C01–C03 E3 PASS；C04/C11 PARTIAL；其余真实验收未完成（#92 open） |
 | 并行现有业务线 | #60/#62 L2-R 项目真实感知、#68 账号、#7/#28 安全 | 独立 Workstream | 为聊天重造 GH Plugin | 按各自 Issue 独立推进 |
 
-**当前下一阶段**：代码 Workstream（CX-01/CX-02/PL-01/PL-02/PL-03）已合并，下一步是 ACC-01 的真实门禁：配置只读 GitHub 允许仓库/凭据与 ProjectBinding，owner 在真实飞书私聊执行 C01–C12，再做受控重启/成本记录。#92 在 E3/E4 证据齐备前保持 open；不得用 E1/CI 结果替代。
+**下一次验收从 C04/C11 的最终综合开始**：在已授权只读项目上让第三步提交有来源的最终报告，并记录真实飞书收件。再按 [runbook](22-mvp-acceptance-runbook.md) 执行 C05–C10、记录 C12 成本与运行中重启 E4。#117 补齐 C06/C07 的确定性执行路径，不替代真实验收。
 
 ## 6. 产品验收示例
 

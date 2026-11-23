@@ -2,7 +2,7 @@
 
 > **2026-11-20 插件化依赖更新（本条优先于原工作包入口）**：见 [25 · Extension Platform](25-extension-platform.md) / [#73](https://github.com/yuanbaoerer/personal-agent/issues/73)。GH-00/01 与 EXT-01 并行，EXT-02 迁移现有 GitHub connector/OAuth；GH-02 #60 依赖共同 catalog/broker，EXT-03 官方 MCP 只读对照与 REST 扩展并行（保留已验证 REST 回退）；GH-03 #61 写能力通过 plugin typed Action 与 Core 审批/核验，GH-04 #62 使用 EXT-04 skills。GH-05 #63 是第二类 Runtime Plugin，GH-06 独立审查/主动汇报，验证 V2 SDK；V3 长期必选但不阻断 L2。避免先实现 GitHub 专用第二套 registry。所有 #41/#65 原验收及安全前置不变。
 
-> 2026-11-20 · 总跟踪 [#65](https://github.com/yuanbaoerer/personal-agent/issues/65) · 设计基线 `c42243b`。尚未实现本篇新增能力。保留 [21 · MVP Functional Ready](21-mvp-functional-ready.md) 及原 v0.2/v0.3 发布门槛。本篇定义第一个垂直产品交付，不另建 Core。
+> 本篇从设计基线 `c42243b` 起记录 [#65](https://github.com/yuanbaoerer/personal-agent/issues/65)。§7–12 记录已合并的 L2 读取、草稿、审批与写后核对；§1 的完成条件不是发布声明。[核心 MVP 的原验收门槛](21-mvp-functional-ready.md)不变。
 
 ## 1. 产品目标与检查点
 
@@ -16,7 +16,7 @@
 | L3 Development Orchestrator Pilot | Issue→Coding Agent→测试→Draft PR→独立 Review | GH-05/06 实际闭环及恢复 |
 | L4 Autonomous Maintainer（后续） | 有界的持续监控、需求识别、返工与主人决策 | 先有连续使用证据；自动写/合并不在本阶段 |
 
-当前：github.read GET-only、单 owner PAT/OAuth E1、repo 白名单及 24h 只读预授权；状态/结构化 Intent、Action audit、claims 与本地预算已有实现；真实 GitHub 只读 G1 与 Feishu 出站已有证据，真实 E3/Issue 写仍未完成。ProjectBinding（`pa_projects`、owner-scoped projectKey、不可变 repoId、branch/credentialRef、plan paths、API/CLI、revoked 历史）已落地；固定 SHA 的 ref/tree/file/issue/PR files/checks typed read 已实现，并强制从 active ProjectBinding 解析 repo（与 allowlist 取交集）；Issue 写和管理工作流仍未实现。2026-11-21 跨平台 CI 已恢复，main run `44889097865` 通过（当前 438 tests）；此前账单期间的合并仅以本地测试为依据。没有证据表明当前已经支持真实 Issue 写、完整源码读取或 Coding Agent 调度。不可把 ChatGPT 的 GitHub 插件能力算进项目自身实现。
+**验收现状**：ProjectBinding、固定 SHA 的 typed reads、只读项目评估和受控 Issue 写入已合并。[合并后的真实只读评估](acceptance/2026-11-22-real-project-review.md)核对了引用与结构化声明，生成待批草稿，未投递到真实飞书、未写 GitHub。另一次[真实飞书计划执行](acceptance/2026-11-22-conversational-planning-runbook.md)完成两步读取，第三步未生成最终评估。两次运行不能拼成 L2 通过。下一项是交付同一运行的最终飞书报告；写入须在[指定隔离仓库单独验收](22-mvp-acceptance-runbook.md)。
 
 ## 2. 工程主线与依赖
 

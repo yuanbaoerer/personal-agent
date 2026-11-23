@@ -2,7 +2,7 @@
 
 > 2026-11-21 · [#73 总跟踪](https://github.com/yuanbaoerer/personal-agent/issues/73) · 基线 c42243b · Extension Platform 为一级长期架构模块，完整开放插件生态为必选产品路线。保留 #41 Reliable Core 和 #65 GitHub 垂直场景以及原发布门槛。**V1 首批代码已合并 main**：PR #74（EXT-01/02）、#75（EXT-04 loader）、#76（EXT-03 只读 MCP）、#78（任务级 ExtensionPolicy）、#79（MCP DNS pinning）；真实证据 #77。
 >
-> **实施状态（2026-11-21，已合并 main）**
+> **V1 首批交付（2026-11-21 历史快照）**。后续 GitHub 账号连接的代码、未完成的真实验收与下一阶段见 [GC-00/01](29-github-one-click-connection.md)；真实飞书业务结果按[验收记录](acceptance/2026-11-22-conversational-planning-runbook.md)区分场景。
 >
 > - **EXT-01 已实现（Node）**：`plugins/manifest.ts`/`catalog.ts` 提供内置 manifest 校验、命名空间/冲突拒绝、持久 lifecycle、原子 ToolRegistry swap 与 catalog generation；`pa_plugins` 保存 installed/enabled/disabled/error，connection 独立派生；Task 固定 plugin/version/digest/generation，Action 固定 plugin binding/generation；Router、Mandate sanitize、Worker prompt、Action proposal/execute/reconcile 共用 catalog；禁用会 supersede 待执行审批、暂停未派工任务，运行中写入进入 unknown/reconcile，reconcile 失效时进入 needs_manual 而非宣称未执行；未配置插件拒绝 enable。`pa plugins list/status/enable/disable` 与 `/api/v1/plugins` 已接入，enabled 状态跨重启保留，generation 单调递增。
 > - **EXT-02 首批已实现**：GitHub 由 `plugins/github.ts` 包装既有 `GitHubReadTool`，保留 `github.read`、PAT/OAuth、白名单、预授权和加密凭据路径；OAuth 连接/断开/换账号通过 `ExtensionService.credentialChanged` 推进 generation 并撤销旧审批。真实只读 G1（私有 repo/PR/commit）与 Feishu 出站证据见 `docs/acceptance/2026-11-20-real-github-g1.md`；真实 browser OAuth revoke/account-switch 仍未验收。

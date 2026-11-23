@@ -1,53 +1,23 @@
 # Personal Agent
 
-> **2026-11-21 MVP 产品主线升级（规划，尚未实施）**：[28 · Conversational & Autonomous Planning MVP](docs/28-conversational-planning-mvp.md)。目标是在一个 Agent Core 内实现**多轮自然对话 → 持久 Plan/Steps → 受控自主执行 → 有界重规划/恢复**，工作包 [#89 CONV-01](https://github.com/yuanbaoerer/personal-agent/issues/89)、[#90 PLAN-01](https://github.com/yuanbaoerer/personal-agent/issues/90)、[#91 PLAN-02](https://github.com/yuanbaoerer/personal-agent/issues/91)、[#92 EXP-01](https://github.com/yuanbaoerer/personal-agent/issues/92)。已实现的 Router/Task/Worker/Skills/GitHub read 不等于 Plan Loop 已交付；GitHub Project Manager [#65](https://github.com/yuanbaoerer/personal-agent/issues/65) 仍是首个真实业务验证场景，原 #41 M01–M14 与安全/成本门槛保留。最新核对 main `345faac`；不要将本文历史记录的测试数误当当前验收状态。
-
-> **Extension Platform（2026-11-21，V1 首批已合并 main）**：[25 · Plugin / Skills / MCP / Credential Architecture](docs/25-extension-platform.md)（[#73](https://github.com/yuanbaoerer/personal-agent/issues/73)）为一级长期架构模块。PR #74/#75/#76/#78/#79/#82 已合并，真实证据 #77；ProjectBinding 与 GitHub typed read 见 #83/#84/#85。已实现受信内置 Plugin Runtime（manifest、持久 lifecycle、原子 catalog generation、任务/动作版本栅栏、`pa plugins`/`/api/v1/plugins`）并将 GitHub 迁移为第一个 Integration Plugin；凭据变化会撤销旧审批。Node 端 SKILL.md loader（digest/预算/权限交集）、任务级 ExtensionPolicy 与只读远程 MCP Host（官方 SDK、静态 allowlist、编译期只读契约、`PA_MCP_CONFIG`）已接入；MCP OAuth/stdio/写路径、第三方 SDK/隔离、完整 ModeCatalog 与可信分发仍 pending。真实只读 GitHub G1（repo/PR/commit）、Feishu 出站、GitHub MCP 只读对照与按需 Skill 注入已有证据；Feishu inbound、真实 OAuth negatives 与真实模型 skill adherence 仍未验收。
-
-> **GitHub 项目管理 MVP（实施中）**：[实施进度与验收](docs/24-github-project-management.md) · [#65](https://github.com/yuanbaoerer/personal-agent/issues/65)。#83–#88 已合并 ProjectBinding、固定 SHA 读取、凭据绑定、证据核验和只读项目评估。用 `--project=<项目键>` 指定已绑定的项目，评估报告可附待审阅的 Issue 草稿。真实私有仓库与飞书 E3、Issue 写入闭环、Coding Agent / Draft PR 仍待交付或验收。[GH-02 #60](https://github.com/yuanbaoerer/personal-agent/issues/60) · [GH-04 #62](https://github.com/yuanbaoerer/personal-agent/issues/62)。现有 #41 Reliable Core 真实验收及安全预算前置不降低。
-
-> **当前优先交付（2026-11-19）：MVP Functional Ready**。在 v0.2 Reliable Core 主线内先实现可持续私有自用的主体功能，见 [21 · MVP 实施纲领](docs/21-mvp-functional-ready.md)、[22 · 验收 Runbook](docs/22-mvp-acceptance-runbook.md)、[23 · 安全威胁模型](docs/23-security-redteam.md) 与 [#41 总任务](https://github.com/yuanbaoerer/personal-agent/issues/41)。MVP-01 [#38 状态感知](https://github.com/yuanbaoerer/personal-agent/issues/38) 与 MVP-02 [#39 自然语言主入口](https://github.com/yuanbaoerer/personal-agent/issues/39) 代码已合并；真实 E3/M02 仍待 owner 在飞书客户端实际键入；下一步按 #41 在 #10/#7 中选择，真实 GitHub、常驻 Node、主动工作、预算安全与 14 条验收继续保留。现有 CLI/TUI 保留，暂停扩建非阻断能力。D19/D20 已记录部分真实飞书/模型/短提醒成功及状态类任务的语义缺陷；完整 G1–G3/E3/E4 和长期证明仍待验收。本文历史段落的 pending 以对应时点理解，不把 275 个确定性测试当真实业务通过。
-
-> **2026-11-22 L2 进度**：L2R-01/02 与 L2W-01/02 已合并到 `main`（PR #95–#98，后续 #99–#104）；main 当前 `1bac47a`，**519 tests passed**。真实模型 + 真实 GitHub 只读评估在 `19427b0` 通过 `project-review` Verifier（repoId 1445007789，3 observed findings，3 pending drafts，`externalFactsVerified=false`：引用/claim 已核验、叙述结论未独立验证）。真实飞书收件与真实 Issue 写入仍 **BLOCKED**（需 owner 环境/隔离仓库与独立 Issues-write 凭据），未标记 E3。
->
-> **多端与跨平台规划（2026-11-14，2026-11-19 更新）**：长期支持 macOS（Apple Silicon / Intel）和 Windows 11 x64 的 CLI / TUI / Desktop，采用一个 Agent Core + 统一 Client API。**本地 Node 的最小 Client API / `pa` CLI / `pa tui` 已实现（E1）**；远程设备鉴权/TLS、SSE 重连与 WebSocket、真实 Terminal 验收和 Desktop 仍 pending。详见 [10 · 跨平台客户端规划](docs/10-client-platforms.md) 与 [20 · 本地 Client API](docs/20-local-client-api.md)。
-
-> **长期规划更新（2026-11-14）**：当前唯一工程主线为 v0.2 Reliable Core。完整的长期自用与开源规划见 [07 · 长期路线图](docs/07-long-term-roadmap.md)，评测门槛见 [08 · Evaluation](docs/08-evaluation.md)，开源与部署见 [09 · Open-source](docs/09-open-source-plan.md)，宿主选型见 [ADR-0001](docs/adr/0001-runtime-hosting.md)。这份规划不代表功能已经完成，下面的“当前阶段”仍为事实基线。实施任务以 GitHub Issues 为准。
-
-
-> 聊天软件里的个人助手：一个主 Agent 协调多个任务 Worker，云端持续运行，本地按授权执行，结果回到原对话。
-
-**当前阶段：本地飞书私聊已通过长连接稳定接入；Cloudflare Worker 已部署，但飞书侧仍走本地长连接。** 本地 Node 服务具备飞书验签/解密、持久 Inbox/Outbox、主人白名单和确定性命令。2026-11-09（UTC+8）完成真实飞书 p2p 收发：入站 `<redacted-feishu-message-id>` 受理，出站 `<redacted-feishu-message-id>` 被平台接受；webhook 与长连接均验证，当前使用 `FEISHU_EVENT_MODE=long_connection`，无需公网 URL。Cloudflare DO 已把 `pa_*` 迁移到 DO SQLite，并接入 webhook、Router/Worker、Task/Assignment、审批/动作执行、一次性提醒和显式记忆；`wrangler dev` 已通过真实模型 Router → Worker 任务。Worker 已部署到 `personal-agent.3103148441.workers.dev`，但飞书后台保存该请求地址仍超时，因此 Worker 侧云端事件入口（自定义域或 WS 桥接）与对象驱逐恢复仍未完成。
+Personal Agent 是单 owner 自托管助手。默认 Node 服务通过飞书私聊接收请求，把任务、计划和审批持久化到 SQLite；CLI/TUI 通过同一服务操作。Cloudflare Durable Object 是可选宿主，见[宿主决策](docs/adr/0001-runtime-hosting.md)。
 
 ## 当前实现
 
-| 模块 | 已实现 | 边界 |
-| --- | --- | --- |
-| 飞书入口 | 真实 p2p 回调、签名/Token 校验、URL challenge、主人白名单；本地长连接已连上 Feishu | 本地 webhook 用临时 Tunnel；Worker 的 workers.dev 地址在飞书后台保存时超时，云端需自定义域或 WS 桥接 |
-| Inbox | `channel + account + message_id` 唯一，重复事件返回原受理 | 已接 Router；真实 p2p `/status` 已受理 |
-| Outbox | 业务键唯一、按 task 分组排序、租约、重试、unknown、崩溃后按业务键核对 | 真实平台已接受 `om_`；无查询接口时保持 unknown |
-| Router | 确定性命令优先；模型 JSON 决策；补充/回答、修改、提醒列表/取消、任务前缀解析；显式状态问题由确定性 owner 快照回答，避免空 Mandate 派工 | 真实模型质量需重复评测 |
-| 内部状态读取 | owner-scope 只读 `state.summary`/`task.list`/`task.get`/`reminder.list`/`memory.list`/`schedule.list`；条数/offset/8KB/字段截断；仅 `mandate.tools` + `state` resource 自动批准；`state-read` 校验当前 revision 执行回执、owner/project、快照完整性、实体存在和报告 snapshotHash citation | 仅内部只读；项目记忆按 `mandate.project` 隔离；owner 真实键入的 E3 验收仍 pending |
-| Task / Assignment | Task 状态机、Mandate、revision、租约、fencingToken、心跳、最多两个 Worker；不可变 TaskInput 序号，任何未覆盖新输入的旧 Worker 报告都不能推进任务；模型等待按 100ms 切片轮询，不长时间占用 Effect drain | 10 分钟 assignment lifetime；长任务跨轮恢复需真实部署验证；真实模型 G2 补充场景待验证 |
-| 审批 / 动作 | 参数绑定、nonce、一次性消费、原子审批、执行前重核 Task 状态/revision/Mandate、取消/修订后拒绝重试、unknown/reconcile、mock 灯；写工具须声明 `replayPolicy=verify` 才允许重试；succeeded/failed/unknown/expired/reconciled/needs_manual/superseded 均写审计（含 task cancel/revise 批量 supersede） | mock 灯是程序化工具；MCP 桥接与真机未接；真实外部 API 未验证 |
-| 工具 / 插件扩展 | `createApp({registerTools})` core seam；受信内置插件 manifest、持久 lifecycle（enabled/disabled/error）、原子 catalog generation、任务/动作插件版本栅栏、`pa plugins list/status/enable/disable` 与 `/api/v1/plugins`；GitHub 为首个 Integration Plugin，OAuth/PAT 变化撤销旧审批；`SKILL.md` 索引/按需注入、digest/路径/插件/权限校验、`pa skills list` 与 `/api/v1/skills`；任务级 ExtensionPolicy（插件/技能 allowlist、permission allow/require_approval/deny）；只读远程 MCP（官方 SDK、静态 allowlist、编译期 `github@1` 契约、`PA_MCP_CONFIG`）进入同一 catalog；owner-scoped ProjectBinding（本地 projectKey、GitHub 不可变 repoId、branch/credentialRef/plan paths、API/CLI、revoked 历史）已接入；GitHub typed read（固定 SHA ref/tree/file/issue/PR files/checks）已接入但尚未强制 ProjectBinding；只读工具样例见 `docs/14-tool-capability.md` | V1 仅受信内置插件、本地只读技能与显式只读 MCP，不下载/执行第三方代码或脚本；MCP 写入/OAuth/stdio、Public SDK、完整 ModeCatalog 与隔离 pending；DO 不宣称动态加载；真实 GitHub G1/MCP 对照已验证只读路径 |
-| 崩溃/重启恢复 | file-backed SQLite 重启脚本：Inbox 未路由、Assignment 租约过期、Action 外部已写未落库、needs_manual 可见；Effect/Outbox 租约回收 | E1 模拟重启；真实 SIGKILL、DO 驱逐、真实渠道恢复未验证 |
-| 可观测/诊断 | Outbox traceId 贯通 inbox/task/schedule；`/诊断` 与 `/admin/diagnostics` 输出过期 Assignment、unknown Action、unknown/needs_manual 投递；`/usage` 与 `/admin/usage` 输出 Task/Action/Effect/Outbox/Tool 聚合；router 日志不记录模型输出/goal；诊断不返回消息正文、goal、Action args 或 lastError | 本地 action 聚合可用；真实 G2 链路追踪待验证 |
-| Magpie 用量/预算 | 可选读取本地 Magpie `/v1/magpie/quotas`、`/usage`、`/limit`；OpenCode Go 订阅窗口低于阈值或 key 限额耗尽时阻止新的 Router/Worker 模型请求；`/usage` 附带订阅窗口 | 当前 Magpie 工作区未见 OpenCode Go 卡；真实 Go 配额/重置未验证 |
-| GitHub 只读 | `github.read` GET-only 连接器：repo 白名单、Bearer token、总时限、单次 ≤20 项/≤200KB、重定向拒绝；repo/commits/open issues/open pulls/PR 状态 + 固定 SHA ref/tree/file/issue/PR files/checks + 来源 URL；typed read 通过 active ProjectBinding 的 `credentialRef` 从 CredentialBroker 取 token，并校验 repo.id；PR files 前后核对 head、变化标 stale；checks 同时报告 check-runs 与 commit-status coverage；Mandate 需 `github` resource | 未预授权时仍逐次审批；真实 token/仓库 G1 未验证；不支持写 Issue；CI log 原文未读取 |
-| 只读预授权 | `/allow-read owner/repo`（24h、可撤销、repo 白名单内）；仅 `github.read` + 该 repo 自动批准、无审批卡；`/revoke-read`、`/preauth`；过期/撤销即恢复逐次审批 | 真实 token G1 未验证；只覆盖 README 中声明的 repo |
-| 提醒 / 记忆 | 一次性提醒、runKey、TTL、聊天取消/列表；显式记忆查改删；project 作用域（全局/项目）与 Worker 按 Mandate.project 注入；模型解读的记忆/提醒先进入最长 10 分钟确认（提醒以到期时间为上限），owner 校验，取消/过期不写入 | 真实模型误触发/提示注入负例、语义检索与周期提醒未做 |
-| 备份/校验 | `npm run backup`：`VACUUM INTO` 复制 agent/pi SQLite，manifest SHA-256 + integrity_check，目录/文件 700/600；`--verify` 重新校验 | 恢复/升级自动化、加密与保留期策略未做 |
-| 本地服务 | `POST /webhooks/feishu`、`GET /healthz`、Node SQLite + 进程内 pi-durable | 配置 `OPENCODE_API_KEY` 后本地执行模型任务；未配置时模型任务明确失败 |
-| 本地 Client API / CLI / TUI | `/api/v1` 鉴权控制面，device token（hash + scope + revoke + TTL + 限流），任务/审批/记忆/提醒/诊断/事件游标+SSE；`pa` CLI；`pa tui` 任务/审批/提醒/增补/修订/提醒文本与到期编辑/换行滚动面板 | E1 本地；远程 TLS/设备配对、SSE 重连/WS、真实 Terminal 与 E3 未验证；客户端不直接读 SQLite |
-| Cloudflare DO | `Assistant` + PiHarness + Lifecycle、DO SQLite 中的 `pa_*`、webhook、jobs | 已真实部署；飞书回调入口超时待解；驱逐恢复未验证 |
-| 本地真实模型 | `opencode-go/deepseek-v4.1-flash`，本地 key；`apps/agent/src/runtime/node-pi.ts` 是 Node 运行时 | spike 单会话/三会话并发通过；应用侧目前只有 faux provider 的确定性测试，真实模型端到端待验证 |
-| Cloudflare DO 运行 | 真实部署 + 真实模型 | `/healthz`、`/admin/*` 鉴权、`/ask` 真实模型通过；飞书侧未切到 Worker |
+以下核对到 [PR #122 合并后的 main](https://github.com/yuanbaoerer/personal-agent/commit/2bcadb49b5042192c43333ad986217e49efd1667)。**E1 是确定性测试，E3 是指定场景的真实使用，E4 是故障恢复证据**。一个场景通过，不替另一个场景签收。
 
-未实现或待真实环境验证：对象驱逐恢复、Worker 的飞书回调稳定入口（自定义域；长连接目前只在本地 Node）、MCP 灯桥接与真机、天气工具、budget 上限、40 条场景与真实模型重复统计。
+| 工作线 | 已合并或已验证 | 未通过的门槛 / 跟踪 |
+| --- | --- | --- |
+| 飞书与任务核心 | Node 长连接、owner 绑定、Inbox 去重、Outbox 投递、Task revision/输入序号、Worker 租约与审批。显式状态查询、记忆、提醒、周期任务和预算守卫已接入。 | [#41](https://github.com/yuanbaoerer/personal-agent/issues/41) 的 M01–M14 单独验收；[状态问答 #38](https://github.com/yuanbaoerer/personal-agent/issues/38)、真实并发与常驻恢复不能从聊天成功推断。 |
+| 多轮对话与计划 | #89–#91 已关闭；已有对话窗口、持久 Plan/Steps、修订差异、子任务执行和有界重规划。[真实飞书记录](docs/acceptance/2026-11-22-conversational-planning-runbook.md)：C01 六轮聊天通过；C02/C03 草稿与修订通过（使用预建、未派发的父任务）。 | [#92](https://github.com/yuanbaoerer/personal-agent/issues/92)：C04/C11 仅部分通过，前两步核验成功，第三步未交付最终报告。C05–C10 待测，C12 缺成本基线，运行中重启 E4 未测。 |
+| GitHub 项目评估与 Issue 写入 | 已绑定项目可读固定 SHA 源码、PR 和 CI；[真实模型只读评估](docs/acceptance/2026-11-22-real-project-review.md)核对了结构化声明并生成待批草稿，未独立核实叙述结论。独立写凭据、逐次审批的 Issue 创建/更新/评论已合并（E1）。 | [#65](https://github.com/yuanbaoerer/personal-agent/issues/65)：还需飞书收到完整评估；[#61](https://github.com/yuanbaoerer/personal-agent/issues/61) 的真实写入只在 owner 指定的隔离仓库验收。Coding Agent / Draft PR 尚未交付。 |
+| 扩展与 GitHub 连接 | 受信内置插件、按需加载的 Skills、任务级权限和只读远程 MCP 已接入。[GC-00/01](docs/29-github-one-click-connection.md) 已交付加密凭据存储、连接 API 和 `pa plugins login/status/logout github`（E1）。 | [#68](https://github.com/yuanbaoerer/personal-agent/issues/68)：真实登录、重启、断连及旧授权失效待验；仓库发现、TUI 连接页、公共 GitHub App 未交付。[#73](https://github.com/yuanbaoerer/personal-agent/issues/73) 另跟踪 SDK 与分发。 |
+| 运维与客户端 | 本地 [Client API / CLI / TUI](docs/20-local-client-api.md) 支持设备 token、审批、事件与 SSE；双库可备份、校验并恢复到空目录。 | 远程配对、Desktop、真机终端验收与 DO 驱逐恢复不在上述 E1 证据内。 |
+
+## 本地启动
 
 ```bash
-npm install
+npm ci
 npm test
 npm run typecheck
 cp .env.example .env   # 填入飞书应用凭据与主人 open_id
@@ -90,7 +60,11 @@ curl -fsS http://127.0.0.1:8787/healthz
 
 **License:** 尚未声明。D16 决策前不得把本仓库描述为已获得开源许可或可再分发。安全报告见 `SECURITY.md`。
 
-**GitHub:** 只读 connector 已支持运维 PAT 与个人 owner OAuth App；私有仓库细粒度只读仍需 GitHub App，见 [19 · GitHub OAuth](docs/19-github-oauth.md)。
+**GitHub 连接：** 自托管使用仓库级只读 PAT 或自备 OAuth App；连接账号不会自动绑定项目或取得 Issue 写权限。见[登录配置](docs/19-github-oauth.md)。
+
+## 历史验证记录
+
+以下按日期保留当时的结果；旧测试数、待办和运行环境不代表当前状态。
 
 **2026-11-09 验证：**
 
@@ -282,9 +256,9 @@ flowchart TB
   C --> CH
 ```
 
-主选技术栈为 TypeScript + Pi Durable + Cloudflare Durable Object / Lifecycle。一个用户的多个独立会话能否满足并发与恢复要求，是第一阶段验证项。模型先接一个；存储先用 SQLite；不把 D1、Vectorize、完整 Web UI 或多模型路由设为首版依赖。
+两个宿主共用 TypeScript 业务服务。默认 Node 使用 SQLite 与 Pi Durable；可选的 Cloudflare Durable Object 使用自己的 SQLite 和 Lifecycle。宿主的部署与恢复证据分别记录，不互相替代。
 
-## MVP 与实施顺序
+## 初期 MVP 实施计划（历史）
 
 | 阶段 | 交付 |
 | --- | --- |
@@ -303,7 +277,7 @@ flowchart TB
 
 ## 文档导航
 
-**通用 MVP 规划**：[28 · 自然对话与自主规划执行](docs/28-conversational-planning-mvp.md)。垂直场景规划：[24 · GitHub Project Management MVP 与 Development Orchestrator](docs/24-github-project-management.md)。
+找当前工作项：[#41 核心功能验收](https://github.com/yuanbaoerer/personal-agent/issues/41) · [#92 对话与计划体验](https://github.com/yuanbaoerer/personal-agent/issues/92) · [#65 GitHub 项目管理](https://github.com/yuanbaoerer/personal-agent/issues/65) · [#73 扩展平台](https://github.com/yuanbaoerer/personal-agent/issues/73)。实际操作与取证步骤见[验收手册](docs/22-mvp-acceptance-runbook.md)。
 
 | 文档 | 用途 |
 | --- | --- |
@@ -316,11 +290,14 @@ flowchart TB
 | [01 · 可行性资料](docs/01-feasibility.md) | 原始技术调研；产品决策以 00/02/04 为准 |
 | [03 · 岗位适配](docs/03-job-fit.md) | 项目证据与岗位要求；规划不能写成已实现 |
 | [05 · JD 附录](docs/05-jd-appendix.md) | 原始岗位样本，不作为功能清单 |
-| [28 · Conversational & Planning MVP](docs/28-conversational-planning-mvp.md) | 多轮交互、持久 Plan、受控执行/重规划与 C01–C12 验收（规划） |
+| [24 · GitHub 项目管理](docs/24-github-project-management.md) | 项目读取、评估草稿、写入审批与尚未完成的真实验收 |
+| [25 · 扩展平台](docs/25-extension-platform.md) | 区分内置插件、Skills、MCP 与未来第三方生态 |
+| [28 · 对话与计划](docs/28-conversational-planning-mvp.md) | 已合并工作包、计划模型与 C01–C12 的验收范围 |
+| [29 · GitHub 一键连接](docs/29-github-one-click-connection.md) | CLI/API 的现有契约、仓库发现与跨端后续阶段 |
 | [12 · Mode Architecture](docs/12-mode-architecture.md) | WorkProfile × ExecutionStrategy：Coding / General / Research 与智能组织工作流（设计提案，未实现） |
 | [13 · Model Routing & Gateway](docs/13-model-routing-gateway.md) | ModelPolicy、Router/Worker 会话级模型绑定、Magpie 可选中转、Fallback 与成本评测（长期设计，未实现） |
 | [20 · 本地 Client API / CLI / TUI](docs/20-local-client-api.md) | `/api/v1`、device token/scope、`pa` 命令、TUI 按键与安全边界（E1） |
-| [OpenAPI 契约](docs/api/openapi.json) | 21 条 `/api/v1` path、Bearer security、请求/响应 schema（OpenAPI 3.1） |
+| [OpenAPI 契约](docs/api/openapi.json) | `/api/v1` 路径、Bearer 鉴权与请求/响应 schema（OpenAPI 3.1） |
 | [本地 spike](spikes/pi-durable-smoke/README.md) | Pi 本地验证与证据边界 |
 
 ## 已有 spike
