@@ -279,7 +279,8 @@ export class PlanExecutor {
     }
 
     let steps = this.#plans.listSteps(plan.id);
-    const now = this.#now().toISOString();
+    const nowDate = this.#now();
+    const now = nowDate.toISOString();
 
     // Repair a crash between recording a terminal step outcome and settling
     // the plan/parent.
@@ -318,6 +319,9 @@ export class PlanExecutor {
       if (step.status !== "running" || step.taskId === undefined) {
         continue;
       }
+      // A Worker can outlive its attempt. Expire the child before reading its
+      // status so a late success cannot complete the step.
+      this.#taskService.expireIfPastDeadline(step.taskId);
       const child = this.#tasks.get(step.taskId);
       if (child === undefined) {
         this.#settleNeedsReview(plan, parent, `step ${step.key} lost its child task`);
@@ -424,6 +428,25 @@ export class PlanExecutor {
         return { status: "done" };
       }
       const isFinal = step.key === finalKey;
+      const parentDeadlineMs =
+        parent.deadline === undefined ? undefined : Date.parse(parent.deadline);
+      const stepDeadlineMs = nowDate.getTime() + step.timeoutMs;
+      const cappedDeadlineMs =
+        parentDeadlineMs !== undefined && Number.isFinite(parentDeadlineMs)
+          ? Math.min(stepDeadlineMs, parentDeadlineMs)
+          : stepDeadlineMs;
+      if (cappedDeadlineMs <= nowDate.getTime()) {
+        const reason =
+          parentDeadlineMs !== undefined &&
+          Number.isFinite(parentDeadlineMs) &&
+          parentDeadlineMs <= nowDate.getTime()
+            ? `parent deadline ${parent.deadline ?? ""} passed before step ${step.key}`
+            : `step ${step.key} deadline passed`;
+        this.#plans.setStepOutcome(plan.id, step.key, "failed", [], reason, now);
+        this.#settleFailed(plan, parent, reason);
+        return { status: "done" };
+      }
+      const deadline = new Date(cappedDeadlineMs).toISOString();
       const criteria = this.#criteriaFor(plan, parent, step, isFinal);
       const goal = isFinal
         ? `${step.goal}\n\nVerified prior steps:\n${this.#priorStepSummary(plan.id)}`
@@ -434,6 +457,7 @@ export class PlanExecutor {
         sourceKey: `plan:${plan.id}:step:${step.key}:attempt:${step.attempts + 1}`,
         goal,
         completionCriteria: criteria,
+        deadline,
         // The final step must be able to satisfy the parent verifier, so it
         // runs with the parent's full (already authorized) mandate. Other
         // steps stay inside their declared subset.
@@ -469,7 +493,12 @@ export class PlanExecutor {
         });
         continue;
       }
-      this.#audit(plan, bound, "plan.step_dispatched", { taskId: child.id });
+      this.#audit(plan, bound, "plan.step_dispatched", {
+        taskId: child.id,
+        // A recovered dispatch returns the already persisted attempt, whose
+        // deadline is authoritative over this tick's recomputation.
+        deadline: child.deadline ?? deadline,
+      });
       steps = this.#plans.listSteps(plan.id);
     }
 

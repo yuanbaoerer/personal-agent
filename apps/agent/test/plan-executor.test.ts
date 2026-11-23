@@ -41,11 +41,12 @@ function steps(): PlanStepSpec[] {
   ];
 }
 
-function setup(options: { budget?: CallBudget } = {}): {
+function setup(options: { budget?: CallBudget; deadline?: string } = {}): {
   services: TestServices;
   parent: TaskRecord;
   executor: PlanExecutor;
   advance: (ms?: number) => void;
+  now: () => Date;
 } {
   let clock = NOW.getTime();
   const services = createServices({
@@ -59,6 +60,7 @@ function setup(options: { budget?: CallBudget } = {}): {
     goal: "parent goal",
     completionCriteria: "provide a checked result",
     mandate: { resources: ["chat"], tools: [] },
+    deadline: options.deadline,
     createdAt: NOW.toISOString(),
   }).task;
   const executor = new PlanExecutor({
@@ -78,6 +80,7 @@ function setup(options: { budget?: CallBudget } = {}): {
     services,
     parent,
     executor,
+    now: () => new Date(clock),
     advance: (ms = 1_000) => {
       clock += ms;
     },
@@ -820,6 +823,145 @@ describe("plan executor", () => {
       services.planService.get(services.owner.id, plan.plan.id)?.plan.status,
       "paused",
     );
+  });
+
+  it("caps a step deadline at the parent deadline", async () => {
+    const deadline = new Date(NOW.getTime() + 10_000).toISOString();
+    const { services, parent, executor } = setup({ deadline });
+    const plan = services.planService.create(services.owner.id, parent.id, {
+      steps: steps().map((step) => ({ ...step, timeoutMs: 60_000 })),
+    });
+    services.planService.activate(services.owner.id, plan.plan.id);
+    await executor.tick(plan.plan.id);
+
+    const child = childTasks(services, parent)[0];
+    assert.equal(child?.deadline, deadline);
+  });
+
+  it("fails a ready step without dispatch once the parent deadline passed", async () => {
+    const deadline = new Date(NOW.getTime() + 5_000).toISOString();
+    const { services, parent, executor, advance } = setup({ deadline });
+    const plan = services.planService.create(services.owner.id, parent.id, {
+      steps: steps(),
+    });
+    services.planService.activate(services.owner.id, plan.plan.id);
+    advance(5_000);
+    await executor.tick(plan.plan.id);
+
+    assert.equal(childTasks(services, parent).length, 0);
+    assert.equal(services.runtime.opened.length, 0);
+    assert.equal(services.plans.getStep(plan.plan.id, "A")?.status, "failed");
+    assert.equal(services.plans.getStep(plan.plan.id, "B")?.status, "blocked");
+    assert.equal(
+      services.planService.get(services.owner.id, plan.plan.id)?.plan.status,
+      "paused",
+    );
+    assert.equal(services.tasks.get(parent.id)?.status, "failed");
+  });
+
+  it("does not hand a queued step to a Worker after its deadline", async () => {
+    const { services, parent, executor, advance } = setup();
+    const plan = services.planService.create(services.owner.id, parent.id, {
+      steps: steps().map((step) => ({ ...step, timeoutMs: 1_000 })),
+    });
+    services.planService.activate(services.owner.id, plan.plan.id);
+    await executor.tick(plan.plan.id);
+
+    const child = childTasks(services, parent)[0];
+    assert.ok(child);
+    assert.equal(child.deadline, new Date(NOW.getTime() + 1_000).toISOString());
+    advance(1_000);
+    // Simulate a dispatch effect delayed to the attempt deadline.
+    await services.taskService.handleDispatch({ taskId: child.id });
+
+    assert.equal(services.runtime.opened.length, 0);
+    assert.equal(services.tasks.get(child.id)?.status, "failed");
+    assert.equal(services.tasks.get(child.id)?.attempts, 0);
+
+    await executor.tick(plan.plan.id);
+    assert.equal(services.plans.getStep(plan.plan.id, "A")?.status, "failed");
+    assert.equal(services.plans.getStep(plan.plan.id, "B")?.status, "blocked");
+    assert.equal(
+      services.planService.get(services.owner.id, plan.plan.id)?.plan.status,
+      "paused",
+    );
+  });
+
+  it("rejects a late report and keeps dependents blocked", async () => {
+    const { services, parent, executor, advance } = setup();
+    const plan = services.planService.create(services.owner.id, parent.id, {
+      steps: steps().map((step) => ({ ...step, timeoutMs: 1_000 })),
+    });
+    services.planService.activate(services.owner.id, plan.plan.id);
+    await executor.tick(plan.plan.id);
+
+    const child = childTasks(services, parent)[0];
+    assert.ok(child);
+    await services.taskService.handleDispatch({ taskId: child.id });
+    assert.equal(services.tasks.get(child.id)?.status, "running");
+    const assignment = services.tasks.listActiveAssignments(child.id)[0];
+    assert.ok(assignment);
+    advance(1_000);
+
+    const outcome = services.taskService.report(
+      assignment.id,
+      assignment.fencingToken,
+      assignment.taskRevision,
+      {
+        status: "ready",
+        summary: "late result",
+        evidence: [{ kind: "test", value: "late" }],
+      },
+    );
+
+    assert.equal(outcome.status, "done");
+    const expired = services.tasks.get(child.id);
+    assert.equal(expired?.status, "failed");
+    assert.equal(expired?.resultRef, undefined);
+    assert.equal(expired?.verification, undefined);
+    assert.equal(services.tasks.getAssignment(assignment.id)?.status, "expired");
+
+    await executor.tick(plan.plan.id);
+    assert.equal(services.plans.getStep(plan.plan.id, "A")?.status, "failed");
+    assert.equal(services.plans.getStep(plan.plan.id, "B")?.status, "blocked");
+    assert.notEqual(services.tasks.get(parent.id)?.status, "succeeded");
+  });
+
+  it("keeps the same attempt deadline across executor recovery", async () => {
+    const { services, parent, executor, advance, now } = setup();
+    const plan = services.planService.create(services.owner.id, parent.id, {
+      steps: steps().map((step) => ({ ...step, timeoutMs: 60_000 })),
+    });
+    services.planService.activate(services.owner.id, plan.plan.id);
+    await executor.tick(plan.plan.id);
+
+    const child = childTasks(services, parent)[0];
+    assert.ok(child);
+    const deadline = child.deadline;
+    assert.ok(deadline);
+
+    advance(30_000);
+    const recovered = new PlanExecutor({
+      store: services.store,
+      plans: services.plans,
+      tasks: services.tasks,
+      taskService: services.taskService,
+      planService: services.planService,
+      effects: services.effects,
+      projects: services.projects,
+      now,
+      tickDelayMs: 1_000,
+    });
+    await recovered.tick(plan.plan.id);
+    assert.equal(childTasks(services, parent).length, 1);
+    assert.equal(services.tasks.get(child.id)?.deadline, deadline);
+
+    advance(30_000);
+    await recovered.tick(plan.plan.id);
+    assert.equal(services.runtime.opened.length, 0);
+    assert.equal(services.tasks.get(child.id)?.status, "failed");
+    assert.equal(services.plans.getStep(plan.plan.id, "A")?.status, "failed");
+    assert.equal(services.plans.getStep(plan.plan.id, "B")?.status, "blocked");
   });
 
   it("recovers an active plan through sweep after a restart", async () => {

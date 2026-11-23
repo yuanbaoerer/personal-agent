@@ -728,7 +728,7 @@ export class TaskService {
       if (task.status !== "queued") {
         return { status: "done" };
       }
-      if (this.#isPastDeadline(task, now)) {
+      if (this.#deadlinePassed(task, now)) {
         return this.#failForDeadline(task, now);
       }
     }
@@ -767,12 +767,9 @@ export class TaskService {
       }
       return { status: "done" };
     }
-    if (this.#isPastDeadline(claimed.task, now)) {
-      this.#tasks.markAssignmentExpired(
-        claimed.assignment.id,
-        this.#now().toISOString(),
-      );
-      return this.#failForDeadline(claimed.task, now);
+    const claimedAt = this.#now();
+    if (this.#deadlinePassed(claimed.task, claimedAt)) {
+      return this.#failForDeadline(claimed.task, claimedAt);
     }
 
     const unavailable =
@@ -1011,6 +1008,10 @@ export class TaskService {
     if (assignment === undefined || assignment.status !== "active") {
       return { status: "done" };
     }
+    this.expireIfPastDeadline(assignment.taskId);
+    if (this.#tasks.getAssignment(assignment.id)?.status !== "active") {
+      return { status: "done" };
+    }
 
     let answer;
     try {
@@ -1109,7 +1110,24 @@ export class TaskService {
     taskRevision: number,
     report: WorkerReport,
   ): EffectOutcome {
-    const now = this.#now().toISOString();
+    const nowDate = this.#now();
+    const now = nowDate.toISOString();
+    const pending = this.#tasks.getAssignment(assignmentId);
+    if (pending !== undefined && pending.status === "active") {
+      const current = this.#tasks.get(pending.taskId);
+      if (
+        current !== undefined &&
+        current.status === "running" &&
+        current.revision === taskRevision &&
+        current.attempts === pending.attempt &&
+        this.#deadlinePassed(current, nowDate)
+      ) {
+        // The attempt already ran out of time; a late result must not finish
+        // it or unlock anything that depends on it.
+        this.#failForDeadline(current, nowDate);
+        return { status: "done" };
+      }
+    }
     const reported = this.#tasks.markReported(
       assignmentId,
       fencingToken,
@@ -1528,6 +1546,27 @@ export class TaskService {
     return { ok: true, task: updated };
   }
 
+  /**
+   * Fails a queued or running task once its absolute deadline has passed.
+   * The deadline transition records first, then expires the assignment and
+   * stops the session, so a later Worker report cannot finish the attempt.
+   */
+  expireIfPastDeadline(taskId: string): void {
+    const task = this.#tasks.get(taskId);
+    if (
+      task === undefined ||
+      isTerminal(task.status) ||
+      task.status === "cancelling"
+    ) {
+      return;
+    }
+    const now = this.#now();
+    if (!this.#deadlinePassed(task, now)) {
+      return;
+    }
+    this.#failForDeadline(task, now);
+  }
+
   #failAssignment(assignment: AssignmentRecord, reason: string): EffectOutcome {
     return this.report(assignment.id, assignment.fencingToken, assignment.taskRevision, {
       status: "failed",
@@ -1536,23 +1575,58 @@ export class TaskService {
     });
   }
 
-  #isPastDeadline(task: TaskRecord, now: Date): boolean {
+  /** The deadline instant itself is terminal, so a retry can never share it. */
+  #deadlinePassed(task: TaskRecord, now: Date): boolean {
     if (task.deadline === undefined) {
       return false;
     }
     const deadline = new Date(task.deadline).getTime();
-    return Number.isFinite(deadline) && now.getTime() > deadline;
+    return Number.isFinite(deadline) && now.getTime() >= deadline;
   }
 
   #failForDeadline(task: TaskRecord, now: Date): EffectOutcome {
+    const nowIso = now.toISOString();
     const updated = this.#tasks.updateTask(task.id, task.revision, {
       status: "failed",
       lastError: `task deadline ${task.deadline ?? ""} passed`,
-      updatedAt: now.toISOString(),
+      updatedAt: nowIso,
     });
     if (updated === undefined) {
       return { status: "done" };
     }
+    const active = this.#tasks.listActiveAssignments(task.id);
+    for (const assignment of active) {
+      this.#tasks.markAssignmentExpired(assignment.id, nowIso);
+    }
+    // A proposal that has not run yet keeps no authority after the deadline.
+    const superseded = this.#actions.supersedeForTask(task.id, nowIso);
+    this.#auditSuperseded(superseded, "task_deadline", nowIso);
+    const sessionIds = active
+      .map((assignment) => assignment.sessionId)
+      .filter((sessionId) => sessionId.length > 0);
+    if (sessionIds.length > 0) {
+      this.#effects.enqueue({
+        kind: "task.interrupt",
+        businessKey: `task:${task.id}:interrupt:deadline:${task.revision}`,
+        payload: { taskId: task.id, sessionIds, finalize: false },
+        nextAttemptAt: nowIso,
+        createdAt: nowIso,
+      });
+      void this.#wake.wake();
+    }
+    this.#store.recordAudit({
+      event: "task.deadline_exceeded",
+      subjectType: "task",
+      subjectId: task.id,
+      after: {
+        deadline: task.deadline ?? "",
+        status: task.status,
+        interruptedSessions: sessionIds.length,
+        supersededActions: superseded.length,
+      },
+      traceId: `task:${task.id}`,
+      occurredAt: nowIso,
+    });
     this.#reply(task, "failure", "任务已超过截止时间，未继续执行。", `deadline:${task.id}`);
     return { status: "done" };
   }
