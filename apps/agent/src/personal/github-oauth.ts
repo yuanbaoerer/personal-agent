@@ -1,12 +1,11 @@
-import {
-  createCipheriv,
-  createDecipheriv,
-  createHash,
-  randomBytes,
-} from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 
 import type { GitHubOAuthConfig } from "../config.ts";
 import type { Db } from "../storage/db.ts";
+import {
+  GitHubTokenVault,
+  type GitHubCredentialMetadata,
+} from "./github-token-vault.ts";
 
 const STATE_TTL_MS = 10 * 60_000;
 const AUTHORIZE_URL = "https://github.com/login/oauth/authorize";
@@ -33,54 +32,12 @@ export interface GitHubOAuthOptions {
   config: GitHubOAuthConfig;
   fetch?: typeof fetch;
   now?: () => Date;
-}
-
-interface CredentialRow {
-  owner_id: string;
-  github_user_id: string;
-  login: string;
-  scopes: string;
-  token_ciphertext: string;
-  created_at: string;
-  updated_at: string;
-}
-
-function parseEncryptionKey(raw: string): Buffer {
-  const trimmed = raw.trim();
-  const key = /^[0-9a-f]{64}$/i.test(trimmed)
-    ? Buffer.from(trimmed, "hex")
-    : Buffer.from(trimmed, "base64");
-  if (key.length !== 32) {
-    throw new GitHubOAuthError(
-      "GITHUB_OAUTH_ENCRYPTION_KEY must be 32 bytes encoded as base64 or 64 hex characters",
-    );
-  }
-  return key;
+  /** Shared with the connection service; falls back to an internal vault. */
+  vault?: GitHubTokenVault;
 }
 
 function stateHash(state: string): string {
   return createHash("sha256").update(state, "utf8").digest("hex");
-}
-
-function encryptToken(token: string, key: Buffer): string {
-  const iv = randomBytes(12);
-  const cipher = createCipheriv("aes-256-gcm", key, iv);
-  const ciphertext = Buffer.concat([cipher.update(token, "utf8"), cipher.final()]);
-  const tag = cipher.getAuthTag();
-  return `v1:${iv.toString("base64url")}:${tag.toString("base64url")}:${ciphertext.toString("base64url")}`;
-}
-
-function decryptToken(value: string, key: Buffer): string {
-  const [version, ivRaw, tagRaw, dataRaw] = value.split(":");
-  if (version !== "v1" || ivRaw === undefined || tagRaw === undefined || dataRaw === undefined) {
-    throw new GitHubOAuthError("unsupported GitHub credential encoding");
-  }
-  const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(ivRaw, "base64url"));
-  decipher.setAuthTag(Buffer.from(tagRaw, "base64url"));
-  return Buffer.concat([
-    decipher.update(Buffer.from(dataRaw, "base64url")),
-    decipher.final(),
-  ]).toString("utf8");
 }
 
 /**
@@ -91,7 +48,7 @@ export class GitHubOAuthService {
   readonly #db: Db;
   readonly #ownerId: string;
   readonly #config: GitHubOAuthConfig;
-  readonly #key: Buffer;
+  readonly #vault: GitHubTokenVault;
   readonly #fetch: typeof fetch;
   readonly #now: () => Date;
 
@@ -99,7 +56,14 @@ export class GitHubOAuthService {
     this.#db = options.db;
     this.#ownerId = options.ownerId;
     this.#config = options.config;
-    this.#key = parseEncryptionKey(options.config.encryptionKey);
+    this.#vault =
+      options.vault ??
+      new GitHubTokenVault({
+        db: options.db,
+        ownerId: options.ownerId,
+        encryptionKey: options.config.encryptionKey,
+        now: options.now,
+      });
     this.#fetch = options.fetch ?? fetch;
     this.#now = options.now ?? (() => new Date());
   }
@@ -199,24 +163,13 @@ export class GitHubOAuthService {
       typeof tokenBody.scope === "string"
         ? tokenBody.scope
         : this.#config.scopes.join(" ");
-    this.#db.run(
-      `INSERT INTO pa_github_credentials
-        (owner_id, github_user_id, login, scopes, token_ciphertext, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT (owner_id) DO UPDATE SET
-         github_user_id = excluded.github_user_id,
-         login = excluded.login,
-         scopes = excluded.scopes,
-         token_ciphertext = excluded.token_ciphertext,
-         updated_at = excluded.updated_at`,
-      this.#ownerId,
-      String(user.id),
-      user.login,
-      scopes,
-      encryptToken(tokenBody.access_token, this.#key),
-      now.toISOString(),
-      now.toISOString(),
-    );
+    this.#vault.save({
+      method: "oauth",
+      accountId: String(user.id),
+      login: user.login,
+      scopeText: scopes,
+      token: tokenBody.access_token,
+    });
     return {
       connected: true,
       login: user.login,
@@ -226,40 +179,25 @@ export class GitHubOAuthService {
   }
 
   status(): GitHubOAuthStatus {
-    const row = this.#db.all<CredentialRow>(
-      "SELECT * FROM pa_github_credentials WHERE owner_id = ?",
-      this.#ownerId,
-    )[0];
-    if (row === undefined) {
-      return { connected: false };
-    }
-    try {
+    const stored: GitHubCredentialMetadata | undefined = this.#vault.metadata();
+    if (stored === undefined || !stored.decryptable) {
       // Do not advertise a credential that the current key cannot decrypt
       // (for example after restoring a DB with a different key).
-      decryptToken(row.token_ciphertext, this.#key);
-    } catch {
       return { connected: false };
     }
     return {
       connected: true,
-      login: row.login,
-      scopes: row.scopes,
-      updatedAt: row.updated_at,
+      login: stored.login,
+      scopes: stored.scopeText,
+      updatedAt: stored.updatedAt,
     };
   }
 
   accessToken(): string | undefined {
-    const row = this.#db.all<CredentialRow>(
-      "SELECT * FROM pa_github_credentials WHERE owner_id = ?",
-      this.#ownerId,
-    )[0];
-    return row === undefined ? undefined : decryptToken(row.token_ciphertext, this.#key);
+    return this.#vault.accessToken();
   }
 
   disconnect(): boolean {
-    return this.#db.run(
-      "DELETE FROM pa_github_credentials WHERE owner_id = ?",
-      this.#ownerId,
-    ) > 0;
+    return this.#vault.disconnect();
   }
 }

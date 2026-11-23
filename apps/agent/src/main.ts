@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
-import { createApp } from "./app.ts";
+import { createApp, type AppServices } from "./app.ts";
 import { CredentialBroker } from "./actions/credentials.ts";
 import { CredentialRepository } from "./storage/credentials.ts";
 import { createGithubPlugin } from "./plugins/github.ts";
@@ -12,7 +12,15 @@ import type { BuiltinPlugin } from "./plugins/types.ts";
 import { ClientApiService } from "./client-api.ts";
 import { FeishuAdapter } from "./channels/feishu/adapter.ts";
 import { FeishuLongConnection } from "./channels/feishu/long-connection.ts";
-import { GitHubOAuthService } from "./personal/github-oauth.ts";
+import {
+  GitHubOAuthService,
+  type GitHubOAuthStatus,
+} from "./personal/github-oauth.ts";
+import { GitHubTokenVault } from "./personal/github-token-vault.ts";
+import {
+  GitHubConnectionService,
+  type GitHubConnectionView,
+} from "./personal/github-connection.ts";
 import { loadConfig, type ModelConfig } from "./config.ts";
 import { PiRouterModel } from "./coordinator/pi-router.ts";
 import { StaticRouterModel } from "./coordinator/router.ts";
@@ -137,6 +145,17 @@ async function loadMcpPlugins(
   }
 }
 
+function oauthStatus(view: GitHubConnectionView): GitHubOAuthStatus {
+  return {
+    connected: view.status === "connected",
+    ...(view.accountLogin === undefined ? {} : { login: view.accountLogin }),
+    ...(view.githubScopes === undefined
+      ? {}
+      : { scopes: view.githubScopes.join(",") }),
+    ...(view.updatedAt === undefined ? {} : { updatedAt: view.updatedAt }),
+  };
+}
+
 async function main(): Promise<void> {
   const config = loadConfig();
   const databasePath =
@@ -176,12 +195,21 @@ async function main(): Promise<void> {
           config.feishu.accountId ?? config.feishu.appId,
           config.ownerOpenId,
         );
+  const githubVault =
+    config.github.encryptionKey !== undefined && owner !== undefined
+      ? new GitHubTokenVault({
+          db: store.db,
+          ownerId: owner.id,
+          encryptionKey: config.github.encryptionKey,
+        })
+      : undefined;
   const githubOAuth =
     config.github.oauth !== undefined && owner !== undefined
       ? new GitHubOAuthService({
           db: store.db,
           ownerId: owner.id,
           config: config.github.oauth,
+          ...(githubVault === undefined ? {} : { vault: githubVault }),
         })
       : undefined;
   const projectBindings =
@@ -191,12 +219,23 @@ async function main(): Promise<void> {
       ? undefined
       : (projectKey: string) =>
           projectBindings.findActiveByKey(owner.id, projectKey);
+  const storedTokenProvider =
+    githubVault === undefined ? undefined : () => githubVault.accessToken();
+  const envTokenProvider =
+    config.github.token === undefined ? undefined : () => config.github.token;
   const githubCredentialProvider =
-    githubOAuth === undefined
-      ? config.github.token === undefined
-        ? undefined
-        : () => config.github.token
-      : () => githubOAuth.accessToken();
+    storedTokenProvider === undefined
+      ? envTokenProvider
+      : envTokenProvider === undefined
+        ? storedTokenProvider
+        : () => {
+            // A stored credential wins. A wrong key throws and fails closed;
+            // it must not silently fall back to a higher-privilege env PAT.
+            if (githubVault?.metadata() !== undefined) {
+              return storedTokenProvider();
+            }
+            return envTokenProvider();
+          };
   const credentials = new CredentialBroker(
     () => new Date(),
     new CredentialRepository(store.db),
@@ -209,25 +248,17 @@ async function main(): Promise<void> {
   } = {
     ...(owner === undefined ? {} : { ownerId: owner.id }),
     pluginId: "github",
-    account: owner === undefined ? "default" : owner.id,
+    account:
+      githubVault?.metadata()?.login ?? (owner === undefined ? "default" : owner.id),
     scopes: ["repository.read"],
   };
   if (githubCredentialProvider !== undefined) {
-    if (githubOAuth === undefined) {
-      // A PAT is explicit host configuration; registering re-activates a ref
-      // that was previously revoked and records a new epoch.
-      credentials.register("github:default", {
-        ...githubCredentialMetadata,
-        provider: githubCredentialProvider,
-      });
-    } else {
-      // OAuth revocation must survive a restart. The host only re-attaches
-      // the provider; the stored epoch/revocation state wins.
-      credentials.restore("github:default", {
-        ...githubCredentialMetadata,
-        provider: githubCredentialProvider,
-      });
-    }
+    // Revocation and the credential epoch survive a restart for both PAT and
+    // OAuth; the host only re-attaches the provider.
+    credentials.restore("github:default", {
+      ...githubCredentialMetadata,
+      provider: githubCredentialProvider,
+    });
   }
   if (
     config.github.issueWriteToken !== undefined &&
@@ -257,8 +288,7 @@ async function main(): Promise<void> {
     allowedRepos: config.github.allowedRepos,
     resolveProject,
     credentials,
-    tokenProvider:
-      githubOAuth === undefined ? undefined : () => githubOAuth.accessToken(),
+    tokenProvider: githubCredentialProvider,
   };
   const local = createRuntime(config.model, piDatabasePath);
   const skillsRoot = config.skillsDir ?? resolve("skills");
@@ -272,6 +302,40 @@ async function main(): Promise<void> {
       errors: skills.errors().length,
     });
   }
+  const appRef: { current?: AppServices } = {};
+  const connections =
+    owner === undefined
+      ? undefined
+      : new GitHubConnectionService({
+          store,
+          ownerId: owner.id,
+          credentials,
+          ...(githubVault === undefined ? {} : { vault: githubVault }),
+          ...(githubOAuth === undefined ? {} : { oauth: githubOAuth }),
+          oauthConfigured: config.github.oauth !== undefined,
+          envPatConfigured: config.github.token !== undefined,
+          onChange: async () => {
+            const services = appRef.current;
+            if (services === undefined) {
+              return;
+            }
+            try {
+              services.issueDrafts.supersedeForCredential(
+                owner.id,
+                "github:default",
+              );
+              services.issueDrafts.supersedeForCredential(
+                owner.id,
+                config.github.issueWriteCredentialRef,
+              );
+              await services.plugins.credentialChanged("github", "connection");
+            } catch (error) {
+              logger.error("github_connection_change_failed", {
+                message: error instanceof Error ? error.message : String(error),
+              });
+            }
+          },
+        });
   const mcpPlugins = await loadMcpPlugins(config.mcpConfigPath, logger);
   const app = createApp({
     store,
@@ -289,7 +353,9 @@ async function main(): Promise<void> {
     budgetLimits: config.budget,
     skills,
     builtinPlugins: [
-      createGithubPlugin(github, issueWriteConfig),
+      createGithubPlugin(github, issueWriteConfig, () =>
+        connections?.pluginConnection(),
+      ),
       ...mcpPlugins,
     ],
     // A keyless process must not persist a placeholder session id: the next
@@ -300,6 +366,7 @@ async function main(): Promise<void> {
         : new PiRouterModel(store, local.runtime),
   });
 
+  appRef.current = app;
   const feishu = new FeishuAdapter(config.feishu);
   const longConnection =
     config.eventMode === "long_connection"
@@ -341,33 +408,18 @@ async function main(): Promise<void> {
     logger,
     adminToken: config.adminToken,
     clientApi,
-    onCredentialChange: async () => {
-      if (githubCredentialProvider === undefined) {
-        credentials.revoke("github:default");
-      } else {
-        credentials.rotate("github:default", {
-          ...githubCredentialMetadata,
-          provider: githubCredentialProvider,
-        });
-      }
-      if (owner !== undefined) {
-        // Credential epoch changes invalidate stored approvals for that ref.
-        app.issueDrafts.supersedeForCredential(owner.id, "github:default");
-        app.issueDrafts.supersedeForCredential(
-          owner.id,
-          config.github.issueWriteCredentialRef,
-        );
-      }
-      await app.plugins.credentialChanged("github", "oauth");
-    },
     oauth:
-      githubOAuth === undefined
+      config.github.oauth === undefined || connections === undefined
         ? undefined
         : {
-            start: () => githubOAuth.start(),
-            complete: (code, state) => githubOAuth.complete(code, state),
-            status: () => githubOAuth.status(),
-            disconnect: () => githubOAuth.disconnect(),
+            start: () => connections.beginOAuth().authorizeUrl,
+            complete: async (code, state) =>
+              oauthStatus(
+                await connections.completeOAuth(code, state, "oauth"),
+              ),
+            status: () => oauthStatus(connections.status()),
+            disconnect: async () =>
+              (await connections.disconnect("oauth")).disconnected,
           },
   });
 

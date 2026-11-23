@@ -22,7 +22,7 @@ export interface GitHubOAuthHttpHandler {
   start(): string;
   complete(code: string, state: string): Promise<GitHubOAuthStatus>;
   status(): GitHubOAuthStatus;
-  disconnect(): boolean;
+  disconnect(): boolean | Promise<boolean>;
 }
 
 export interface HttpServerDeps {
@@ -415,7 +415,7 @@ async function handleGitHubOAuth(
       sendJson(response, 401, { error: "unauthorized" });
       return 401;
     }
-    const disconnected = deps.oauth.disconnect();
+    const disconnected = await deps.oauth.disconnect();
     if (disconnected) {
       await notifyCredentialChange(deps, "disconnected");
     }

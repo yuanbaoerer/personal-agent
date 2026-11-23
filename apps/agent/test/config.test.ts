@@ -63,6 +63,29 @@ describe("GitHub OAuth config", () => {
       "http://127.0.0.1:8787/oauth/github/callback",
     );
   });
+
+  it("accepts a PAT-only vault key and rejects conflicting keys", () => {
+    const key = Buffer.alloc(32, 3).toString("base64");
+    const patOnly = loadConfig({
+      ...BASE,
+      GITHUB_CONNECTION_ENCRYPTION_KEY: key,
+    });
+    assert.equal(patOnly.github.encryptionKey, key);
+    assert.equal(patOnly.github.oauth, undefined);
+
+    assert.throws(
+      () =>
+        loadConfig({
+          ...BASE,
+          GITHUB_OAUTH_CLIENT_ID: "client",
+          GITHUB_OAUTH_CLIENT_SECRET: "secret",
+          GITHUB_OAUTH_ENCRYPTION_KEY: key,
+          GITHUB_CONNECTION_ENCRYPTION_KEY: Buffer.alloc(32, 4).toString("base64"),
+          ADMIN_TOKEN: "admin",
+        }),
+      /must match/,
+    );
+  });
 });
 
 describe("Feishu event mode config", () => {

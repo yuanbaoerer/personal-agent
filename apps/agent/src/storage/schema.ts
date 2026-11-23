@@ -675,6 +675,21 @@ const migrations: readonly (readonly MigrationStatement[])[] = [
       }
     },
   ],
+  [
+    // The OAuth vault row now also stores explicit PAT connections. Existing
+    // rows were all OAuth, so the default keeps their meaning and makes the
+    // ALTER safe to skip when a rolled-back tip already added the column.
+    (db) => {
+      const table = db.all<{ sql: string | null }>(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'pa_github_credentials'",
+      )[0];
+      if (table !== undefined && !/\bauth_method\b/i.test(table.sql ?? "")) {
+        db.exec(
+          "ALTER TABLE pa_github_credentials ADD COLUMN auth_method TEXT NOT NULL DEFAULT 'oauth'",
+        );
+      }
+    },
+  ],
 ];
 
 /** Highest schema version this build can read/migrate. */
