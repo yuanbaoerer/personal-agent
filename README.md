@@ -14,7 +14,7 @@ Personal Agent 是单 owner 自托管助手。默认 Node 服务通过飞书私�
 | 扩展与 GitHub 连接 | 受信内置插件、按需加载的 Skills、任务级权限和只读远程 MCP 已接入。[GC-00/01](docs/29-github-one-click-connection.md) 已交付加密凭据存储、连接 API 和 `pa plugins login/status/logout github`（E1）。 | [#68](https://github.com/yuanbaoerer/personal-agent/issues/68)：真实登录、重启、断连及旧授权失效待验；仓库发现、TUI 连接页、公共 GitHub App 未交付。[#73](https://github.com/yuanbaoerer/personal-agent/issues/73) 另跟踪 SDK 与分发。 |
 | 运维与客户端 | 本地 [Client API / CLI / TUI](docs/20-local-client-api.md) 支持设备 token、审批、事件与 SSE；双库可备份、校验并恢复到空目录。 | 远程配对、Desktop、真机终端验收与 DO 驱逐恢复不在上述 E1 证据内。 |
 
-下一阶段先审阅 [#125 空会话草稿](https://github.com/yuanbaoerer/personal-agent/pull/125)，并行推进 [#126 步骤时限](https://github.com/yuanbaoerer/personal-agent/issues/126)；随后在同一次真实飞书运行中交付 C04/C11 最终报告。分工、证据与暂缓项见[规划实施表](docs/28-conversational-planning-mvp.md#5-交付依赖pr-顺序及并行化)。
+下一阶段待审 [#125 空会话草稿](https://github.com/yuanbaoerer/personal-agent/pull/125) 与 [#127 步骤时限](https://github.com/yuanbaoerer/personal-agent/pull/127)（E1，CI 绿）；随后在同一次真实飞书运行中交付 C04/C11 最终报告。分工、证据与暂缓项见[规划实施表](docs/28-conversational-planning-mvp.md#5-交付依赖pr-顺序及并行化)。
 
 ## 本地启动
 

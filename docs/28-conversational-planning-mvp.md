@@ -112,8 +112,8 @@ Owner message
 
 | 顺序 | 工作项 / 分工 | 交付条件 |
 | --- | --- | --- |
-| 1 · 可并行 | **维护者**审核 [#124](https://github.com/yuanbaoerer/personal-agent/pull/124)（文档）和 [#125](https://github.com/yuanbaoerer/personal-agent/pull/125)（空会话草稿），分别合并；owner 在部署后复验 #123。 | 从无预置父任务的飞书私聊完成「普通聊天 → 草稿 → 修订」，记录 PlanDiff，确认未派工、未调用外部工具。#125 合并不能替代这条验收。 |
-| 2 · 并行准备 | **维护者**先复核只读 pilot 的执行授权及连接恢复边界；**DeepSeek Flash** 可独立承接 [#126 步骤时限](https://github.com/yuanbaoerer/personal-agent/issues/126)。 | 安全相关差异走仓库私下审查；#126 用可控时钟锁定排队、运行中、重放与父截止时间。若同时修改执行器，先集成授权边界变更，再集成时限 PR。 |
+| 1 · 可并行 | **维护者**分别审核 [#124](https://github.com/yuanbaoerer/personal-agent/pull/124)（文档）、[#125](https://github.com/yuanbaoerer/personal-agent/pull/125)（空会话草稿）和 [#127](https://github.com/yuanbaoerer/personal-agent/pull/127)（步骤时限）；owner 在 #125 部署后复验 #123。 | 从无预置父任务的飞书私聊完成「普通聊天 → 草稿 → 修订」，记录 PlanDiff，确认未派工、未调用外部工具。#125 合并不能替代这条验收。 |
+| 2 · 并行准备 | **维护者**先复核只读 pilot 的执行授权及连接恢复边界。#126 已由 [PR #127](https://github.com/yuanbaoerer/personal-agent/pull/127) 实现（E1，635 测试与 CI 绿），待审查合并。 | 安全相关差异走仓库私下审查；#127 已用可控时钟锁定排队、运行中、重放与父截止时间。若同时修改执行器，先集成授权边界变更，再集成时限 PR。 |
 | 3 · 准备下一次真机运行 | **维护者**在 [#7](https://github.com/yuanbaoerer/personal-agent/issues/7) 确认可取得的 token/用量及延迟数据；**owner**按 [runbook §9](22-mvp-acceptance-runbook.md#9-新增-conversational--autonomous-planning-真实验收c01c12) 验收 [#92](https://github.com/yuanbaoerer/personal-agent/issues/92) 的 C04/C11。 | 在同一次受控只读运行中，三步各有核验证据、第三步生成最终报告、真实飞书收到该报告，记录 0 次写入及从入站到收件的耗时。缺失用量标记为未采集，不填 0；C12 不因 C04/C11 通过而自动通过。 |
 | 4 · 只读链路通过后 | **owner 与维护者**继续 C05–C10、C12 和运行中重启 E4；#117 的 C06/C07 确定性路径只作为回归基线。 | 保存状态追问、补充/暂停/恢复、有限重规划、重启与作用域验证的独立证据；[#41](https://github.com/yuanbaoerer/personal-agent/issues/41) 的 M01–M14 保持独立。 |
 
