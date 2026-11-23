@@ -116,6 +116,8 @@ Owner message
 
 Owner：“我在想 Personal Agent 适合做什么，帮我分析下利弊。” → Agent 直接聊天，不创建 Task。Owner：“先给我一个最小 MVP 实施计划，不用执行。” → Agent 形成可编辑 Plan draft，不调用 GitHub 写。Owner：“第三步改成只读评估，而且先给我看代价。” → PlanDiff，原版保留为历史；若 budget 不明，不激活付费后台。
 
+没有任务的会话也可保存草稿。明确请求草稿时，父任务和 Plan 一起持久化，父任务不会进入普通 Worker 队列；模型不能借这个草稿授予工具权限。用 `/plans`、`/plan <id>` 查询，用自然语言修订并查看 PlanDiff。仅讨论或假设不保存草稿。
+
 ### 例 B：真正的自主执行与重规划
 
 Owner：“按刚才方案，在授权的 personal-agent 项目里检查规划、源码和 PR，先只读执行。” → 程序核对 project/mandate/预算→激活 3–5 步计划→读取固定 SHA 文档→匹配代码/CI→真实验证及草稿回传。中途 Owner：“先忽略 GUI，重点检查证据准确性。” → TaskInput seq 与 PlanVersion 前进→尚未执行步骤改变，旧报告不能覆盖。外部 GitHub 429 时有限退避/needs_review，不尝试越权调用，也不盲目说已完成。

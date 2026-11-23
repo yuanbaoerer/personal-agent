@@ -124,6 +124,81 @@ describe("plan progress queries", () => {
     );
   });
 
+  it("drafts and revises a plan from an empty conversation without dispatching work", async () => {
+    const services = createServices({ now: () => NOW });
+    services.model.push({ action: "reply", replyKind: "chat", text: "可以先看 MVP 的取舍。" });
+    await sendText(services, "我在想 MVP 适合做什么，先聊聊利弊", "evt_cold_chat");
+    assert.deepEqual(services.tasks.listByOwner(services.owner.id), []);
+
+    services.model.push({
+      action: "draft_plan",
+      text: "",
+      task: {
+        goal: "Define the MVP",
+        completionCriteria: "Present a checked implementation plan",
+      },
+      plan: { steps: steps() },
+    });
+    await sendText(services, "先给我一个最小 MVP 实施计划，不用执行", "evt_cold_draft");
+
+    const [draft] = services.planService.list(services.owner.id);
+    assert.ok(draft);
+    assert.equal(draft.status, "draft");
+    await sendText(services, `/plan ${draft.id}`, "evt_cold_show");
+    assert.match(lastOutbox(services), /v1\s+draft/);
+
+    services.model.push({
+      action: "revise_plan",
+      text: "",
+      plan: {
+        steps: steps().map((step) =>
+          step.key === "C" ? { ...step, goal: "read-only review" } : step,
+        ),
+      },
+    });
+    await sendText(services, "第三步改成只读评估，先给我看差异", "evt_cold_revise");
+
+    const versions = services.planService.list(services.owner.id, {
+      parentTaskId: draft.parentTaskId,
+    });
+    assert.deepEqual(versions.map((plan) => [plan.planVersion, plan.status]), [
+      [2, "draft"],
+      [1, "superseded"],
+    ]);
+    assert.match(lastOutbox(services), /PlanDiff v1 -> v2/);
+    assert.match(lastOutbox(services), /~ C\s+changed: goal/);
+    assert.deepEqual(
+      services.tasks.listByOwner(services.owner.id).map((task) => task.id),
+      [draft.parentTaskId],
+    );
+    await services.taskService.handleDispatch({});
+    assert.deepEqual(services.runtime.submissions, []);
+    assert.deepEqual(services.actions.listByTask(draft.parentTaskId), []);
+  });
+
+  it("does not materialize a parent for a rejected new draft", async () => {
+    const services = createServices({ now: () => NOW });
+    const task = { goal: "Define the MVP", completionCriteria: "Present a plan" };
+    services.model.push({ action: "create_task", text: "", task });
+    await sendText(services, "先给我一个最小 MVP 实施计划", "evt_draft_misrouted_as_work");
+    assert.deepEqual(services.tasks.listByOwner(services.owner.id), []);
+
+    services.model.push({ action: "draft_plan", text: "", task, plan: { steps: steps() } });
+    await sendText(services, "如果先给我一个 MVP 实施计划，会有哪些取舍？", "evt_hypothetical_draft");
+    assert.deepEqual(services.tasks.listByOwner(services.owner.id), []);
+
+    services.model.push({
+      action: "draft_plan",
+      text: "",
+      task,
+      plan: { steps: steps().slice(0, 2) },
+    });
+    await sendText(services, "先给我一个最小 MVP 实施计划，不用执行", "evt_invalid_cold_draft");
+    assert.match(lastOutbox(services), /计划草稿未创建/);
+    assert.deepEqual(services.planService.list(services.owner.id), []);
+    assert.deepEqual(services.tasks.listByOwner(services.owner.id), []);
+  });
+
   it("persists a model-proposed plan as a non-executing draft", async () => {
     const services = createServices({ now: () => NOW });
     const parent = services.tasks.insert({

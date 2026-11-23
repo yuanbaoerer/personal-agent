@@ -4,6 +4,7 @@ import type {
   OutboxPurpose,
   PlanDiff,
   PlanRecord,
+  PlanView,
   ProjectBinding,
   ReplyDraft,
   RouterDecision,
@@ -271,6 +272,25 @@ export function isDiscussionOnly(text: string): boolean {
     return false;
   }
   return CAPABILITY_QUESTION_PATTERN.test(value);
+}
+
+const DRAFT_REQUEST_PATTERN =
+  /^(?:(?:请(?:你)?|先|麻烦(?:你)?|能否|能不能|可以|可不可以)\s*)*(?:给我|(?:帮我|替我)?(?:制定|拟定|生成|列出|写|保存|起草)).{0,60}?(?:计划|方案)|^(?:(?:please|could you|can you)\s+)?(?:draft|write|give me|make|save)\b.{0,60}?\bplan\b/i;
+
+function isDraftOnlyRequest(text: string): boolean {
+  if (HYPOTHETICAL_PATTERN.test(text) || DISCUSSION_PATTERN.test(text)) {
+    return false;
+  }
+  const clauses = text.split(/[，,。；;！？!?\n]/u);
+  if (clauses.some((clause) =>
+    EXPLICIT_EXECUTION_PATTERN.test(clause) && !NEGATED_ACTION_PATTERN.test(clause)
+  )) {
+    return false;
+  }
+  return clauses.some((clause) => {
+    const request = DRAFT_REQUEST_PATTERN.exec(clause.trim())?.[0];
+    return request !== undefined && !/(?:不要|不必|不用|无需|别|\bnot\b)/i.test(request);
+  });
 }
 
 const PLAN_PROGRESS_PATTERN =
@@ -794,7 +814,10 @@ export class Router implements InboundHandler {
     context: { ownerId: string; conversationId: string; inboxId: string; text: string },
   ): Promise<EffectOutcome> {
     const now = this.#now().toISOString();
-    if (decision.action === "create_task" && isDiscussionOnly(context.text)) {
+    if (
+      decision.action === "create_task" &&
+      (isDiscussionOnly(context.text) || isDraftOnlyRequest(context.text))
+    ) {
       // A model can mistake a hypothetical or a discussion for a mandate.
       // The program keeps that boundary deterministic and non-destructive.
       this.#reply(
@@ -1048,22 +1071,54 @@ export class Router implements InboundHandler {
           this.#reply(context, "请提供 3–5 个步骤的计划草稿。", "status");
           return { status: "done" };
         }
-        const target = this.#resolveConversationTask(context, decision);
-        if (target === undefined) {
-          return { status: "done" };
-        }
-        if (!this.#isPlanEditableTask(target)) {
-          this.#reply(
-            context,
-            "该任务已结束或待确认，不能生成新计划；请先处理该任务或创建新任务。",
-            "failure",
-          );
-          return { status: "done" };
-        }
+        const input = { steps: decision.plan.steps };
+        const proposed = decision.task;
         try {
-          const view = this.#plans.create(context.ownerId, target.id, {
-            steps: decision.plan.steps,
-          });
+          let view: PlanView;
+          if (
+            proposed !== undefined &&
+            decision.taskId === undefined &&
+            decision.taskRef === undefined
+          ) {
+            if (!isDraftOnlyRequest(context.text) || proposed.goal.trim().length === 0) {
+              this.#reply(
+                context,
+                "请明确说明想保存的计划和目标；目前没有创建草稿。",
+                "clarify",
+              );
+              return { status: "done" };
+            }
+            view = this.#plans.createWithDraftParent(
+              () => this.#taskService.create({
+                ownerId: context.ownerId,
+                conversationId: context.conversationId,
+                sourceKey: `inbox:${context.inboxId}:plan-parent`,
+                goal: proposed.goal.trim(),
+                completionCriteria: proposed.completionCriteria.trim() || "提供可核对的计划结果",
+                dispatch: false,
+              }),
+              input,
+            );
+            this.#rememberTaskFocus(context.conversationId, view.plan.parentTaskId);
+          } else {
+            const target = this.#resolveConversationTask(context, decision);
+            if (target === undefined) {
+              return { status: "done" };
+            }
+            if (!this.#isPlanEditableTask(target)) {
+              this.#reply(
+                context,
+                "该任务已结束或待确认，不能生成新计划；请先处理该任务或创建新任务。",
+                "failure",
+              );
+              return { status: "done" };
+            }
+            view = this.#plans.create(context.ownerId, target.id, input);
+          }
+          if (view.plan.status !== "draft") {
+            this.#reply(context, this.#planDetailText(context.ownerId, view.plan), "status");
+            return { status: "done" };
+          }
           this.#reply(
             context,
             `已生成计划草稿 v${view.plan.planVersion}（未执行）。查看：/plan ${view.plan.id.slice(0, 8)}。启动需由主人明确确认。`,
@@ -2338,7 +2393,7 @@ export class Router implements InboundHandler {
     text?: string;
   }): boolean {
     const text = context.text ?? "";
-    if (!wantsProjectReview(text)) {
+    if (!wantsProjectReview(text) || isDraftOnlyRequest(text)) {
       return false;
     }
     const resolution = resolveProjectMention({
