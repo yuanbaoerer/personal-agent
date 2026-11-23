@@ -4,7 +4,7 @@ Personal Agent 是单 owner 自托管助手。默认 Node 服务通过飞书私�
 
 ## 当前实现
 
-以下核对到 [PR #127 合并后的 main](https://github.com/yuanbaoerer/personal-agent/commit/242a9f20d25ce3b342fc9dc30b8c353d070b70f4)。**E1 是确定性测试，E3 是指定场景的真实使用，E4 是故障恢复证据**。一个场景通过，不替另一个场景签收。
+以下核对到 [PR #130 合并后的 main](https://github.com/yuanbaoerer/personal-agent/commit/b6014a3)。**E1 是确定性测试，E3 是指定场景的真实使用，E4 是故障恢复证据**。一个场景通过，不替另一个场景签收。
 
 | 工作线 | 已合并或已验证 | 未通过的门槛 / 跟踪 |
 | --- | --- | --- |
@@ -14,7 +14,7 @@ Personal Agent 是单 owner 自托管助手。默认 Node 服务通过飞书私�
 | 扩展与 GitHub 连接 | 受信内置插件、按需加载的 Skills、任务级权限和只读远程 MCP 已接入。[GC-00/01](docs/29-github-one-click-connection.md) 已交付加密凭据存储、连接 API 和 `pa plugins login/status/logout github`（E1）。 | [#68](https://github.com/yuanbaoerer/personal-agent/issues/68)：真实登录、重启、断连及旧授权失效待验；仓库发现、TUI 连接页、公共 GitHub App 未交付。[#73](https://github.com/yuanbaoerer/personal-agent/issues/73) 另跟踪 SDK 与分发。 |
 | 运维与客户端 | 本地 [Client API / CLI / TUI](docs/20-local-client-api.md) 支持设备 token、审批、事件与 SSE；双库可备份、校验并恢复到空目录；`/usage` 采集模型 token、provider/catalog 费用来源与 Worker 端到端延迟。 | 远程配对、Desktop、真机终端验收与 DO 驱逐恢复不在上述 E1 证据内；C12 仍需真实运行记录。 |
 
-[#125 空会话草稿](https://github.com/yuanbaoerer/personal-agent/pull/125) 与 [#127 步骤时限](https://github.com/yuanbaoerer/personal-agent/pull/127) 已合并（E1）。下一步由 owner 在部署后从无预置父任务的飞书会话复验 #123，并在同一次受控只读运行中交付 C04/C11 最终报告与真实飞书收件。分工、证据与暂缓项见[规划实施表](docs/28-conversational-planning-mvp.md#5-交付依赖pr-顺序及并行化)。
+[#125 空会话草稿](https://github.com/yuanbaoerer/personal-agent/pull/125)、[#127 步骤时限](https://github.com/yuanbaoerer/personal-agent/pull/127)、[#128 凭据恢复](https://github.com/yuanbaoerer/personal-agent/pull/128)、[#129 末步权限](https://github.com/yuanbaoerer/personal-agent/pull/129) 与 [#130 用量采集](https://github.com/yuanbaoerer/personal-agent/pull/130) 已合并（E1，全量 648 测试）。下一步由 owner 在部署后从无预置父任务的飞书会话复验 #123，并在同一次受控只读运行中交付 C04/C11 最终报告与真实飞书收件。分工、证据与暂缓项见[规划实施表](docs/28-conversational-planning-mvp.md#5-交付依赖pr-顺序及并行化)。
 
 ## 本地启动
 
@@ -150,6 +150,7 @@ curl -fsS http://127.0.0.1:8787/healthz
 - Node runtime 从 Pi 的 `pi.usage` 读取每次会话的累计 usage；TaskService 记录 Worker 会话，Router 记录长会话的增量，避免重复计数。
 - `pa_usage` 保存 token/费用、provider-vs-catalog 费用来源、按模型/来源聚合与 Worker 端到端耗时；`/usage` 与 `/api/v1/usage` 返回同一快照。
 - 无 usage 时保持 `tokens.collected=false` 并显示“未采集”，不编造金额；C12 仍需真实运行的成本/延迟记录。
+- 全量 648 个确定性测试通过；真实模型（非飞书）冒烟返回 67 tokens、catalog 估算费用，provider 未报告账单金额，确认 usage 读取路径可用。该冒烟不构成 E3。
 
 **2026-11-18 验证（周期计划 SchedulePolicy，PA-08 部分）：**
 
