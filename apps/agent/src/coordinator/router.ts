@@ -109,6 +109,9 @@ export class StaticRouterModel implements RouterModel {
   }
 }
 
+/** A paired terminal consumes only explicitly bound, accepted chat input. */
+export type CodingInput = (event: InboxRecord) => ReplyDraft[] | undefined;
+
 export interface RouterDeps {
   store: Store;
   tasks: TaskRepository;
@@ -136,6 +139,7 @@ export interface RouterDeps {
   issueDraftApproval?: IssueDraftApprovalBridge;
   /** Persistent plans; enables owner-facing plan status and control. */
   plans?: PlanService;
+  codingInput?: CodingInput;
   /** Token/cost/latency ledger for the `/usage` command. */
   usage?: UsageRepository;
 }
@@ -617,6 +621,7 @@ export class Router implements InboundHandler {
   readonly #issueDrafts?: IssueDraftService;
   readonly #issueDraftApproval?: IssueDraftApprovalBridge;
   readonly #plans?: PlanService;
+  readonly #codingInput?: CodingInput;
   readonly #usage?: UsageRepository;
 
   constructor(deps: RouterDeps) {
@@ -642,6 +647,7 @@ export class Router implements InboundHandler {
     this.#issueDrafts = deps.issueDrafts;
     this.#issueDraftApproval = deps.issueDraftApproval;
     this.#plans = deps.plans;
+    this.#codingInput = deps.codingInput;
     this.#usage = deps.usage;
     this.#stateQuery = new StateQueryHandler({
       tasks: deps.tasks,
@@ -669,6 +675,12 @@ export class Router implements InboundHandler {
 
   async handle(event: InboxRecord, _store: Store): Promise<ReplyDraft[]> {
     const text = event.text?.trim() ?? "";
+    const coding = this.#codingInput?.(event);
+    if (coding !== undefined) return coding;
+    if (/^\/code(?:\s|$)/.test(text)) {
+      this.#store.metaSet(`coding:inbox:${event.id}`, "code:unavailable");
+      return [{ purpose: "status", text: "此宿主未启用 omp 配对。请在 Node 宿主配置 PA_CODING_SOCKET。" }];
+    }
     const lines = text
       .split(/\r?\n/)
       .map((line) => line.trim())
@@ -2376,6 +2388,7 @@ export class Router implements InboundHandler {
             "/确认 <id>；/取消确认 <id>（模型发起的记忆/提醒）",
             "/allow-read <owner/repo>；/revoke-read <owner/repo>；/preauth",
             "/补充 <taskId> <内容>；/回答 <taskId> <内容>",
+            "/code 查看本机 omp 配对帮助；/code status；/code stop；/code leave",
             "/修改 <taskId> <新目标>；/修改 <taskId> 目标=... 完成条件=...",
             "/approve <actionId> <nonce> [argsHash revision]；/deny 同上",
             "/memory [--project=名称]；/remember [--project=名称] key=value；/forget [--project=名称] key",

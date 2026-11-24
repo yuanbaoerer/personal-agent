@@ -9,7 +9,7 @@ import { ExtensionService } from "./plugins/service.ts";
 import type { BuiltinPlugin } from "./plugins/types.ts";
 import type { SkillRuntime } from "./plugins/skills-contract.ts";
 import { IngressService } from "./coordinator/ingress.ts";
-import type { RouterModel } from "./coordinator/router.ts";
+import type { CodingInput, RouterModel } from "./coordinator/router.ts";
 import { Router } from "./coordinator/router.ts";
 import { TaskService } from "./coordinator/tasks.ts";
 import { EffectDispatcher } from "./delivery/effects.ts";
@@ -54,6 +54,8 @@ export interface AppDeps {
   wake: WakeScheduler;
   /** Router decisions come from the host's model runtime. */
   model: RouterModel;
+  /** Node-only, explicitly owner-paired terminal. Never callable by the model. */
+  codingInput?: CodingInput;
   /** Durable timer for reminders; Node polls instead. */
   reminderTimer?: ReminderTimer;
   /** Read-only GitHub connector; omitted means the tool is unavailable. */
@@ -285,6 +287,7 @@ export function createApp(deps: AppDeps): AppServices {
     schedulePolicy,
     state,
     budget,
+    codingInput: deps.codingInput,
     model: deps.model,
     wake: deps.wake,
     now: deps.now,

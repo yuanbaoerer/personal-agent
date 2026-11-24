@@ -78,6 +78,8 @@ inspect→compare→findings→propose→approve→apply→verify→report。输
 
 ### Coding Agent Adapter（GH-05）
 
+**交互编程与后台开发分开验收。** 当前优先交付的是[飞书 ↔ 已打开的 omp 会话](../README.md#飞书使用本机-omp)：本地选择工作区，飞书 owner 配对后连续读、改、测试；退出、断线不重新执行。它不依赖通过只读 C04/C11，也不代表 GH-05 的隔离 Worker、推送凭据或 Draft PR 已实现。下列契约仅用于未来由服务在开发机离线时自行派工的路线。
+
 先选择一个真实 CLI（Codex CLI 或 OpenCode，owner 决策），而非同时接全部。候选 contract：start(spec)→jobId、status、logs、cancel、resume（只有支持时）、artifacts。spec 含 repo/base SHA、Issue revision/验收、允许操作/命令/文件、deadline、budget、credential grant。Job 绑定 Assignment/Session，持久 ID、进程与心跳、终止和未知状态核对；不可靠 resume 必须显式降级/人工处置。
 
 每 Task 独立 clone 或 worktree/feature branch（agent/<task-id>）；worktree 不是安全隔离，需独立 HOME/进程/文件系统/网络与秘密隔离，禁止继承 Agent 主机/飞书/全权 GitHub credentials，禁止 shell 字符串拼接与任意执行；以明确 capability 允许最小操作。独立的 branch push / PR credential 与 issue write credential 分离；owner 明确批准后推 feature branch 并建 Draft PR；不直接 main、不 force push、不改分支保护/仓库设置、不生产部署。没有可靠隔离则仅生成人工执行 Coding 指令。收集真实命令 exit code、日志摘要、diff、base/head SHA、测试结果，取消终止进程树并核对外部副作用；绝不自动 merge。

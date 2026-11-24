@@ -4,17 +4,44 @@ Personal Agent 是单 owner 自托管助手。默认 Node 服务通过飞书私�
 
 ## 当前实现
 
-以下核对到 [PR #130 合并后的 main](https://github.com/yuanbaoerer/personal-agent/commit/b6014a3)。**E1 是确定性测试，E3 是指定场景的真实使用，E4 是故障恢复证据**。一个场景通过，不替另一个场景签收。
+以下核对到 [PR #132 合并后的 main](https://github.com/yuanbaoerer/personal-agent/commit/000dc30a687862f864e84081ee431fc6fe5b05c8)，并在本分支加入[飞书配对 omp](#飞书使用本机-omp)与 session-usage 证据。[当前 MVP 实施队列](docs/21-mvp-functional-ready.md#4-剩余实施队列)列出已交付项、负责人和下一项验收。**E1 是确定性测试，E3 是指定场景的真实使用，E4 是故障恢复证据**；一个场景通过，不替另一个场景签收。
 
 | 工作线 | 已合并或已验证 | 未通过的门槛 / 跟踪 |
 | --- | --- | --- |
 | 飞书与任务核心 | Node 长连接、owner 绑定、Inbox 去重、Outbox 投递、Task revision/输入序号、Worker 租约与审批。显式状态查询、记忆、提醒、周期任务和预算守卫已接入。 | [#41](https://github.com/yuanbaoerer/personal-agent/issues/41) 的 M01–M14 单独验收；[状态问答 #38](https://github.com/yuanbaoerer/personal-agent/issues/38)、真实并发与常驻恢复不能从聊天成功推断。 |
 | 多轮对话与计划 | #89–#91、空会话草稿 [#123](https://github.com/yuanbaoerer/personal-agent/issues/123) 与步骤时限 [#126](https://github.com/yuanbaoerer/personal-agent/issues/126) 已合并（E1）；已有对话窗口、持久 Plan/Steps、修订差异、子任务执行、有界重规划和绝对派工截止时间。[真实飞书记录](docs/acceptance/2026-11-22-conversational-planning-runbook.md)：C01 六轮聊天通过；C02/C03 早先以预建父任务通过，2026-11-24 又以空会话路径通过（[E3 记录](docs/acceptance/2026-11-24-empty-conversation-draft-e3.md)：3 条真实入站，0 Assignment、0 Action）。 | [#92](https://github.com/yuanbaoerer/personal-agent/issues/92)：C04/C11 仅部分通过，前两步核验成功，第三步未交付最终报告。C04 当前缺 GitHub 凭据；C05–C10、C12 完整运行成本基线与运行中重启 E4 仍未完成。 |
-| GitHub 项目评估与 Issue 写入 | 已绑定项目可读固定 SHA 源码、PR 和 CI；[真实模型只读评估](docs/acceptance/2026-11-22-real-project-review.md)核对了结构化声明并生成待批草稿，未独立核实叙述结论。独立写凭据、逐次审批的 Issue 创建/更新/评论已合并（E1）。 | [#65](https://github.com/yuanbaoerer/personal-agent/issues/65)：还需飞书收到完整评估；[#61](https://github.com/yuanbaoerer/personal-agent/issues/61) 的真实写入只在 owner 指定的隔离仓库验收。Coding Agent / Draft PR 尚未交付。 |
+| GitHub 项目评估与 Issue 写入 | 已绑定项目可读固定 SHA 源码、PR 和 CI；[真实模型只读评估](docs/acceptance/2026-11-22-real-project-review.md)核对了结构化声明并生成待批草稿，未独立核实叙述结论。独立写凭据、逐次审批的 Issue 创建/更新/评论已合并（E1）。 | [#65](https://github.com/yuanbaoerer/personal-agent/issues/65) 还需飞书收到完整评估；[#61](https://github.com/yuanbaoerer/personal-agent/issues/61) 的真实写入只在隔离仓库验收。下方交互式 omp 配对不负责无人值守派工或创建 Draft PR。 |
 | 扩展与 GitHub 连接 | 受信内置插件、按需加载的 Skills、任务级权限和只读远程 MCP 已接入。[GC-00/01](docs/29-github-one-click-connection.md) 已交付加密凭据存储、连接 API 和 `pa plugins login/status/logout github`（E1）。 | [#68](https://github.com/yuanbaoerer/personal-agent/issues/68)：真实登录、重启、断连及旧授权失效待验；仓库发现、TUI 连接页、公共 GitHub App 未交付。[#73](https://github.com/yuanbaoerer/personal-agent/issues/73) 另跟踪 SDK 与分发。 |
 | 运维与客户端 | 本地 [Client API / CLI / TUI](docs/20-local-client-api.md) 支持设备 token、审批、事件与 SSE；双库可备份、校验并恢复到空目录；`/usage` 采集模型 token、provider/catalog 费用来源与 Worker 端到端延迟。 | 远程配对、Desktop、真机终端验收与 DO 驱逐恢复不在上述 E1 证据内；C12 仍需真实运行记录。 |
 
-[#125 空会话草稿](https://github.com/yuanbaoerer/personal-agent/pull/125)、[#127 步骤时限](https://github.com/yuanbaoerer/personal-agent/pull/127)、[#128 凭据恢复](https://github.com/yuanbaoerer/personal-agent/pull/128)、[#129 末步权限](https://github.com/yuanbaoerer/personal-agent/pull/129) 与 [#130 用量采集](https://github.com/yuanbaoerer/personal-agent/pull/130) 已合并（E1，全量 648 测试）。空会话草稿/修订已于 2026-11-24 通过真实飞书 E3；下一步是 C04/C11 同一轮只读闭环，但实时库当前没有 GitHub 凭据，需先连接并重启服务。分工、证据与暂缓项见[规划实施表](docs/28-conversational-planning-mvp.md#5-交付依赖pr-顺序及并行化)。
+[#125 空会话草稿](https://github.com/yuanbaoerer/personal-agent/pull/125)、[#127 步骤时限](https://github.com/yuanbaoerer/personal-agent/pull/127)、[#128 凭据恢复](https://github.com/yuanbaoerer/personal-agent/pull/128)、[#129 末步权限](https://github.com/yuanbaoerer/personal-agent/pull/129) 与 [#130 用量采集](https://github.com/yuanbaoerer/personal-agent/pull/130) 已合并（E1；本分支全量 659 测试）。空会话草稿/修订已于 2026-11-24 通过真实飞书 E3；下一步是 C04/C11 同一轮只读闭环，但实时库当前没有 GitHub 凭据，需先连接并重启服务。分工、证据与暂缓项见[规划实施表](docs/28-conversational-planning-mvp.md#5-交付依赖pr-顺序及并行化)。本分支另加飞书配对 omp 与 `scripts/session-usage.ts`；前者是交互式编程的本地 E2 证据，不是无人值守 Coding Agent，也不替代 E3。
+
+## 飞书使用本机 omp
+
+飞书可以遥控你**在指定工作区主动打开的真实 omp**。同一会话保留上下文，能读代码、改文件、跑测试并继续追问；不是把飞书接成开发机的远程 shell。Node 宿主和开发终端使用同一用户的私有 Unix socket，没有新增 HTTP 端口。此路径面向 macOS/Linux；Windows 原生、Cloudflare 宿主不提供该 socket。
+
+1. 在运行 Personal Agent 的终端创建私有目录并启动服务。需已有飞书配置与 `OWNER_FEISHU_OPEN_ID`；已有服务请更新**原实例**，不要给同一个机器人开第二条长连接。
+
+   ```sh
+   mkdir -p -m 700 "$HOME/.pa-coding"
+   export PA_CODING_SOCKET="$HOME/.pa-coding/omp.sock"
+   npm start
+   ```
+
+2. 在开发机的另一个终端，从**打算授权的工作区**启动 omp。将下方扩展路径换成 Personal Agent 仓库的绝对路径。建议首次使用没有凭据的临时克隆，不复用含无关私密对话的旧会话。模型登录和用量由本机 omp 管理，不需要向飞书提供 API key。
+
+   ```sh
+   export PA_CODING_SOCKET="$HOME/.pa-coding/omp.sock"
+   omp --trusted-extension /absolute/path/to/personal-agent/extensions/feishu-pair.ts
+   ```
+
+   本地验证版本为 omp 19.1.1 / Bun 1.4.5。若 `omp --version` 提示 Bun 低于 1.4.4，先切换到兼容的 Bun 再启动；不需要更改 Node 服务的运行时版本。
+
+3. 在 omp 输入 `/feishu-pair --mobile` 并确认工作区。把终端显示的 `/code pair <配对码>` 发给机器人的**已绑定 owner 私聊**。之后直接说：“读一下这个失败测试，修实现，不改测试；跑完告诉我结果。” 下一条消息继续同一会话。`/code status` 查状态；`/code stop` 请求中止，不回滚已落盘修改；`/code leave` 退出并恢复普通助手。本机随时可 `/feishu-unpair`；断线不重放旧指令。
+
+`--mobile` 允许在飞书检查并**仅批准一次**所展示的测试/构建命令，例如 `node --test check.test.mjs` 或 `npm test`；回复 `/code allow <审批号>` 或 `/code deny <审批号>`。省略 `--mobile` 时 shell 需在终端确认。工作区文件读写、受限检查、需要终端确认的其他工具三者不同：配对不是操作系统沙箱，测试也会以本机用户身份执行仓库代码。不要配对不信任的项目，不要给会话生产密钥。服务不会替你推送、合并或部署。
+
+节点、模型和验收边界见[验收手册 §10](docs/22-mvp-acceptance-runbook.md#10-飞书配对-omp)；开发机或 omp 离线时不能继续代做。
 
 ## 本地启动
 
@@ -150,7 +177,7 @@ curl -fsS http://127.0.0.1:8787/healthz
 - Node runtime 从 Pi 的 `pi.usage` 读取每次会话的累计 usage；TaskService 记录 Worker 会话，Router 记录长会话的增量，避免重复计数。
 - `pa_usage` 保存 token/费用、provider-vs-catalog 费用来源、按模型/来源聚合与 Worker 端到端耗时；`/usage` 与 `/api/v1/usage` 返回同一快照。
 - 无 usage 时保持 `tokens.collected=false` 并显示“未采集”，不编造金额；C12 仍需真实运行的成本/延迟记录。
-- 全量 648 个确定性测试通过；真实模型（非飞书）冒烟返回 67 tokens、catalog 估算费用，provider 未报告账单金额，确认 usage 读取路径可用。该冒烟不构成 E3。
+- 全量 659 个确定性测试通过；真实模型（非飞书）冒烟返回 67 tokens、catalog 估算费用，provider 未报告账单金额，确认 usage 读取路径可用。该冒烟不构成 E3。
 - 2026-11-24 真实飞书空会话草稿轮次：`/usage` 显示 3 次 Router 调用、508,462 tokens、catalog 估算 0.036784；无 Worker 样本。这是 Router-only 快照，不是 C12 的完整计划执行基线。
 
 **2026-11-18 验证（周期计划 SchedulePolicy，PA-08 部分）：**

@@ -154,6 +154,23 @@ describe("conversation window", () => {
     assert.equal(window(store, ownerB, convB).turns[0]?.text, "other owner secret");
   });
 
+  it("does not send paired terminal prompts or results to the general Router after leaving", () => {
+    const store = createStore();
+    try {
+      const owner = bindOwner(store, "ou_owner");
+      const conv = conversation(store, owner, "oc_coding");
+      const at = "2026-01-01T00:00:00.000Z";
+      const input = userTurn(store, owner, conv, "private coding request", at);
+      store.metaSet(`coding:inbox:${input.id}`, "prompt");
+      const answer = assistantTurn(store, owner, conv, "workspace diff", at);
+      store.db.run("UPDATE pa_outbox SET business_key = ? WHERE id = ?", `coding:inbox:${input.id}:result`, answer.id);
+      userTurn(store, owner, conv, "normal conversation", at);
+      assert.deepEqual(window(store, owner, conv).turns.map(turn => turn.text), ["normal conversation"]);
+    } finally {
+      store.close();
+    }
+  });
+
   it("excludes rejected input, bootstrap acks, reminders, pending replies and the live inbox", () => {
     const store = createStore();
     const owner = bindOwner(store, "ou_owner");
