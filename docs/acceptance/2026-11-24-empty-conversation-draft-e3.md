@@ -11,11 +11,11 @@
 
 | Turn | Inbound ID | Platform event ID | Received (UTC) | Inbound state | Outbox receipts |
 | --- | --- | --- | --- | --- | --- |
-| Ordinary chat | `8861fc05-9ac9-4105-8350-b4133499fc1f` | `om_x100b7f66bdeb4880cec5b5d4432119b` | 06:31:15.446 | accepted | ack `8544d0b1…`; result `5eb63fb4…`; both accepted |
-| Draft request | `f13cf224-e808-40a9-83db-6e66737dba81` | `om_x100b7f677e0ce0a4cfc2e178efe4cbc` | 06:47:40.819 | accepted | ack `6816522e…`; status `70462964…`; both accepted |
-| Revise request | `a3b1584b-2923-4a48-a657-923f745999f3` | `om_x100b7f67f1fe4cb0ceb733d79e84c67` | 07:25:39.852 | accepted | ack `0f83bc69…`; status `7bcbea1b…`; both accepted |
+| Ordinary chat | `8861fc05-9ac9-4105-8350-b4133499fc1f` | `om_x100b7f66…` | 06:31:15.446 | accepted | ack `8544d0b1…`; result `5eb63fb4…`; both accepted |
+| Draft request | `f13cf224-e808-40a9-83db-6e66737dba81` | `om_x100b7f67…` | 06:47:40.819 | accepted | ack `6816522e…`; status `70462964…`; both accepted |
+| Revise request | `a3b1584b-2923-4a48-a657-923f745999f3` | `om_x100b7f67…` | 07:25:39.852 | accepted | ack `0f83bc69…`; status `7bcbea1b…`; both accepted |
 
-Message text is intentionally not copied into this record.
+Message text is intentionally not copied into this record. Full platform message IDs are kept only in the operator's live database; this record uses truncated prefixes.
 
 ## Draft correctness
 
