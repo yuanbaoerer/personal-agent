@@ -11,6 +11,7 @@ import { FileSkillRuntime } from "./plugins/skills.ts";
 import type { BuiltinPlugin } from "./plugins/types.ts";
 import { ClientApiService } from "./client-api.ts";
 import { FeishuAdapter } from "./channels/feishu/adapter.ts";
+import { CodingRelay } from "./coding/relay.ts";
 import { FeishuLongConnection } from "./channels/feishu/long-connection.ts";
 import {
   GitHubOAuthService,
@@ -346,8 +347,10 @@ async function main(): Promise<void> {
           },
         });
   const mcpPlugins = await loadMcpPlugins(config.mcpConfigPath, logger);
+  const coding = new CodingRelay(store);
   const app = createApp({
     store,
+    codingInput: (event) => coding.handle(event),
     runtime: local.runtime,
     wake: noopWake,
     github,
@@ -497,13 +500,22 @@ async function main(): Promise<void> {
   }, MAINTENANCE_INTERVAL_MS);
   timer.unref();
 
+  if (config.codingSocket !== undefined) {
+    if (owner === undefined) throw new ConfigError("PA_CODING_SOCKET requires a bound Feishu owner");
+    await coding.listen(config.codingSocket);
+  }
   const listen = Promise.withResolvers<void>();
   server.once("error", listen.reject);
   server.listen(config.port, config.host, () => {
     server.off("error", listen.reject);
     listen.resolve();
   });
-  await listen.promise;
+  try {
+    await listen.promise;
+  } catch (error) {
+    coding.close();
+    throw error;
+  }
 
   logger.info("listening", {
     host: config.host,
@@ -536,6 +548,7 @@ async function main(): Promise<void> {
     clearInterval(timer);
     logger.info("shutting_down", { signal });
     longConnection?.stop();
+    coding.close();
     server.closeAllConnections();
     server.close(() => {
       void local.close().finally(() => {

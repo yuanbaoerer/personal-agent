@@ -57,7 +57,7 @@ Personal Agent 当前基于 dsh-superagent 风格的 **Task / Assignment / Manda
 | Memory / Knowledge | 有来源、可删除的内容 | 读取项目上下文或经审核 Skill |
 | Inbox / Outbox | 幂等输入和可靠投递 | 发布阶段事件而非额外私有消息系统 |
 
-现有应用尚无 ModeRegistry、持久 WorkflowPlan 或 Coding 沙箱。**不得为了模式创建 CodingCoordinator、OrganizationCoordinator 或复制 Task/Approval 数据表。**
+持久 WorkflowPlan 已实施；通用 ModeRegistry 和无人值守 Coding 沙箱未实施。交互式编程走另一条用户路径：owner 主动配对自己打开的 omp 终端，飞书成为该会话的输入/输出端，而不是让 Core 新建 Worker 或代表模型发起 shell。两者不能共享隐式授权，也不需要新的 CodingCoordinator 或 Task 表。
 
 候选模块是小型的 ModeCatalog / ProfileResolver / StrategyPolicy / WorkflowRepository。只有当第一条真实 Mode 流程证明需要时再创建。
 

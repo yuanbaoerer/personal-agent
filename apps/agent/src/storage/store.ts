@@ -711,6 +711,7 @@ export class Store {
     const userWhere = `i.conversation_id = ? AND i.owner_id = ?
       AND i.actor_type = 'user' AND i.status = 'accepted'
       AND i.text IS NOT NULL AND length(trim(i.text)) > 0
+      AND NOT EXISTS (SELECT 1 FROM pa_meta m WHERE m.key = 'coding:inbox:' || i.id)
       AND (? IS NULL OR i.id <> ?)`;
     const userParams = [
       query.conversationId,
@@ -722,6 +723,7 @@ export class Store {
     const outboxWhere = `o.owner_id = ? AND o.channel = ? AND o.account_id = ?
       AND o.conversation_id = ? AND o.status = 'accepted'
       AND o.purpose IN ('status', 'clarify', 'approval', 'result', 'failure')
+      AND o.business_key NOT GLOB 'coding:*'
       AND length(trim(o.text)) > 0`;
     const outboxParams = [
       query.ownerId,
