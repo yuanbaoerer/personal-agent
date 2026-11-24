@@ -15,10 +15,11 @@
 
 以下均以基线 SHA 为准，可在 GitHub 切换到该 SHA 核对。
 
-| 已有实现（路径相对于 apps/agent/src） | 差距 / 迁移 |
+| 已有实现（除注明外，路径相对于 apps/agent/src） | 差距 / 迁移 |
 | --- | --- |
 | runtime/types.ts: RUNTIME_CONTRACT_VERSION=1，open(spec)/submit(sessionId,text,operationId)/wait/interrupt，RuntimeSessionSpec 仅 role/brief | 保留契约兼容，新增版本化执行绑定、能力探测、恢复/取消语义；不要先重写全部调用点 |
 | runtime/node-pi.ts: NodePiRuntimeOptions.model，open 使用实例级模型；runtime/pi.ts 为 DO 路径 | 首先验证 SDK 会话级模型绑定，再引入按实例构造的 runtime；旧配置继续可用 |
+| coding/relay.ts、extensions/feishu-pair.ts（仓库根）: owner 与主动打开的 OMP 交互式配对，Unix socket、一次一审批、进度/取消、重启不重放 | 本地交互式 E2，不是 HarnessDriver：不托管无人值守进程，无 OS 沙箱与 Draft PR；MH-00 复用其 owner/审批/socket 经验，但不能作为 adapter 兼容证据 |
 | app.ts: AppDeps.runtime 单例，RouterModel 独立注入；coordinator/tasks.ts: 单一 #runtime open/submit/wait/interrupt | composition root 装配 RuntimeRouter；Router 仍走既有路径；Worker 通过持久 Assignment/Session binding 查找实例 |
 | domain/types.ts AssignmentRecord / storage/tasks.ts: taskRevision、sessionId、leaseUntil、fencingToken、dispatchedInputSeq/consumedInputSeq、report | 增量迁移绑定快照、session ownership、外部 job ref 与操作回执；复用既有旧报告屏障 |
 | config.ts: SUPPORTED_MODEL_PROVIDERS 仅 opencode-go | 兼容现有 MODEL_PROVIDER/OPENCODE_MODEL/OPENCODE_API_KEY；从静态单配置演进至 ProviderInstance / ModelCatalog |
@@ -171,11 +172,11 @@ T3 Code reference (external inspiration, not copied implementation): [repository
 | pi-cli | documented SDK/RPC or ACP as supported | distinct from native-pi; no sharing session IDs |
 | claude-code | documented SDK/CLI or compatible ACP bridge | later driver; do not assume non-native model or subscription compatibility |
 
-Recommend codex first, then ACP + OMP because owner's current workflow; if spike fails, record blocked and choose another supported transport with owner approval. Do not require all drivers to ship before L3. Native auth, BYOK, direct or magpie are selectable only per proven combination. For native-pi, MODEL-01 establishes per-session model selection; MODEL-02 verifies actual gateway streaming/tools, model discovery, per-instance credentials, budget/route and restart. For external engines provider adapter may instead supply documented runtime config; cannot promise arbitrary model selection, especially native subscription. magpie remains optional. Separate requested/selected/observed model in telemetry.
+Recommend codex first, then ACP + OMP because owner's current workflow; if spike fails, record blocked and choose another supported transport with owner approval. OpenCode is no longer a first candidate; #63's candidate list is superseded by this section. Do not require all drivers to ship before L3. Native auth, BYOK, direct or magpie are selectable only per proven combination. For native-pi, MODEL-01 establishes per-session model selection; MODEL-02 verifies actual gateway streaming/tools, model discovery, per-instance credentials, budget/route and restart. For external engines provider adapter may instead supply documented runtime config; cannot promise arbitrary model selection, especially native subscription. magpie remains optional. Separate requested/selected/observed model in telemetry.
 
 ## 8. Delivery sequence and issue ownership
 
-All work packages below are proposed sub-milestones of existing issues, not new GitHub issue IDs; sequence is dependency-based, not a date promise. No change to #41, #92, L2 sign-off or #7/#28; design/spikes can proceed independently, external side effects/unattended use cannot bypass gates.
+All work packages below are proposed sub-milestones of existing issues, not new GitHub issue IDs; sequence is dependency-based, not a date promise. No change to #41, #92, L2 sign-off or #7/#28; design/spikes can proceed independently, external side effects/unattended use cannot bypass gates. MH-00 design/spikes may run parallel to v0.2; MH-01+ implementation starts only after v0.2 acceptance or explicit owner approval and does not change the v0.2 mainline.
 
 | Stage | Existing owner | Deliverable / exit criteria |
 | --- | --- | --- |
