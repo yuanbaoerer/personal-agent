@@ -2,7 +2,7 @@
 
 > **当前产品优先级：先让 owner 在飞书使用自己开启的真实 omp 会话。** [配对操作](../README.md#飞书使用本机-omp)独立于下面 #41/#92 的后台试用验收。这里的「编程」指在同一工作区多轮读、改、跑测试、查看执行进度和中止；不是请 Router 生成一段代码供人复制，也不是现阶段建立无人值守开发平台。
 
-> **当前结论（2026-11-23，盘点基线 `d8e546a`）：私有 MVP 尚未通过。** #41 的 M01–M14 和 #92 的 C01–C12 分开签收。[剩余实施队列](#4-剩余实施队列)是下一轮入口；下文带日期的 PR、测试数和 Sprint 记录不作为当前待开发清单。
+> **当前结论（2026-11-24，盘点基线 `970f1b5`）：私有 MVP 尚未通过。** #41 的 M01–M14 和 #92 的 C01–C12 分开签收。[剩余实施队列](#4-剩余实施队列)是下一轮入口；下文带日期的 PR、测试数和 Sprint 记录不作为当前待开发清单。
 
 > **实施与验收分开跟踪**：[对话与计划](28-conversational-planning-mvp.md)的 #89–#91 已合并；[#92](https://github.com/yuanbaoerer/personal-agent/issues/92) 记录真实体验，不因实现合并而关闭。GitHub 项目评估是第一个验证场景；C01–C12 不替代 #41 的 M01–M14 或原安全与发布门槛。
 
@@ -113,9 +113,9 @@ Web Search/Fetch 在 P0 后再做，复用工具执行路径。公开内容、�
 
 | 顺序 / 跟踪 | 已实施与证据边界 | 剩余工作、负责人及完成判据 |
 | --- | --- | --- |
-| 0 · 飞书交互编程（当前优先） | 复用飞书 owner 鉴权、Inbox 去重、Outbox 投递；本地显式配对真实 omp，工具执行和模型选择留在开发机。 | 先用可丢弃工作区验收：同会话读代码 → 修复 → 测试 → 追问，再覆盖单次审批、停止、断连不得重放。owner 在真实飞书按[配对验收](22-mvp-acceptance-runbook.md#10-飞书配对-omp)留证；与下方后台任务分开签收。 |
-| 1 · 采集用量（#7、C12） | [CallBudget](../apps/agent/src/observability/call-budget.ts)持久化请求计数。DeepSeek Flash 已交付[会话 token 采集首包](../scripts/session-usage.ts)：[部分计量回归](../apps/agent/test/session-usage.test.ts)通过；本地 Pi 备份实读 5 条回复、10,383 token，费用未知。 | 维护者在下一次真实运行按[手册 §9](22-mvp-acceptance-runbook.md)核对 session 与运行边界，补齐调用/工具、耗时、纠正与交付记录。此次备份验证不是该 Plan 的成本，不签收 C12，不授权付费计划。 |
-| 2 · 首次完整交付（#123、#92、#65） | [真实记录](acceptance/2026-11-22-conversational-planning-runbook.md)：C01–C03 E3 通过，草稿使用预建父任务；C04/C11 的 A、B 通过、C 失败，23 次只读、零写。#125/#127 修复空会话草稿和步骤时限，仅有 E1。 | owner 部署后从无父任务的私聊起草、修订，确认零派工；再批准一次只读三步计划。最后一步仅获取核验所需回执即报告；同一次运行须有三步核验、最终报告、真实收件和零写入。缺任一项仍为 PARTIAL。 |
+| 0 · 飞书交互编程（当前优先） | 复用飞书 owner 鉴权、Inbox 去重、Outbox 投递；本地显式配对真实 omp，工具执行和模型选择留在开发机。#133 已合并（E1 + 本地 E2）；真实飞书 §10 E3 尚未执行。 | 先用可丢弃工作区验收：同会话读代码 → 修复 → 测试 → 追问，再覆盖单次审批、停止、断连不得重放。owner 在真实飞书按[配对验收](22-mvp-acceptance-runbook.md#10-飞书配对-omp)留证；与下方后台任务分开签收。 |
+| 1 · 采集用量（#7、C12） | [CallBudget](../apps/agent/src/observability/call-budget.ts)持久化请求计数；#130 的 `pa_usage` + `/usage` 已合并（provider/catalog 费用、按模型/来源、Worker 端到端）；#133 的 [session-usage](../scripts/session-usage.ts) 已合并。真实飞书空会话轮次记录 3 次 Router 调用、508,462 tokens、catalog 估算 0.036784；完整计划/Worker 成本未采集。 | 维护者在下一次真实运行按[手册 §9](22-mvp-acceptance-runbook.md)核对 session 与运行边界，补齐调用/工具、耗时、纠正与交付记录；owner 确认 Provider 费用阈值。不因 Router-only 快照签收 C12，不授权付费计划。 |
+| 2 · 首次完整交付（#123、#92、#65） | [真实记录](acceptance/2026-11-22-conversational-planning-runbook.md)：C01–C03 E3 通过；2026-11-24 空会话草稿/修订 E3 PASS（0 Assignment/0 Action）；C04/C11 的 A、B 通过、C 失败，23 次只读、零写，仍 PARTIAL。#125/#127/#128/#129/#130/#133/#134 已合并；实时库无 GitHub 凭据。 | owner 连接 GitHub 读凭据并重启，新建只读三步计划，末步声明 `github`/`github.read`；同一次运行须有三步核验、最终报告、真实收件和零写入。旧 paused C04 不能直接续跑；缺任一项仍为 PARTIAL。 |
 | 3 · 任务核心（#38、#41 M01–M09） | 飞书 ingress/outbox、状态回执、指代与确认、项目记忆、提醒、双 Worker 和 revision 栅栏已有实现。[独立 GitHub 评估](acceptance/2026-11-22-real-project-review.md)核对过结构化 claims，但没有飞书交付。 | owner 按[手册](22-mvp-acceptance-runbook.md)逐项记录真实聊天与状态快照、后台结果、双任务隔离、修订/取消、GitHub 事实来源、记忆确认/隔离及提醒收件。可以复用第 2 项的同一 trace，不能拼接不同运行或批量勾选。 |
 | 4 · 控制与恢复（#91/#92 C05–C10；#41 M11–M13） | [计划执行回归](../apps/agent/test/plan-executor.test.ts)覆盖派工、暂停、重规划与时限；已有备份/恢复工具，空闲服务重启不是运行中 E4。 | 维护者与 owner 在受控实例验证进度、补充/暂停/恢复、有限重规划和跨项目拒绝；关闭客户端验证继续交付，再对运行中步骤受控中断。前后对照 Plan/Step/Task/Outbox，证明无丢输入、无重复副作用或明确进入人工处置。 |
 | 5 · 主动任务与准入（#7/#9/#28、M10/M13/M14、C09/C12） | [现有周期服务](../apps/agent/src/personal/schedule-policies.ts)支持 GitHub 的 `daily` / `weekdays` 草稿、确认与去重；未配置每日模型请求上限时跳过。请求数上限不等于费用硬上限。 | 实施者补每周频率与内部状态日报，覆盖时区、修改重确认、重启去重；owner 明确 Provider 与付费上限后再补对应的硬预算守卫。未知/撤权/超额不得发新请求。守卫通过后才激活并验收真实周期收件；记录完整运行的计量与耗时，最后逐条签收 #41/#92。 |
