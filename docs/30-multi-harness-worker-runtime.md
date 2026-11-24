@@ -1,6 +1,6 @@
 # 30 · Multi-Harness Worker Runtime & Model Gateway Integration
 
-> 2026-11-24 · architecture decision / implementation proposal, not implemented. Baseline: main `000dc30a687862f864e84081ee431fc6fe5b05c8` (#132). 本文是 #63 / MODEL-01–03 的细化契约，不另起 Core、不宣称第三方兼容。与 [02](02-architecture.md)、[12](12-mode-architecture.md)、[13](13-model-routing-gateway.md)、[24](24-github-project-management.md)、[25](25-extension-platform.md) 配套。现有 #41/#92、#65 L2、#7/#28 真实验收及安全门槛保持。
+> 2026-11-24 · architecture decision / implementation proposal, not implemented. Baseline: main `dbae617d4cc8b85ac649a160a527f51e2b03dfb4` (#133). 本文是 #63 / MODEL-01–03 的细化契约，不另起 Core、不宣称第三方兼容。与 [02](02-architecture.md)、[12](12-mode-architecture.md)、[13](13-model-routing-gateway.md)、[24](24-github-project-management.md)、[25](25-extension-platform.md) 配套。现有 #41/#92、#65 L2、#7/#28 真实验收及安全门槛保持。
 
 ## 1. 产品决策
 
