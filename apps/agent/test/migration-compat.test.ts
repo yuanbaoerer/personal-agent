@@ -5,7 +5,8 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 
-import { LATEST_SCHEMA_VERSION } from "../src/storage/schema.ts";
+import { LATEST_SCHEMA_VERSION, migrate } from "../src/storage/schema.ts";
+import { NodeDb } from "../src/storage/db.ts";
 import { openStore } from "../src/storage/node.ts";
 import { ProjectRepository } from "../src/storage/projects.ts";
 import { TaskRepository } from "../src/storage/tasks.ts";
@@ -156,6 +157,36 @@ describe("legacy schema migration", () => {
                   'yuanbaoerer/personal-agent', 'main', 'github:default',
                   '["README.md"]', 'active', 1,
                   '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+        CREATE TABLE pa_schedule_policies (
+          id TEXT PRIMARY KEY,
+          owner_id TEXT NOT NULL,
+          conversation_id TEXT NOT NULL,
+          timezone TEXT NOT NULL,
+          cadence TEXT NOT NULL CHECK (cadence IN ('daily', 'weekdays')),
+          local_time TEXT NOT NULL,
+          repo TEXT NOT NULL,
+          goal TEXT NOT NULL,
+          status TEXT NOT NULL CHECK (
+            status IN ('draft', 'active', 'paused', 'cancelled', 'expired')
+          ),
+          version INTEGER NOT NULL,
+          expires_at TEXT NOT NULL,
+          next_run_at TEXT,
+          last_run_at TEXT,
+          confirmed_at TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        ) STRICT;
+        CREATE INDEX pa_schedule_policies_due_idx
+          ON pa_schedule_policies (status, next_run_at);
+        CREATE TABLE pa_schedule_policy_runs (
+          policy_id TEXT NOT NULL REFERENCES pa_schedule_policies(id),
+          scheduled_at TEXT NOT NULL,
+          task_id TEXT,
+          status TEXT NOT NULL CHECK (status IN ('dispatched', 'skipped')),
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (policy_id, scheduled_at)
+        ) STRICT;
       `);
       legacy.close();
 
@@ -391,6 +422,108 @@ describe("legacy schema migration", () => {
       }
     } finally {
       await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves schedule policies and runs while adding weekly/internal fields", () => {
+    const raw = new DatabaseSync(":memory:");
+    raw.exec("PRAGMA foreign_keys = ON");
+    raw.exec(`
+      CREATE TABLE pa_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;
+      INSERT INTO pa_meta (key, value) VALUES ('schema_version', '28');
+      CREATE TABLE pa_schedule_policies (
+        id TEXT PRIMARY KEY,
+        owner_id TEXT NOT NULL,
+        conversation_id TEXT NOT NULL,
+        timezone TEXT NOT NULL,
+        cadence TEXT NOT NULL CHECK (cadence IN ('daily', 'weekdays')),
+        local_time TEXT NOT NULL,
+        repo TEXT NOT NULL,
+        goal TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (
+          status IN ('draft', 'active', 'paused', 'cancelled', 'expired')
+        ),
+        version INTEGER NOT NULL,
+        expires_at TEXT NOT NULL,
+        next_run_at TEXT,
+        last_run_at TEXT,
+        confirmed_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      ) STRICT;
+      CREATE INDEX pa_schedule_policies_due_idx
+        ON pa_schedule_policies (status, next_run_at);
+      CREATE TABLE pa_schedule_policy_runs (
+        policy_id TEXT NOT NULL REFERENCES pa_schedule_policies(id),
+        scheduled_at TEXT NOT NULL,
+        task_id TEXT,
+        status TEXT NOT NULL CHECK (status IN ('dispatched', 'skipped')),
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (policy_id, scheduled_at)
+      ) STRICT;
+      INSERT INTO pa_schedule_policies
+        (id, owner_id, conversation_id, timezone, cadence, local_time, repo,
+         goal, status, version, expires_at, next_run_at, last_run_at,
+         confirmed_at, created_at, updated_at)
+        VALUES ('legacy-policy', 'owner', 'conversation', 'UTC', 'daily',
+                '09:00', 'owner/repo', 'legacy goal', 'active', 1,
+                '2026-01-31T00:00:00.000Z', '2026-01-01T09:00:00.000Z',
+                NULL, '2026-01-01T00:00:00.000Z',
+                '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+      INSERT INTO pa_schedule_policy_runs
+        (policy_id, scheduled_at, task_id, status, created_at)
+        VALUES ('legacy-policy', '2026-01-01T09:00:00.000Z', 'legacy-task',
+                'dispatched', '2026-01-01T09:00:00.000Z');
+    `);
+    const db = new NodeDb(raw);
+    migrate(db);
+    try {
+      const policy = db.all<{ kind: string; weekday: number | null; repo: string }>(
+        "SELECT kind, weekday, repo FROM pa_schedule_policies WHERE id = 'legacy-policy'",
+      )[0];
+      assert.equal(policy?.kind, "github");
+      assert.equal(policy?.weekday, null);
+      assert.equal(policy?.repo, "owner/repo");
+      const run = db.all<{ task_id: string; status: string }>(
+        "SELECT task_id, status FROM pa_schedule_policy_runs WHERE policy_id = 'legacy-policy'",
+      )[0];
+      assert.equal(run?.task_id, "legacy-task");
+      assert.equal(run?.status, "dispatched");
+
+      db.run(
+        `INSERT INTO pa_schedule_policies
+          (id, owner_id, conversation_id, kind, timezone, cadence, weekday,
+           local_time, repo, goal, status, version, expires_at, created_at,
+           updated_at)
+         VALUES ('new-policy', 'owner', 'conversation', 'internal', 'UTC',
+                 'weekly', 1, '09:00', '', 'internal goal', 'draft', 1,
+                 '2026-01-31T00:00:00.000Z', '2026-01-01T00:00:00.000Z',
+                 '2026-01-01T00:00:00.000Z')`,
+      );
+      assert.equal(
+        db.all<{ count: number }>(
+          "SELECT COUNT(*) AS count FROM pa_schedule_policies",
+        )[0]?.count,
+        2,
+      );
+      assert.equal(
+        db.all<{ name: string }>(
+          "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'pa_schedule_policies_due_idx'",
+        )[0]?.name,
+        "pa_schedule_policies_due_idx",
+      );
+      assert.throws(
+        () =>
+          db.run(
+            `INSERT INTO pa_schedule_policy_runs
+              (policy_id, scheduled_at, task_id, status, created_at)
+             VALUES ('missing-policy', '2026-01-02T09:00:00.000Z', NULL,
+                     'dispatched', '2026-01-02T09:00:00.000Z')`,
+          ),
+        /FOREIGN KEY/,
+      );
+    } finally {
+      raw.close();
     }
   });
 });

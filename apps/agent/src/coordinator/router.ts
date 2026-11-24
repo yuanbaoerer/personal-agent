@@ -10,6 +10,8 @@ import type {
   RouterDecision,
   SchedulePolicyRecord,
   RouterInput,
+  ScheduleCadence,
+  ScheduleKind,
   ScheduleRecord,
   StateQuery,
   TaskRecord,
@@ -543,12 +545,61 @@ export function normalizeStateCriteria(
 }
 
 export interface ParsedScheduleSpec {
-  repo: string;
+  kind: ScheduleKind;
+  repo?: string;
   localTime: string;
-  cadence: "daily" | "weekdays";
+  cadence: ScheduleCadence;
+  weekday?: number;
   goal: string;
   timezone?: string;
   until?: string;
+}
+
+const WEEKDAY_NAMES: Record<string, number> = {
+  sun: 0,
+  sunday: 0,
+  "日": 0,
+  "周日": 0,
+  "星期日": 0,
+  mon: 1,
+  monday: 1,
+  "一": 1,
+  "周一": 1,
+  "星期一": 1,
+  tue: 2,
+  tuesday: 2,
+  "二": 2,
+  "周二": 2,
+  "星期二": 2,
+  wed: 3,
+  wednesday: 3,
+  "三": 3,
+  "周三": 3,
+  "星期三": 3,
+  thu: 4,
+  thursday: 4,
+  "四": 4,
+  "周四": 4,
+  "星期四": 4,
+  fri: 5,
+  friday: 5,
+  "五": 5,
+  "周五": 5,
+  "星期五": 5,
+  sat: 6,
+  saturday: 6,
+  "六": 6,
+  "周六": 6,
+  "星期六": 6,
+};
+
+/** 0 = Sunday … 6 = Saturday; CLI accepts names or 1=Monday … 7=Sunday. */
+export function parseWeekday(value: string): number | undefined {
+  const normalized = value.trim().toLowerCase();
+  if (/^[1-7]$/.test(normalized)) {
+    return Number(normalized) % 7;
+  }
+  return WEEKDAY_NAMES[normalized];
 }
 
 export function parseScheduleSpec(
@@ -559,36 +610,65 @@ export function parseScheduleSpec(
     return {
       ok: false,
       reason:
-        "格式：/schedule new <owner/name> <HH:MM> <daily|weekdays> <内容> [--until=YYYY-MM-DD] [--tz=Area/City]",
+        "格式：/schedule new <owner/name|internal> <HH:MM> <daily|weekdays|weekly> <内容> [--dow=mon] [--until=YYYY-MM-DD] [--tz=Area/City]",
     };
   }
-  const [repo, localTime, cadenceRaw] = tokens as [string, string, string];
+  const targetRaw = tokens[0] as string;
+  const kind: ScheduleKind = targetRaw.toLowerCase() === "internal" ? "internal" : "github";
+  const repo = kind === "github" ? targetRaw : undefined;
+  const [localTime, cadenceRaw] = tokens.slice(1, 3) as [string, string];
   const cadence =
     cadenceRaw === "weekdays" || cadenceRaw === "工作日"
       ? "weekdays"
       : cadenceRaw === "daily" || cadenceRaw === "每天"
         ? "daily"
-        : undefined;
+        : cadenceRaw === "weekly" || cadenceRaw === "每周"
+          ? "weekly"
+          : undefined;
   if (cadence === undefined) {
-    return { ok: false, reason: "频率应为 daily（每天）或 weekdays（工作日）。" };
+    return { ok: false, reason: "频率应为 daily（每天）、weekdays（工作日）或 weekly（每周）。" };
   }
   let timezone: string | undefined;
   let until: string | undefined;
+  let weekday: number | undefined;
   const goalTokens: string[] = [];
   for (const token of tokens.slice(3)) {
     if (token.startsWith("--until=")) {
       until = token.slice("--until=".length);
     } else if (token.startsWith("--tz=")) {
       timezone = token.slice("--tz=".length);
+    } else if (token.startsWith("--dow=")) {
+      weekday = parseWeekday(token.slice("--dow=".length));
+      if (weekday === undefined) {
+        return { ok: false, reason: "--dow 应为 mon…sun 或 1（周一）…7（周日）。" };
+      }
     } else {
       goalTokens.push(token);
     }
+  }
+  if (cadence === "weekly" && weekday === undefined) {
+    return { ok: false, reason: "weekly 计划需要 --dow=mon…sun。" };
+  }
+  if (cadence !== "weekly" && weekday !== undefined) {
+    return { ok: false, reason: "只有 weekly 计划需要 --dow。" };
   }
   const goal = goalTokens.join(" ").trim();
   if (goal.length === 0) {
     return { ok: false, reason: "计划内容不能为空。" };
   }
-  return { ok: true, value: { repo, localTime, cadence, goal, timezone, until } };
+  return {
+    ok: true,
+    value: {
+      kind,
+      ...(repo === undefined ? {} : { repo }),
+      localTime,
+      cadence,
+      ...(weekday === undefined ? {} : { weekday }),
+      goal,
+      timezone,
+      until,
+    },
+  };
 }
 
 /**
@@ -1840,7 +1920,7 @@ export class Router implements InboundHandler {
           purpose: "status",
           text:
             policies.length === 0
-              ? "当前没有周期计划。创建：/schedule new <owner/name> <HH:MM> <daily|weekdays> <内容>"
+              ? "当前没有周期计划。创建：/schedule new <owner/name|internal> <HH:MM> <daily|weekdays|weekly> <内容> [--dow=mon]"
               : ["周期计划：", ...policies.map((policy) => formatSchedulePolicy(policy))].join("\n"),
         },
       ];
@@ -1862,7 +1942,7 @@ export class Router implements InboundHandler {
             "已创建计划草稿（未激活，不会触发任务）：",
             formatSchedulePolicy(result.policy, true),
             `收件人：当前私聊会话（${conversationId}）`,
-            "确认后才会按上述频率、仓库与内容创建任务，并回传到该会话。",
+            "确认后才会按上述频率、范围与内容创建任务，并回传到该会话。",
             `确认：/schedule confirm ${result.policy.id}`,
             `取消：/schedule cancel ${result.policy.id}`,
           ].join("\n"),

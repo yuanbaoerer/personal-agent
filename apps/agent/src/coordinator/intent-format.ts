@@ -22,15 +22,33 @@ export function describeReminderCancelFailure(reason: string | undefined): strin
   return reason ?? "未知原因";
 }
 
+const WEEKDAY_LABELS = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+
+/** Human-readable target: repository or owner-level internal state. */
+export function scheduleTargetLabel(policy: SchedulePolicyRecord): string {
+  return policy.kind === "internal" ? "内部状态" : policy.repo;
+}
+
+export function scheduleCadenceLabel(policy: SchedulePolicyRecord): string {
+  if (policy.cadence === "weekdays") {
+    return "工作日";
+  }
+  if (policy.cadence === "weekly") {
+    const weekday = policy.weekday ?? 1;
+    return `每周${WEEKDAY_LABELS[weekday] ?? ""}`;
+  }
+  return "每天";
+}
+
 export function formatSchedulePolicy(
   policy: SchedulePolicyRecord,
   full = false,
 ): string {
   const id = full ? policy.id : policy.id.slice(0, 8);
-  const cadence = policy.cadence === "weekdays" ? "工作日" : "每天";
+  const cadence = scheduleCadenceLabel(policy);
   const next = policy.nextRunAt === undefined ? "未排期" : policy.nextRunAt;
   return [
-    `- ${id} [${policy.status}] ${cadence} ${policy.localTime} ${policy.timezone} ${policy.repo}`,
+    `- ${id} [${policy.status}] ${cadence} ${policy.localTime} ${policy.timezone} ${scheduleTargetLabel(policy)}`,
     `  下次 ${next}，截止 ${policy.expiresAt}，版本 ${policy.version}`,
     `  内容：${policy.goal}`,
   ].join("\n");

@@ -4,11 +4,11 @@ Personal Agent 是单 owner 自托管助手。默认 Node 服务通过飞书私�
 
 ## 当前实现
 
-以下核对到 [PR #134 合并后的 main](https://github.com/yuanbaoerer/personal-agent/commit/970f1b5f0067ccf3cee2385dd093bc12877dbb12)。[当前 MVP 实施队列](docs/21-mvp-functional-ready.md#4-剩余实施队列)列出已交付项、负责人和下一项验收。**E1 是确定性测试，E3 是指定场景的真实使用，E4 是故障恢复证据**；一个场景通过，不替另一个场景签收。
+以下核对到 2026-11-25 的 schedule 扩展（E1）。[当前 MVP 实施队列](docs/21-mvp-functional-ready.md#4-剩余实施队列)列出已交付项、负责人和下一项验收。**E1 是确定性测试，E3 是指定场景的真实使用，E4 是故障恢复证据**；一个场景通过，不替另一个场景签收。
 
 | 工作线 | 已合并或已验证 | 未通过的门槛 / 跟踪 |
 | --- | --- | --- |
-| 飞书与任务核心 | Node 长连接、owner 绑定、Inbox 去重、Outbox 投递、Task revision/输入序号、Worker 租约与审批。显式状态查询、记忆、提醒、周期任务和预算守卫已接入。 | [#41](https://github.com/yuanbaoerer/personal-agent/issues/41) 的 M01–M14 单独验收；[状态问答 #38](https://github.com/yuanbaoerer/personal-agent/issues/38)、真实并发与常驻恢复不能从聊天成功推断。 |
+| 飞书与任务核心 | Node 长连接、owner 绑定、Inbox 去重、Outbox 投递、Task revision/输入序号、Worker 租约与审批。显式状态查询、记忆、提醒、确认式周期计划（GitHub 只读摘要与内部状态日报，支持每天/工作日/每周）和预算守卫已接入（E1）。 | [#41](https://github.com/yuanbaoerer/personal-agent/issues/41) 的 M01–M14 单独验收；[状态问答 #38](https://github.com/yuanbaoerer/personal-agent/issues/38)、真实并发与常驻恢复不能从聊天成功推断；周期计划的真实飞书收件与费用证据仍待 owner 运行。 |
 | 多轮对话与计划 | #89–#91、空会话草稿 [#123](https://github.com/yuanbaoerer/personal-agent/issues/123) 与步骤时限 [#126](https://github.com/yuanbaoerer/personal-agent/issues/126) 已合并（E1）；已有对话窗口、持久 Plan/Steps、修订差异、子任务执行、有界重规划和绝对派工截止时间。[真实飞书记录](docs/acceptance/2026-11-22-conversational-planning-runbook.md)：C01 六轮聊天通过；C02/C03 早先以预建父任务通过，2026-11-24 又以空会话路径通过（[E3 记录](docs/acceptance/2026-11-24-empty-conversation-draft-e3.md)：3 条真实入站，0 Assignment、0 Action）。 | [#92](https://github.com/yuanbaoerer/personal-agent/issues/92)：C04/C11 仅部分通过，前两步核验成功，第三步未交付最终报告。C04 当前缺 GitHub 凭据；C05–C10、C12 完整运行成本基线与运行中重启 E4 仍未完成。 |
 | GitHub 项目评估与 Issue 写入 | 已绑定项目可读固定 SHA 源码、PR 和 CI；[真实模型只读评估](docs/acceptance/2026-11-22-real-project-review.md)核对了结构化声明并生成待批草稿，未独立核实叙述结论。独立写凭据、逐次审批的 Issue 创建/更新/评论已合并（E1）。 | [#65](https://github.com/yuanbaoerer/personal-agent/issues/65) 还需飞书收到完整评估；[#61](https://github.com/yuanbaoerer/personal-agent/issues/61) 的真实写入只在隔离仓库验收。下方交互式 omp 配对不负责无人值守派工或创建 Draft PR。 |
 | 飞书交互编程 / Multi-Harness | [#133](https://github.com/yuanbaoerer/personal-agent/pull/133) 已合并：owner 通过私有 Unix socket 配对主动打开的 omp，支持读改跑测、一次一审批、进度/取消；配对轮不进入普通 Router。[#134](https://github.com/yuanbaoerer/personal-agent/pull/134) 是 Multi-Harness / Model Gateway 目标设计，未实现。 | [§10 验收](docs/22-mvp-acceptance-runbook.md#10-飞书配对-omp) 的真实飞书 E3 未做；编码路径是本地 E2，不是无人值守 Coding Agent / Draft PR。 |
@@ -190,6 +190,14 @@ curl -fsS http://127.0.0.1:8787/healthz
 - `confirm/resume` 立即 `wake()`，由 maintenance 重新计算真正最早到期时间；避免把共享 maintenance job 推到更晚而压住其他 effect/reminder/计划。Node 继续 1s 轮询。
 - `npm test`：当时 211 个确定性测试通过。
 - 证据边界：E1；真实飞书 G3、真实 GitHub 计划触发、Worker alarm 实际唤醒与生产观察仍 pending。
+
+**2026-11-25 验证（周期计划 weekly + 内部状态日报，PA-08 部分，E1）：**
+
+- `/schedule new <owner/name|internal> <HH:MM> <daily|weekdays|weekly> <内容> [--dow=mon] [--until=YYYY-MM-DD] [--tz=Area/City]`；`weekly` 必须指定 `--dow`（英文名或 1=周一 … 7=周日）。
+- `internal` 计划不绑定仓库，触发时创建 `state.summary` + `state` resource 的任务，使用 state-read verifier 核对 `state_snapshot`；计划暂停、编辑或取消后，尚未执行的状态读取在执行前被拒绝。
+- schema 29 重建 schedule policy/run 表以支持 `kind`、`weekly` 和 `weekday`；旧 GitHub 计划与 run 历史保留，回滚前的迁移测试覆盖数据保留。
+- `npm test`：672 个确定性测试通过。
+- 证据边界：E1；真实飞书周期收件、真实模型费用、运行耗时和 owner 硬预算仍未验证，PA-08 保持 OPEN。
 
 **2026-11-18 验证（TaskCompletionVerifier / needs_review，PA-09 部分）：**
 

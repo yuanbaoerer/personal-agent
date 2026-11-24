@@ -173,7 +173,7 @@ PA-07 的只读 GitHub 连接器已落地 E1，并新增可撤销的只读预授
 
 PA-09 的 TaskCompletionVerifier 已落地 E1：结构校验后按任务类型注册 verifier；`github-read` 必须有 succeeded Action 回执、repo/来源 URL 匹配，否则 needs_review；`needs_review` 不再派工，只能 `/ack` 转 succeeded 并审计；`/status` 与 `/usage` 显示待核对数。真实 G1/G3 外部判据和人审质量仍 pending，PA-09 保持 OPEN。
 
-PA-08 的 SchedulePolicy 已落地 E1：`/schedule new` 只创建草稿，确认后激活；edit 退回草稿并要求重新确认；每次 occurrence 由确定性 sourceKey + run 表去重；计划任务绑定精确 repo/version 的只读授权，暂停/修改/取消/过期或白名单变化时拒绝且执行前重核；Node 轮询、DO 用立即 `wake()` 触发 maintenance 重算。预算读取/门禁已在前一节落地。真实飞书 G3、真实 GitHub 调度与 DO alarm 生产观察仍 pending；PA-08 保持 OPEN。PA-10 的项目范围隔离/Worker 记忆注入已完成 E1；PA-11 的固定 40 场景目录与确定性 JSON/Markdown 报告已落地，37/40 执行通过、3 条真实 pending，真实模型 10×3/G1–G3/7 天自用需主人决策。详见 [15 · 待决策](15-decisions-pending.md)。
+PA-08 的 SchedulePolicy 已落地 E1：`/schedule new` 只创建草稿，确认后激活；edit 退回草稿并要求重新确认；支持 GitHub 只读摘要与 owner 内部状态日报，cadence 覆盖 daily/weekdays/weekly（weekly 需 weekday）；每次 occurrence 由确定性 sourceKey + run 表去重；GitHub 任务绑定精确 repo/version，内部状态读取绑定 policy/version，暂停/修改/取消/过期、白名单变化或读取失权时拒绝且执行前重核；Node 轮询、DO 用立即 `wake()` 触发 maintenance 重算。预算读取/门禁已在前一节落地。真实飞书 G3、真实 GitHub 调度、真实内部状态日报收件与 DO alarm 生产观察仍 pending；PA-08 保持 OPEN。PA-10 的项目范围隔离/Worker 记忆注入已完成 E1；PA-11 的固定 40 场景目录与确定性 JSON/Markdown 报告已落地，37/40 执行通过、3 条真实 pending，真实模型 10×3/G1–G3/7 天自用需主人决策。详见 [15 · 待决策](15-decisions-pending.md)。
 
 PA-14 的数据资产路径已推进到 E1：manifest v2 元数据、双库备份/校验/空目录恢复、agent JSON 导出（不含 Pi/secret）、删除边界文档；加密/保留期、Pi 跨 SDK 修复、写入中 SIGKILL、真实 PITR 仍 pending，PA-14 保持 OPEN。
 

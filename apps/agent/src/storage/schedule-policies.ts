@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import type {
   ScheduleCadence,
+  ScheduleKind,
   SchedulePolicyRecord,
   SchedulePolicyRunRecord,
   SchedulePolicyStatus,
@@ -13,8 +14,10 @@ interface PolicyRow {
   id: string;
   owner_id: string;
   conversation_id: string;
+  kind: ScheduleKind;
   timezone: string;
   cadence: ScheduleCadence;
+  weekday: number | null;
   local_time: string;
   repo: string;
   goal: string;
@@ -41,8 +44,10 @@ function mapPolicy(row: PolicyRow): SchedulePolicyRecord {
     id: row.id,
     ownerId: row.owner_id,
     conversationId: row.conversation_id,
+    kind: row.kind,
     timezone: row.timezone,
     cadence: row.cadence,
+    ...(row.weekday === null ? {} : { weekday: Number(row.weekday) }),
     localTime: row.local_time,
     repo: row.repo,
     goal: row.goal,
@@ -70,8 +75,10 @@ function mapRun(row: RunRow): SchedulePolicyRunRecord {
 export interface NewSchedulePolicyInput {
   ownerId: string;
   conversationId: string;
+  kind: ScheduleKind;
   timezone: string;
   cadence: ScheduleCadence;
+  weekday?: number;
   localTime: string;
   repo: string;
   goal: string;
@@ -80,8 +87,10 @@ export interface NewSchedulePolicyInput {
 }
 
 export interface SchedulePolicyChanges {
+  kind: ScheduleKind;
   timezone: string;
   cadence: ScheduleCadence;
+  weekday?: number;
   localTime: string;
   repo: string;
   goal: string;
@@ -98,16 +107,18 @@ export class SchedulePolicyRepository {
   insertDraft(input: NewSchedulePolicyInput): SchedulePolicyRecord {
     const row = this.#db.all<PolicyRow>(
       `INSERT INTO pa_schedule_policies
-        (id, owner_id, conversation_id, timezone, cadence, local_time, repo, goal,
-         status, version, expires_at, next_run_at, last_run_at, confirmed_at,
-         created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'draft', 1, ?, NULL, NULL, NULL, ?, ?)
+        (id, owner_id, conversation_id, kind, timezone, cadence, weekday,
+         local_time, repo, goal, status, version, expires_at, next_run_at,
+         last_run_at, confirmed_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', 1, ?, NULL, NULL, NULL, ?, ?)
        RETURNING *`,
       randomUUID(),
       input.ownerId,
       input.conversationId,
+      input.kind,
       input.timezone,
       input.cadence,
+      input.weekday ?? null,
       input.localTime,
       input.repo,
       input.goal,
@@ -197,13 +208,16 @@ export class SchedulePolicyRepository {
   ): SchedulePolicyRecord | undefined {
     const row = this.#db.all<PolicyRow>(
       `UPDATE pa_schedule_policies
-       SET timezone = ?, cadence = ?, local_time = ?, repo = ?, goal = ?,
-           expires_at = ?, status = 'draft', version = version + 1,
-           next_run_at = NULL, confirmed_at = NULL, updated_at = ?
+       SET kind = ?, timezone = ?, cadence = ?, weekday = ?, local_time = ?,
+           repo = ?, goal = ?, expires_at = ?, status = 'draft',
+           version = version + 1, next_run_at = NULL, confirmed_at = NULL,
+           updated_at = ?
        WHERE id = ? AND owner_id = ? AND status IN ('draft', 'active', 'paused')
        RETURNING *`,
+      changes.kind,
       changes.timezone,
       changes.cadence,
+      changes.weekday ?? null,
       changes.localTime,
       changes.repo,
       changes.goal,

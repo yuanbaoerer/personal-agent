@@ -322,10 +322,15 @@ export class PersonalIntentHandler {
       return reply("当前运行未启用周期计划。", "failure");
     }
     const spec = decision.schedule;
+    const kind = spec?.kind ?? "github";
     const missing = [
-      spec?.repo === undefined ? "仓库（owner/name）" : undefined,
+      kind === "github" && spec?.repo === undefined ? "仓库（owner/name）" : undefined,
       spec?.localTime === undefined ? "本地时间（HH:MM）" : undefined,
-      spec?.cadence === undefined ? "频率（每天/工作日）" : undefined,
+      spec?.cadence === undefined
+        ? "频率（每天/工作日/每周）"
+        : spec.cadence === "weekly" && spec.weekday === undefined
+          ? "每周的星期（0=周日 … 6=周六）"
+          : undefined,
       spec?.goal === undefined ? "汇报内容" : undefined,
     ].filter((item): item is string => item !== undefined);
     if (missing.length > 0) {
@@ -336,9 +341,11 @@ export class PersonalIntentHandler {
     }
     try {
       const result = service.createDraft(context.ownerId, context.conversationId, {
-        repo: spec?.repo as string,
+        kind,
+        ...(kind === "github" ? { repo: spec?.repo as string } : {}),
         localTime: spec?.localTime as string,
-        cadence: spec?.cadence as "daily" | "weekdays",
+        cadence: spec?.cadence as "daily" | "weekdays" | "weekly",
+        ...(spec?.weekday === undefined ? {} : { weekday: spec.weekday }),
         goal: spec?.goal as string,
         timezone: spec?.timezone,
         until: spec?.until,
@@ -354,7 +361,7 @@ export class PersonalIntentHandler {
           "已创建计划草稿（未激活，不会触发任务）：",
           formatSchedulePolicy(result.policy, true),
           `收件人：当前会话（${receiver}）`,
-          "确认后才会按上述频率、仓库与内容创建任务并回传。",
+          "确认后才会按上述频率、范围与内容创建任务并回传。",
           `确认：/schedule confirm ${result.policy.id}`,
           `或直接回复“确认计划 ${result.policy.id.slice(0, 8)}”。`,
           `取消：/schedule cancel ${result.policy.id}`,

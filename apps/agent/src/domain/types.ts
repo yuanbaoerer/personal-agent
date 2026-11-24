@@ -688,7 +688,13 @@ export type SchedulePolicyStatus =
   | "cancelled"
   | "expired";
 
-export type ScheduleCadence = "daily" | "weekdays";
+export type ScheduleCadence = "daily" | "weekdays" | "weekly";
+
+/**
+ * GitHub read-only digest or an owner-scoped internal status report.
+ * Internal policies have no repo and use the state-read verifier.
+ */
+export type ScheduleKind = "github" | "internal";
 
 /**
  * An explicitly confirmed recurring task. The owner authorizes the exact
@@ -699,10 +705,14 @@ export interface SchedulePolicyRecord {
   id: string;
   ownerId: string;
   conversationId: string;
+  kind: ScheduleKind;
   timezone: string;
   cadence: ScheduleCadence;
+  /** 0 = Sunday … 6 = Saturday; required only for weekly policies. */
+  weekday?: number;
   /** Local wall-clock time in HH:MM. */
   localTime: string;
+  /** Empty for internal status reports. */
   repo: string;
   goal: string;
   status: SchedulePolicyStatus;
@@ -791,9 +801,12 @@ export interface StateQuery {
 }
 
 export interface ScheduleIntent {
+  kind?: ScheduleKind;
   repo?: string;
   localTime?: string;
-  cadence?: "daily" | "weekdays";
+  cadence?: ScheduleCadence;
+  /** 0 = Sunday … 6 = Saturday; required for weekly drafts. */
+  weekday?: number;
   goal?: string;
   timezone?: string;
   until?: string;

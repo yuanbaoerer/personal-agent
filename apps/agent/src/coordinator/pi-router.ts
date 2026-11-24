@@ -217,7 +217,7 @@ export function routerPrompt(
     '- {"action":"forget_memory","key":"...","project":"optional-project"}',
     '- {"action":"remind","dueAt":"ISO-8601","timezone":"Asia/Shanghai","text":"..."}',
     '- {"action":"cancel_reminder","reminderRef":"exact id or natural reference"}',
-    '- {"action":"draft_schedule","schedule":{"repo":"owner/name","localTime":"HH:MM","cadence":"daily|weekdays","goal":"...","timezone":"Area/City","until":"YYYY-MM-DD"}}',
+    '- {"action":"draft_schedule","schedule":{"kind":"github|internal","repo":"owner/name (github only)","localTime":"HH:MM","cadence":"daily|weekdays|weekly","goal":"...","timezone":"Area/City","until":"YYYY-MM-DD"}}',
     '- {"action":"confirm_schedule","scheduleId":"exact id or unique prefix","scheduleRef":"optional natural reference"}',
     '- {"action":"cancel_schedule","scheduleId":"exact id or unique prefix","scheduleRef":"optional natural reference"}',
     "Rules:",
@@ -242,7 +242,7 @@ export function routerPrompt(
     "- Use save_memory only when the owner explicitly asks you to remember something; use forget_memory only when the owner explicitly asks to forget it. Both require confirmation.",
     "- Set save_memory/forget_memory/task mandate project only when the owner explicitly names a project (or uses --project=name); otherwise omit it. Project memories must not be mixed.",
     "- Use remind only when the owner explicitly asks for a reminder; use cancel_reminder only when the owner explicitly asks to cancel one.",
-    "- For draft_schedule, use the existing GitHub schedule policy: repo, local wall-clock time, daily/weekdays cadence, goal, timezone and optional until. If any required field is missing or ambiguous, reply and ask instead of guessing. A draft never activates until the owner confirms.",
+    "- For draft_schedule, use kind=github with an exact repo for a read-only GitHub digest, or kind=internal for an owner-scoped status report (no repo). Use local wall-clock time, daily/weekdays/weekly cadence, goal, timezone and optional until. weekly requires weekday 0=Sunday … 6=Saturday. If any required field is missing or ambiguous, reply and ask instead of guessing. A draft never activates until the owner confirms.",
     ...(githubEnabled
       ? [
           "- For read-only GitHub requests, set mandate.resources to include \"github\" and mandate.tools to [\"github.read\"]; do not promise write access.",
@@ -496,14 +496,30 @@ function parseScheduleIntent(value: unknown): ScheduleIntent | undefined {
   }
   const record = value as Record<string, unknown>;
   const intent: ScheduleIntent = {};
+  if (record.kind === "internal" || record.kind === "github") {
+    intent.kind = record.kind;
+  }
   if (typeof record.repo === "string" && record.repo.trim().length > 0) {
     intent.repo = record.repo.trim();
   }
   if (typeof record.localTime === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(record.localTime)) {
     intent.localTime = record.localTime;
   }
-  if (record.cadence === "daily" || record.cadence === "weekdays") {
+  if (
+    record.cadence === "daily" ||
+    record.cadence === "weekdays" ||
+    record.cadence === "weekly"
+  ) {
     intent.cadence = record.cadence;
+  }
+  if (
+    intent.cadence === "weekly" &&
+    typeof record.weekday === "number" &&
+    Number.isInteger(record.weekday) &&
+    record.weekday >= 0 &&
+    record.weekday <= 6
+  ) {
+    intent.weekday = record.weekday;
   }
   if (typeof record.goal === "string" && record.goal.trim().length > 0) {
     intent.goal = record.goal.trim();

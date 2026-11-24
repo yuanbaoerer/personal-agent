@@ -497,6 +497,26 @@ export class ActionService {
         schedulePolicyVersion?: number;
       }
     | undefined {
+    if (task.schedulePolicyId !== undefined && this.#isInternalStateRead(task, tool)) {
+      if (this.#schedulePolicies === undefined) {
+        return undefined;
+      }
+      const policy = this.#schedulePolicies.runAuthorization(
+        task.schedulePolicyId,
+        task.ownerId,
+        undefined,
+        task.id,
+      );
+      if (policy !== undefined && policy.kind === "internal") {
+        return {
+          schedulePolicyId: policy.id,
+          schedulePolicyVersion: policy.version,
+        };
+      }
+      // A paused/edited/expired plan must not fall through to a different
+      // authorization path or send an approval card for out-of-scope work.
+      return undefined;
+    }
     if (
       tool.name !== "github.read" ||
       tool.readOnly !== true ||
@@ -512,6 +532,8 @@ export class ActionService {
         task.schedulePolicyId,
         task.ownerId,
         args.repo,
+        undefined,
+        task.id,
       );
       if (policy !== undefined) {
         return {
@@ -1092,6 +1114,38 @@ export class ActionService {
       );
   }
 
+  /** Recheck the exact schedule policy version at execution time. */
+  #scheduleAuthorizationValid(action: ActionRecord): boolean {
+    if (action.schedulePolicyId === undefined) {
+      return true;
+    }
+    if (action.schedulePolicyVersion === undefined) {
+      return false;
+    }
+    if (isStateToolName(action.tool)) {
+      return (
+        this.#schedulePolicies?.runAuthorization(
+          action.schedulePolicyId,
+          action.ownerId,
+          action.schedulePolicyVersion,
+          action.taskId,
+        )?.kind === "internal"
+      );
+    }
+    if (typeof action.args.repo !== "string") {
+      return false;
+    }
+    return (
+      this.#schedulePolicies?.readAuthorization(
+        action.schedulePolicyId,
+        action.ownerId,
+        action.args.repo,
+        action.schedulePolicyVersion,
+        action.taskId,
+      ) !== undefined
+    );
+  }
+
   /**
    * Re-read the task at every authorization boundary. Revision, ownership and
    * mandate are cheap to check and stop an approved action from outliving the
@@ -1152,19 +1206,8 @@ export class ActionService {
         return "preauthorization_revoked";
       }
     }
-    if (action.schedulePolicyId !== undefined) {
-      if (
-        action.schedulePolicyVersion === undefined ||
-        typeof action.args.repo !== "string" ||
-        this.#schedulePolicies?.readAuthorization(
-          action.schedulePolicyId,
-          action.ownerId,
-          action.args.repo,
-          action.schedulePolicyVersion,
-        ) === undefined
-      ) {
-        return "schedule_policy_inactive";
-      }
+    if (action.schedulePolicyId !== undefined && !this.#scheduleAuthorizationValid(action)) {
+      return "schedule_policy_inactive";
     }
     return undefined;
   }
@@ -1271,19 +1314,8 @@ export class ActionService {
     ) {
       return "preauthorization_revoked";
     }
-    if (action.schedulePolicyId !== undefined) {
-      if (
-        action.schedulePolicyVersion === undefined ||
-        typeof action.args.repo !== "string" ||
-        this.#schedulePolicies?.readAuthorization(
-          action.schedulePolicyId,
-          action.ownerId,
-          action.args.repo,
-          action.schedulePolicyVersion,
-        ) === undefined
-      ) {
-        return "schedule_policy_inactive";
-      }
+    if (action.schedulePolicyId !== undefined && !this.#scheduleAuthorizationValid(action)) {
+      return "schedule_policy_inactive";
     }
     return undefined;
   }
@@ -1313,7 +1345,22 @@ export class ActionService {
 
     let description: string;
     let authorization: "preauthorization" | "schedule_policy" | "internal_state";
-    if (this.#isInternalStateRead(task, tool)) {
+    if (action.schedulePolicyId !== undefined && this.#isInternalStateRead(task, tool)) {
+      const policy =
+        action.schedulePolicyVersion !== undefined
+          ? this.#schedulePolicies?.runAuthorization(
+              action.schedulePolicyId,
+              action.ownerId,
+              action.schedulePolicyVersion,
+              action.taskId,
+            )
+          : undefined;
+      if (policy === undefined || policy.kind !== "internal") {
+        return false;
+      }
+      authorization = "schedule_policy";
+      description = `已按周期计划授权读取内部状态（${action.tool}）。`;
+    } else if (this.#isInternalStateRead(task, tool)) {
       authorization = "internal_state";
       description = `已按任务授权读取内部状态（${action.tool}）。`;
     } else if (action.tool === "github.read" && typeof action.args.repo === "string") {
@@ -1325,6 +1372,7 @@ export class ActionService {
             action.ownerId,
             action.args.repo,
             action.schedulePolicyVersion,
+            action.taskId,
           ) === undefined
         ) {
           return false;

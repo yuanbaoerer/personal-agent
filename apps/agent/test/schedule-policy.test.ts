@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it } from "node:test";
 
+import { parseStateEvidence } from "../src/actions/state.ts";
 import { endOfLocalDay, nextScheduledAt } from "../src/personal/schedule-policies.ts";
+import { openStore } from "../src/storage/node.ts";
 import { createServices, sendText, type TestServices } from "./services.ts";
 
 const START = "2026-01-01T00:00:00.000Z";
@@ -335,5 +340,340 @@ describe("unattended budget gate", () => {
       .listAuditAfter(0, 100)
       .filter((item) => item.event === "schedule_policy.skipped");
     assert.equal(events.length, 1);
+  });
+});
+
+describe("schedule policy restart dedupe", () => {
+  it("does not create a second task after reopening the same database", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pa-schedule-restart-"));
+    const path = join(directory, "agent.sqlite");
+    const time = clock();
+    const github = githubFixture();
+    try {
+      const firstStore = openStore(path);
+      try {
+        const services = createServices({
+          store: firstStore,
+          now: time.now,
+          github: {
+            token: "secret",
+            allowedRepos: ["owner/repo"],
+            fetch: github.fetch,
+          },
+        });
+        createConfirmed(services);
+        time.set("2026-01-01T09:00:00.000Z");
+        assert.equal(services.schedulePolicy.fireDue(), 1);
+        assert.equal(services.tasks.listByOwner(services.owner.id).length, 1);
+      } finally {
+        firstStore.close();
+      }
+
+      const secondStore = openStore(path);
+      try {
+        const services = createServices({
+          store: secondStore,
+          now: time.now,
+          github: {
+            token: "secret",
+            allowedRepos: ["owner/repo"],
+            fetch: github.fetch,
+          },
+        });
+        assert.equal(services.schedulePolicy.fireDue(), 0);
+        assert.equal(services.tasks.listByOwner(services.owner.id).length, 1);
+        const policies = services.schedulePolicies.listByOwner(services.owner.id);
+        assert.equal(policies.length, 1);
+        assert.equal(services.schedulePolicies.listRuns(policies[0]!.id).length, 1);
+      } finally {
+        secondStore.close();
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("weekly schedule policies", () => {
+  it("computes the next matching weekday in the policy timezone", () => {
+    assert.equal(
+      nextScheduledAt("2026-01-01T00:00:00.000Z", "UTC", "weekly", "09:00", 1),
+      "2026-01-05T09:00:00.000Z",
+    );
+  });
+
+  it("requires a weekday for weekly and rejects one for other cadences", () => {
+    const { services } = fixture();
+    const missing = services.schedulePolicy.createDraft(
+      services.owner.id,
+      services.conversation.id,
+      {
+        repo: "owner/repo",
+        localTime: "09:00",
+        cadence: "weekly",
+        goal: "检查仓库进展",
+        timezone: "UTC",
+        until: "2026-01-20",
+      },
+    );
+    assert.equal(missing.ok, false);
+    const extra = services.schedulePolicy.createDraft(
+      services.owner.id,
+      services.conversation.id,
+      {
+        repo: "owner/repo",
+        localTime: "09:00",
+        cadence: "daily",
+        weekday: 1,
+        goal: "检查仓库进展",
+        timezone: "UTC",
+        until: "2026-01-20",
+      },
+    );
+    assert.equal(extra.ok, false);
+  });
+
+  it("fires once on the chosen weekday and advances by one week", () => {
+    const { services, time } = fixture();
+    const policy = createConfirmed(services, {
+      cadence: "weekly",
+      weekday: 1,
+      until: "2026-01-20",
+    });
+    time.set("2026-01-05T09:00:00.000Z");
+    assert.equal(services.schedulePolicy.fireDue(), 1);
+    assert.equal(services.tasks.listByOwner(services.owner.id).length, 1);
+    assert.equal(
+      services.schedulePolicies.get(policy.id)?.nextRunAt,
+      "2026-01-12T09:00:00.000Z",
+    );
+    assert.equal(services.schedulePolicy.fireDue(), 0);
+  });
+
+  it("parses --dow in the slash command", async () => {
+    const { services } = fixture();
+    await sendText(
+      services,
+      "/schedule new owner/repo 09:00 weekly 检查进展 --dow=mon --tz=UTC --until=2026-01-20",
+      "evt_schedule_weekly",
+    );
+    const draftReply = services.store
+      .listRecentOutbox(5)
+      .find((row) => row.text.includes("计划草稿"));
+    assert.ok(draftReply);
+    assert.match(draftReply.text, /每周周一/);
+    assert.match(draftReply.text, /owner\/repo/);
+  });
+});
+
+describe("internal status schedules", () => {
+  it("creates a state-read task with no repo and auto-approves state.summary", () => {
+    const { services, time } = fixture();
+    const policy = createConfirmed(services, {
+      kind: "internal",
+      repo: undefined,
+      goal: "汇总当前任务与提醒",
+      until: "2026-01-05",
+    });
+    time.set("2026-01-01T09:00:00.000Z");
+    assert.equal(services.schedulePolicy.fireDue(), 1);
+    const task = services.tasks.listByOwner(services.owner.id)[0];
+    assert.ok(task);
+    assert.deepEqual(task.mandate.tools, ["state.summary"]);
+    assert.deepEqual(task.mandate.resources, ["chat", "state"]);
+    assert.equal(JSON.parse(task.completionCriteria).verifier, "state-read");
+    assert.equal(task.schedulePolicyId, policy.id);
+
+    const claimed = services.tasks.claimNext(time.now().toISOString(), 60_000, 2);
+    assert.ok(claimed);
+    const proposed = services.actionService.proposeForReport(task, claimed.assignment, [
+      { tool: "state.summary", args: {} },
+    ]);
+    assert.equal(proposed.count, 1);
+    assert.equal(proposed.autoApprove.length, 1);
+    services.actionService.finalizeReportedActions(proposed.autoApprove);
+    const action = services.actions.listByTask(task.id)[0];
+    assert.equal(action?.status, "approved");
+    assert.equal(action?.schedulePolicyId, policy.id);
+    assert.equal(action?.schedulePolicyVersion, policy.version);
+  });
+
+  it("blocks an in-flight internal read when the plan is paused", async () => {
+    const { services, time } = fixture();
+    const policy = createConfirmed(services, {
+      kind: "internal",
+      repo: undefined,
+      goal: "汇总当前任务与提醒",
+      until: "2026-01-05",
+    });
+    time.set("2026-01-01T09:00:00.000Z");
+    assert.equal(services.schedulePolicy.fireDue(), 1);
+    const task = services.tasks.listByOwner(services.owner.id)[0];
+    assert.ok(task);
+    const claimed = services.tasks.claimNext(time.now().toISOString(), 60_000, 2);
+    assert.ok(claimed);
+    const proposed = services.actionService.proposeForReport(task, claimed.assignment, [
+      { tool: "state.summary", args: {} },
+    ]);
+    services.actionService.finalizeReportedActions(proposed.autoApprove);
+    const action = services.actions.listByTask(task.id)[0];
+    assert.ok(action);
+    assert.equal(services.schedulePolicy.pause(services.owner.id, policy.id).ok, true);
+    const outcome = await services.actionService.handleExecute({ actionId: action.id });
+    assert.equal(outcome.status, "done");
+    assert.equal(services.actions.get(action.id)?.status, "superseded");
+  });
+
+  it("preserves the internal kind when an edit omits it", () => {
+    const { services } = fixture();
+    const policy = createConfirmed(services, {
+      kind: "internal",
+      repo: undefined,
+      goal: "汇总当前任务与提醒",
+      until: "2026-01-05",
+    });
+    const edited = services.schedulePolicy.edit(services.owner.id, policy.id, {
+      localTime: "10:00",
+      cadence: "daily",
+      goal: "新的内部状态汇总",
+      timezone: "UTC",
+      until: "2026-01-05",
+    });
+    assert.equal(edited.ok, true);
+    if (!edited.ok) return;
+    assert.equal(edited.policy.kind, "internal");
+    assert.equal(edited.policy.repo, "");
+    assert.equal(edited.policy.status, "draft");
+    assert.equal(edited.policy.version, policy.version + 1);
+  });
+
+  it("completes a scheduled internal report through the state verifier", async () => {
+    const { services, time } = fixture();
+    createConfirmed(services, {
+      kind: "internal",
+      repo: undefined,
+      goal: "汇总当前任务与提醒",
+      until: "2026-01-05",
+    });
+    time.set("2026-01-01T09:00:00.000Z");
+    assert.equal(services.schedulePolicy.fireDue(), 1);
+    const task = services.tasks.listByOwner(services.owner.id)[0];
+    assert.ok(task);
+    const claimed = services.tasks.claimNext(time.now().toISOString(), 60_000, 2);
+    assert.ok(claimed);
+    const proposed = services.actionService.proposeForReport(task, claimed.assignment, [
+      { tool: "state.summary", args: {} },
+    ]);
+    services.actionService.finalizeReportedActions(proposed.autoApprove);
+    const action = services.actions.listByTask(task.id)[0];
+    assert.ok(action);
+    const outcome = await services.actionService.handleExecute({ actionId: action.id });
+    assert.equal(outcome.status, "done");
+    const settled = services.actions.get(action.id);
+    assert.equal(settled?.status, "succeeded");
+    const evidence = parseStateEvidence(settled?.evidence);
+    assert.ok(evidence);
+    const tasks = evidence.snapshot.tasks;
+    assert.ok(typeof tasks === "object" && tasks !== null && "counts" in tasks);
+    const counts = tasks.counts;
+    assert.ok(typeof counts === "object" && counts !== null && "running" in counts);
+    const running = counts.running;
+    if (typeof running !== "number") {
+      assert.fail("state.summary running count is not a number");
+    }
+    services.taskService.report(
+      claimed.assignment.id,
+      claimed.assignment.fencingToken,
+      claimed.assignment.taskRevision,
+      {
+        status: "ready",
+        summary: "内部状态日报",
+        evidence: [{ kind: "state_snapshot", value: evidence.snapshotHash }],
+        stateClaims: [
+          {
+            kind: "count",
+            snapshotHash: evidence.snapshotHash,
+            path: "tasks.counts.running",
+            value: running,
+          },
+        ],
+      },
+    );
+    const current = services.tasks.get(task.id);
+    assert.equal(current?.status, "succeeded");
+    assert.equal(current?.verification?.verifier, "state-read");
+  });
+
+  it("allows the final occurrence's internal read after the policy expires", () => {
+    const { services, time } = fixture();
+    createConfirmed(services, {
+      kind: "internal",
+      repo: undefined,
+      goal: "汇总当前任务与提醒",
+      until: "2026-01-01",
+    });
+    time.set("2026-01-01T09:00:00.000Z");
+    assert.equal(services.schedulePolicy.fireDue(), 1);
+    const policy = services.schedulePolicy.list(services.owner.id)[0];
+    assert.ok(policy);
+    assert.equal(policy.status, "expired");
+    const task = services.tasks.listByOwner(services.owner.id)[0];
+    assert.ok(task);
+    const claimed = services.tasks.claimNext(time.now().toISOString(), 60_000, 2);
+    assert.ok(claimed);
+    const proposed = services.actionService.proposeForReport(task, claimed.assignment, [
+      { tool: "state.summary", args: {} },
+    ]);
+    assert.equal(proposed.count, 1);
+    assert.equal(proposed.autoApprove.length, 1);
+  });
+
+  it("parses an explicit internal target when editing", async () => {
+    const { services } = fixture();
+    await sendText(
+      services,
+      "/schedule new internal 09:00 daily 汇总当前任务与提醒 --tz=UTC --until=2026-01-05",
+      "evt_schedule_internal_new",
+    );
+    const policy = services.schedulePolicy.list(services.owner.id)[0];
+    assert.ok(policy);
+    await sendText(
+      services,
+      `/schedule edit ${policy.id} internal 10:00 daily 新的内部状态汇总 --tz=UTC --until=2026-01-05`,
+      "evt_schedule_internal_edit",
+    );
+    const updated = services.schedulePolicies.get(policy.id);
+    assert.equal(updated?.kind, "internal");
+    assert.equal(updated?.status, "draft");
+    assert.equal(updated?.localTime, "10:00");
+  });
+
+  it("rejects a repo on an internal plan and shows the internal target", async () => {
+    const { services } = fixture();
+    const draft = services.schedulePolicy.createDraft(
+      services.owner.id,
+      services.conversation.id,
+      {
+        kind: "internal",
+        repo: "owner/repo",
+        localTime: "09:00",
+        cadence: "daily",
+        goal: "汇总当前任务与提醒",
+        timezone: "UTC",
+        until: "2026-01-05",
+      },
+    );
+    assert.equal(draft.ok, false);
+
+    await sendText(
+      services,
+      "/schedule new internal 09:00 daily 汇总当前任务与提醒 --tz=UTC --until=2026-01-05",
+      "evt_schedule_internal",
+    );
+    const draftReply = services.store
+      .listRecentOutbox(5)
+      .find((row) => row.text.includes("计划草稿"));
+    assert.ok(draftReply);
+    assert.match(draftReply.text, /内部状态/);
   });
 });
