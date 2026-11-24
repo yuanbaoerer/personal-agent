@@ -278,3 +278,6 @@ Mode 专项测试不混入既有 40 场景，也不替换 K01–K17 / SEC01–SE
 例如 `coding + organization` 可以为 Router、Planner、Implement、Review 选择不同模型，仍由同一个 Parent Task 统一控制成本和 Worker 名额（当前上限 2）。ModelPolicy 的静态角色映射先于任何基于模型判断的动态路由。每个 Assignment/Session 的实际 `ResolvedModelBinding` 应保存 modelRef、Provider/Gateway 来源、策略版本及使用预算；Profile/策略热更新不影响在途 Session。
 
 **Magpie 是可选 Gateway，不是第三个独立 Agent 核心，也不是开源发布前置依赖**。具体路由/故障转移/路由组/节点模型分配和独立 MRT 测试见 [13 · Model Routing & Gateway](13-model-routing-gateway.md)；新能力在真实 Pi Session 验证之前均为规划。
+
+## 13. Worker execution binding（2026-11-24，设计）
+Mode 仍为 WorkProfile × ExecutionStrategy × ModelPolicy + ExtensionPolicy；WorkerProfile 不是第五种 Mode，而是供策略选择的版本化执行配置。Coding / Organization 均可复用内置 Pi 或已验证的 Codex / Pi CLI / OMP / Claude Code / ACP Harness instance。每个 Assignment 冻结 Worker、Harness、Provider/Model、policy、generation 和预算，复用既有 Core 状态。先固定选择再动态候选，保留双 Worker 上限和 parent Mandate。详见 [30](30-multi-harness-worker-runtime.md)；没有实现通用 DAG 或自动授权。

@@ -244,3 +244,6 @@ Desktop、CLI、TUI、Web、IM 均应作为统一 Agent Core 的独立客户端�
 - 更后期可考虑受限的性能/费用智能路由，模型切换不能绕过授权和未知副作用核对。
 
 MODEL-01～03 是本轮拆分的未来工程工作包，与已存在的 [PA-13](https://github.com/yuanbaoerer/personal-agent/issues/14)（Provider/Runtime 扩展）、[PA-24](https://github.com/yuanbaoerer/personal-agent/issues/27)（BYOK 和全球可用性）、[PA-06](https://github.com/yuanbaoerer/personal-agent/issues/7)（成本/追踪）各有边界，不复制工作。会话级模型绑定、Magpie 可选集成和故障转移安全标准见 [13 · Model Routing & Gateway](13-model-routing-gateway.md)。
+
+## 15. Multi-Harness Worker Runtime（2026-11-24）
+[30 · Multi-Harness Worker Runtime](30-multi-harness-worker-runtime.md) 确立可自定义 Worker/Harness/Provider/Model 的长期核心能力。MH-00 契约与真实协议/安全 Spike → MH-01 固定绑定及兼容迁移 → MH-02 单真实 external adapter → MH-03 ACP、第二 Harness 与 Gateway → MH-04 L3 真实 Draft PR/Review → MH-05 多端管理及扩展生态 → MH-06 动态策略/远程。工作包归属 #63/#35/#36/#37/#64/#73/#14，不重复创建平行主线。#41/#92 真实体验、#65 L2、#7/#28 安全预算门槛不下降；首个 adapter 及所有平台支持须独立实证，magpie 不设为必装。

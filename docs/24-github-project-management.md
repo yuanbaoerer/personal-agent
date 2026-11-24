@@ -189,3 +189,6 @@ L2 需 GH01–06 与相关 GH09；L3 pilot 需 GH07–10 与相应 #41 原验收
 - Fake Feishu HTTP 返回 tenant token 与 `data.message_id`；断言 Outbox 行 `accepted`、platform message id 存在、实际发送文本包含“项目评估（结构化证据已核对）”和“待办草稿”。
 - 取消 write task、write task revision 变化、approval 后禁用插件均不会产生 GitHub 写请求；草稿进入 superseded。
 - 这不是 E3：没有真实 Feishu 客户端入站/收件；真实 E3 仍按 [blocked record](acceptance/2026-11-22-l2-blocked.md) 由 owner 执行。
+
+## 13. GH-05/06 multi-Harness execution refinement（2026-11-24）
+[30](30-multi-harness-worker-runtime.md) 是 #63 Coding Adapter 和 #64 独立 Review 的执行契约。先 MH-00/01 兼容与隔离设计，MH-02 单真实 driver（Codex 推荐候选，待 Spike），MH-03 ACP/OMP 第二 driver + Gateway 兼容，MH-04 L3。不是要求所有 Harness 在 L3 同时上线；可先用经验证单 driver 完成受控试验，其他作为兼容增量。Issue→隔离 workspace→独立测试→Core typed Action/审批控制 Draft PR→独立 Review 固定 SHA；外部 Agent 无直接 GitHub write credential，禁止直接 main push/自动 merge。现有 L2、#41、#92 与写权限门槛不变。
