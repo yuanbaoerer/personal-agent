@@ -196,7 +196,7 @@ curl -fsS http://127.0.0.1:8787/healthz
 - `/schedule new <owner/name|internal> <HH:MM> <daily|weekdays|weekly> <内容> [--dow=mon] [--until=YYYY-MM-DD] [--tz=Area/City]`；`weekly` 必须指定 `--dow`（英文名或 1=周一 … 7=周日）。
 - `internal` 计划不绑定仓库，触发时创建 `state.summary` + `state` resource 的任务，使用 state-read verifier 核对 `state_snapshot`；计划暂停、编辑或取消后，尚未执行的状态读取在执行前被拒绝。
 - schema 29 重建 schedule policy/run 表以支持 `kind`、`weekly` 和 `weekday`；旧 GitHub 计划与 run 历史保留，回滚前的迁移测试覆盖数据保留。
-- `npm test`：672 个确定性测试通过。
+- `npm test`：673 个确定性测试通过。
 - 证据边界：E1；真实飞书周期收件、真实模型费用、运行耗时和 owner 硬预算仍未验证，PA-08 保持 OPEN。
 
 **2026-11-18 验证（TaskCompletionVerifier / needs_review，PA-09 部分）：**

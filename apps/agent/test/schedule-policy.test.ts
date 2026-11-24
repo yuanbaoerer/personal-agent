@@ -628,6 +628,28 @@ describe("internal status schedules", () => {
     assert.equal(proposed.autoApprove.length, 1);
   });
 
+  it("rejects the final read after the policy expiry timestamp", () => {
+    const { services, time } = fixture();
+    createConfirmed(services, {
+      kind: "internal",
+      repo: undefined,
+      goal: "汇总当前任务与提醒",
+      until: "2026-01-01",
+    });
+    time.set("2026-01-01T09:00:00.000Z");
+    assert.equal(services.schedulePolicy.fireDue(), 1);
+    const task = services.tasks.listByOwner(services.owner.id)[0];
+    assert.ok(task);
+    time.set("2026-01-02T00:00:00.000Z");
+    const claimed = services.tasks.claimNext(time.now().toISOString(), 60_000, 2);
+    assert.ok(claimed);
+    const proposed = services.actionService.proposeForReport(task, claimed.assignment, [
+      { tool: "state.summary", args: {} },
+    ]);
+    assert.equal(proposed.count, 0);
+    assert.equal(services.actions.listByTask(task.id).length, 0);
+  });
+
   it("parses an explicit internal target when editing", async () => {
     const { services } = fixture();
     await sendText(
