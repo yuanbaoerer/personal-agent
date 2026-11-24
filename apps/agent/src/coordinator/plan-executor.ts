@@ -458,26 +458,18 @@ export class PlanExecutor {
         goal,
         completionCriteria: criteria,
         deadline,
-        // The final step must be able to satisfy the parent verifier, so it
-        // runs with the parent's full (already authorized) mandate. Other
-        // steps stay inside their declared subset.
-        mandate: isFinal
-          ? {
-              resources: parent.mandate.resources,
-              tools: parent.mandate.tools,
-              ...(parent.mandate.skills === undefined
-                ? {}
-                : { skills: parent.mandate.skills }),
-              ...(plan.projectKey === undefined ? {} : { project: plan.projectKey }),
-            }
-          : {
-              resources: step.resources,
-              tools: step.tools,
-              ...(parent.mandate.skills === undefined
-                ? {}
-                : { skills: parent.mandate.skills }),
-              ...(plan.projectKey === undefined ? {} : { project: plan.projectKey }),
-            },
+        // Every step, including the final one, runs only with the resources
+        // and tools declared on that step. The final step still carries the
+        // parent verifier, so a plan that omits a needed capability fails
+        // closed instead of inheriting the parent's broader authority.
+        mandate: {
+          resources: step.resources,
+          tools: step.tools,
+          ...(parent.mandate.skills === undefined
+            ? {}
+            : { skills: parent.mandate.skills }),
+          ...(plan.projectKey === undefined ? {} : { project: plan.projectKey }),
+        },
         extensionPolicy: parent.extension?.policy,
         planId: plan.id,
         planStepKey: step.key,

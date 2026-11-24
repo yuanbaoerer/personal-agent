@@ -9,6 +9,7 @@ import type { ConfirmationService } from "../personal/confirmations.ts";
 import type { EffectRepository } from "../storage/effects.ts";
 import type { Store } from "../storage/store.ts";
 import type { TaskRepository } from "../storage/tasks.ts";
+import type { UsageRepository, UsageSummary } from "../storage/usage.ts";
 
 export const TOKEN_COST_LINE_PREFIX = "token/费用：";
 
@@ -18,12 +19,13 @@ export interface UsageDeps {
   actions: ActionRepository;
   effects: EffectRepository;
   confirmations: ConfirmationService;
+  usage?: UsageRepository;
 }
 
 export interface UsageSnapshot {
   generatedAt: string;
-  /** Token/cost accounting is not implemented yet; never invent amounts. */
-  tokens: "not_collected";
+  /** Collected model/tool usage; never invent amounts when it is absent. */
+  tokens: UsageSummary;
   tasks: Record<TaskStatus, number>;
   effects: Record<EffectStatus, number>;
   actions: Record<ActionStatus, number>;
@@ -67,7 +69,29 @@ const OUTBOX_STATUSES: OutboxStatus[] = [
   "cancelled",
 ];
 
-export function buildUsage(deps: UsageDeps, now: string): UsageSnapshot {
+export function emptyUsageSummary(): UsageSummary {
+  return {
+    collected: false,
+    operations: 0,
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    reasoning: 0,
+    totalTokens: 0,
+    costTotal: 0,
+    costKind: "none",
+    bySource: [],
+    byModel: [],
+    workerLatency: { samples: 0 },
+  };
+}
+
+export function buildUsage(
+  deps: UsageDeps,
+  now: string,
+  options: { ownerId?: string } = {},
+): UsageSnapshot {
   const tasks = Object.fromEntries(
     TASK_STATUSES.map((status) => [status, deps.tasks.countByStatus(status)]),
   ) as Record<TaskStatus, number>;
@@ -85,7 +109,10 @@ export function buildUsage(deps: UsageDeps, now: string): UsageSnapshot {
 
   return {
     generatedAt: now,
-    tokens: "not_collected",
+    tokens:
+      deps.usage === undefined || options.ownerId === undefined
+        ? emptyUsageSummary()
+        : deps.usage.summary(options.ownerId),
     tasks,
     effects,
     actions,
@@ -110,8 +137,37 @@ export function formatUsage(snapshot: UsageSnapshot): string {
       `failed ${snapshot.effects.failed}。`,
     `Outbox：pending ${snapshot.outbox.pending}，accepted ${snapshot.outbox.accepted}，` +
       `unknown ${snapshot.outbox.unknown}，needs_manual ${snapshot.outbox.needs_manual}。`,
-    `${TOKEN_COST_LINE_PREFIX}未采集（不展示估算金额）。`,
   ];
+  const tokens = snapshot.tokens;
+  if (!tokens.collected) {
+    lines.push(`${TOKEN_COST_LINE_PREFIX}未采集（不展示估算金额）。`);
+  } else {
+    const cost =
+      tokens.costKind === "provider"
+        ? `费用 ${tokens.costTotal.toFixed(6)}（provider 账单）`
+        : tokens.costKind === "catalog"
+          ? `费用 ${tokens.costTotal.toFixed(6)}（catalog 估算，非账单）`
+          : tokens.costKind === "mixed"
+            ? `费用 ${tokens.costTotal.toFixed(6)}（混合，含 catalog 估算）`
+            : "费用未报告";
+    lines.push(
+      `${TOKEN_COST_LINE_PREFIX}${tokens.totalTokens} tokens` +
+        `（输入 ${tokens.input}，输出 ${tokens.output}，` +
+        `缓存读 ${tokens.cacheRead}，缓存写 ${tokens.cacheWrite}）；${cost}。`,
+    );
+    if (tokens.byModel.length > 0) {
+      lines.push("按模型：");
+      for (const row of tokens.byModel) {
+        lines.push(`- ${row.model}: ${row.totalTokens} tokens，费用 ${row.costTotal.toFixed(6)}`);
+      }
+    }
+    if (tokens.workerLatency.samples > 0) {
+      lines.push(
+        `Worker 端到端：p50 ${tokens.workerLatency.p50Ms ?? 0}ms，` +
+          `p95 ${tokens.workerLatency.p95Ms ?? 0}ms（${tokens.workerLatency.samples} 次）。`,
+      );
+    }
+  }
   if (snapshot.actionsByTool.length > 0) {
     lines.push("按工具：");
     for (const row of snapshot.actionsByTool) {

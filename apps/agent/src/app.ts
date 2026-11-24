@@ -39,6 +39,7 @@ import type { Store } from "./storage/store.ts";
 import { TaskRepository } from "./storage/tasks.ts";
 import { ProjectService } from "./personal/projects.ts";
 import { PlanRepository } from "./storage/plans.ts";
+import { UsageRepository } from "./storage/usage.ts";
 import { PlanService } from "./coordinator/plans.ts";
 import { PlanExecutor } from "./coordinator/plan-executor.ts";
 
@@ -91,6 +92,7 @@ export interface AppServices {
   schedulePolicies: SchedulePolicyRepository;
   projects: ProjectRepository;
   plans: PlanRepository;
+  usage: UsageRepository;
   planService: PlanService;
   planExecutor: PlanExecutor;
   issueDrafts: IssueDraftService;
@@ -173,6 +175,7 @@ export function createApp(deps: AppDeps): AppServices {
     now: deps.now,
   });
   const plans = new PlanRepository(db);
+  const usage = new UsageRepository(db);
   const planService = new PlanService({
     store,
     plans,
@@ -198,6 +201,7 @@ export function createApp(deps: AppDeps): AppServices {
     capabilities: catalog,
     skills: deps.skills,
     verifiedDrafts: issueDrafts,
+    usage,
   });
   const preauthorization = new PreauthorizationService({
     store,
@@ -290,6 +294,7 @@ export function createApp(deps: AppDeps): AppServices {
     capabilities: catalog,
     projects,
     plans: planService,
+    usage,
     issueDrafts,
     issueDraftApproval,
   });
@@ -326,6 +331,7 @@ export function createApp(deps: AppDeps): AppServices {
     schedulePolicies,
     projects,
     plans,
+    usage,
     planService,
     planExecutor,
     issueDrafts,

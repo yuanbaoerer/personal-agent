@@ -303,8 +303,10 @@ export class Assistant extends DurableObject<Env> {
             actions: app.actions,
             effects: app.effects,
             confirmations: app.confirmation,
+            usage: app.usage,
           },
           new Date().toISOString(),
+          { ...(app.ownerId === undefined ? {} : { ownerId: app.ownerId }) },
         ),
       );
     }

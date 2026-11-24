@@ -35,6 +35,7 @@ import { IssueDraftRepository } from "../src/storage/issue-drafts.ts";
 import { IssueDraftService } from "../src/personal/issue-drafts.ts";
 import { IssueDraftApprovalBridge } from "../src/personal/draft-approval.ts";
 import { TaskRepository } from "../src/storage/tasks.ts";
+import { UsageRepository } from "../src/storage/usage.ts";
 import type { Store } from "../src/storage/store.ts";
 import { ProjectService } from "../src/personal/projects.ts";
 import { PlanRepository } from "../src/storage/plans.ts";
@@ -55,6 +56,7 @@ export interface TestServices {
   schedulePolicies: SchedulePolicyRepository;
   projects: ProjectRepository;
   plans: PlanRepository;
+  usage: UsageRepository;
   planService: PlanService;
   issueDrafts: IssueDraftService;
   issueDraftApproval?: IssueDraftApprovalBridge;
@@ -168,6 +170,7 @@ export function createServices(options: {
     now,
   });
   const plans = new PlanRepository(db);
+  const usage = new UsageRepository(db);
   const planService = new PlanService({
     store,
     plans,
@@ -199,6 +202,7 @@ export function createServices(options: {
     capabilities: catalog,
     skills: options.skills,
     verifiedDrafts: issueDrafts,
+    usage,
   });
   const preauthorization = new PreauthorizationService({
     store,
@@ -286,6 +290,7 @@ export function createServices(options: {
     capabilities: catalog,
     projects,
     plans: planService,
+    usage,
     issueDrafts,
     issueDraftApproval,
   });
@@ -311,6 +316,7 @@ export function createServices(options: {
     schedulePolicies,
     projects,
     plans,
+    usage,
     planService,
     issueDrafts,
     issueDraftApproval,

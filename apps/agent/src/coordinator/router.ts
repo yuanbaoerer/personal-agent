@@ -23,6 +23,7 @@ import type { ActionRepository } from "../storage/actions.ts";
 import type { EffectRepository } from "../storage/effects.ts";
 import type { TaskRepository } from "../storage/tasks.ts";
 import type { Store } from "../storage/store.ts";
+import type { UsageRepository } from "../storage/usage.ts";
 import type { MemoryService } from "../personal/memory.ts";
 import type { ConfirmationService } from "../personal/confirmations.ts";
 import type { PreauthorizationService } from "../personal/preauthorizations.ts";
@@ -139,6 +140,8 @@ export interface RouterDeps {
   /** Persistent plans; enables owner-facing plan status and control. */
   plans?: PlanService;
   codingInput?: CodingInput;
+  /** Token/cost/latency ledger for the `/usage` command. */
+  usage?: UsageRepository;
 }
 
 const GITHUB_REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -619,6 +622,7 @@ export class Router implements InboundHandler {
   readonly #issueDraftApproval?: IssueDraftApprovalBridge;
   readonly #plans?: PlanService;
   readonly #codingInput?: CodingInput;
+  readonly #usage?: UsageRepository;
 
   constructor(deps: RouterDeps) {
     this.#store = deps.store;
@@ -644,6 +648,7 @@ export class Router implements InboundHandler {
     this.#issueDraftApproval = deps.issueDraftApproval;
     this.#plans = deps.plans;
     this.#codingInput = deps.codingInput;
+    this.#usage = deps.usage;
     this.#stateQuery = new StateQueryHandler({
       tasks: deps.tasks,
       state: deps.state,
@@ -1992,8 +1997,10 @@ export class Router implements InboundHandler {
           actions: this.#actions,
           effects: this.#effects,
           confirmations: this.#confirmation,
+          usage: this.#usage,
         },
         now,
+        { ownerId },
       );
       const magpie = await this.#budget?.summaryText();
       const local = formatUsage(snapshot);

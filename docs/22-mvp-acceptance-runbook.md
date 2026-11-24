@@ -186,19 +186,13 @@ sqlite3 data/agent.sqlite "select event,after_json from pa_audit where event lik
 
 记录形式：commit SHA、Plan/Step/Task/Action/Receipt/Trace IDs、model/provider、输入与预期、actual/权限/budget、E1/E3/E4、用户真实飞书入站/出站消息 ID（脱敏）、PASS/FAIL/PARTIAL/BLOCKED。只有 Mock 或 Fake Runtime 的步骤**不能**标记真实 E3 通过。Owner 未明确授予写权限/付费无人值守时仅允许已授权只读测试。
 
-**C12：按 Node Pi 会话取 token（本地只读）。** 使用[停机或安全检查点备份](17-data-lifecycle.md)，从同批 `agent.sqlite` 的 `pa_assignments.session_id` 找到本次各 Worker 的 Pi session；Router 的 ID 在 `pa_meta` 的 `router.session_id:<ownerId>:<conversationId>`。传 Pi 数字 ID，不传飞书会话 ID、Task ID 或凭据：
-
-```sh
-node scripts/session-usage.ts /path/to/backup/pi.sqlite 12 34
-```
-
-输出只含指定会话的计数。`observedTokens` 是可测回复的小计；`totalTokens` 仅在所选每个会话均非空、每条 assistant 记录都有正整数计量时给出。未知或零默认值不作零 token；`summary.cost: null` 表示没有账单。脚本不读取应用账单，也不把失败但没有 assistant 记录的请求算作零成本。Router 会话可能跨多轮复用：**不能把整段会话累计直接归到本次 Plan**。复用会话需留前后两个快照，确认期间无其他流量且新增记录均可测，才可取差；否则标未采集。工具回执、最终收件、耗时仍需独立留证。
-
 ### 9.1 已记录的真实证据（2026-11-22）
 
 - E1：CX-01/PL-01/PL-02 的确定性测试与逐用例状态见 [2026-11-22 · Conversational & Autonomous Planning E1 record](acceptance/2026-11-22-conversational-planning-e1.md)。
 - 2026-11-23：空会话草稿（#125）与步骤时限（#127）合并，全量 637 个确定性测试通过；未新增 E3/E4，C04/C11 仍为 PARTIAL，下一步仍是同一次只读运行中的最终报告与真实飞书收件。
-- E3/E4：**C01–C03 已 PASS（E3）；C04/C11 PARTIAL**。2026-11-22 在合并后 main 上完成前置步骤与真实飞书 C01–C03；随后配置只读 GitHub、绑定 `personal-agent` 并执行 C04：Plan `e1ba272e` 的 A/B 两步均通过 `github-read`（file、issues、pulls，14 条结构化 claim），C 在 3 次尝试内未产出最终报告，plan paused；全程 23 个 `github.read` GET、0 POST。另修复 verifier 的 CJK 标点 URL 解析缺陷（PR #119）。C05–C10 仍待后续；C12 无真实成本数据；E4 未测。C06/C07 的代码接线已补：补充会生成新 active 版本与 PlanDiff，可重试的外部失败有一次自动恢复版本（`pa_plans.auto_replans`，schema 26），权限失败转 `needs_review`；但真实 Feishu 补充、429/head-drift E3 与进程重启 E4 仍需重跑并记录本节。证据见 [runbook execution](acceptance/2026-11-22-conversational-planning-runbook.md)。不得把 A/B 或 PARTIAL 记作 C04/C11 PASS 或完整 Pilot 通过；其余 E3/E4 不得据 E1 或 C01–C03 结果宣称 Pilot 通过。
+- 2026-11-24：`/usage` 增加模型 token、provider/catalog 费用来源与 Worker 端到端延迟采集（E1，全量 648 测试）；真实运行的 C12 快照仍需 owner 在受控运行后保存。
+- 2026-11-24 空会话草稿/修订 E3 PASS：3 条真实 owner 入站（`8861fc05…`、`f13cf224…`、`a3b1584b…`）均 accepted；普通聊天 0 Task；草稿父任务 `e837fa62…` + Plan v1 `da65e9ba…`；修订为 Plan v2 `d4411e6d…` 并写 PlanDiff 1→2；父任务 `attempts=0`，0 Assignment、0 Action。`/usage` 记录 3 次 Router 调用、508,462 tokens、catalog 估算 0.036784。证据见 [2026-11-24 · Empty-conversation draft/revise E3](acceptance/2026-11-24-empty-conversation-draft-e3.md)。实时库当前无 GitHub 凭据，C04 仍 blocked。
+- E3/E4：**C01–C03 已 PASS（E3）；C02/C03 于 2026-11-24 在空会话路径再次 PASS；C04/C11 PARTIAL**。2026-11-22 在合并后 main 上完成前置步骤与真实飞书 C01–C03；随后配置只读 GitHub、绑定 `personal-agent` 并执行 C04：Plan `e1ba272e` 的 A/B 两步均通过 `github-read`（file、issues、pulls，14 条结构化 claim），C 在 3 次尝试内未产出最终报告，plan paused；全程 23 个 `github.read` GET、0 POST。另修复 verifier 的 CJK 标点 URL 解析缺陷（PR #119）。C05–C10 仍待后续；C12 仅有 Router-only 3 次调用快照，完整计划执行成本/Worker 延迟未测；E4 未测。当前实时库与 `.env` 均无 GitHub 凭据，旧 paused C04 计划不能直接续跑，新计划末步必须声明 `github`/`github.read`。C06/C07 的代码接线已补：补充会生成新 active 版本与 PlanDiff，可重试的外部失败有一次自动恢复版本（`pa_plans.auto_replans`，schema 26），权限失败转 `needs_review`；但真实 Feishu 补充、429/head-drift E3 与进程重启 E4 仍需重跑并记录本节。证据见 [runbook execution](acceptance/2026-11-22-conversational-planning-runbook.md)。不得把 A/B 或 PARTIAL 记作 C04/C11 PASS 或完整 Pilot 通过；其余 E3/E4 不得据 E1 或 C01–C03 结果宣称 Pilot 通过。
 
 ## 10. 飞书配对 omp
 

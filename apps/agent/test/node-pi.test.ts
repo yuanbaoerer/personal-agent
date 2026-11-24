@@ -56,10 +56,16 @@ describe("node pi runtime", () => {
       await fx.runtime.submit(session.id, "do the work", "assignment:1");
 
       const first = await fx.runtime.wait(session.id, "assignment:1", 5_000);
-      assert.deepEqual(first, { status: "answered", text: "PA_NODE_OK" });
+      assert.equal(first.status, "answered");
+      if (first.status === "answered") {
+        assert.equal(first.text, "PA_NODE_OK");
+      }
 
       const again = await fx.runtime.wait(session.id, "assignment:1", 5_000);
-      assert.deepEqual(again, { status: "answered", text: "PA_NODE_OK" });
+      assert.equal(again.status, "answered");
+      if (again.status === "answered") {
+        assert.equal(again.text, "PA_NODE_OK");
+      }
     } finally {
       await fx.runtime.close();
       await fx.cleanup();
@@ -81,7 +87,10 @@ describe("node pi runtime", () => {
       const reopened = fx.reopen();
       try {
         const replay = await reopened.wait(session.id, "router:inbox-1", 5_000);
-        assert.deepEqual(replay, { status: "answered", text: "PA_DURABLE_OK" });
+        assert.equal(replay.status, "answered");
+        if (replay.status === "answered") {
+          assert.equal(replay.text, "PA_DURABLE_OK");
+        }
       } finally {
         await reopened.close();
       }
@@ -105,7 +114,11 @@ describe("node pi runtime", () => {
 
       gate.resolve(fauxAssistantMessage("PA_LATE_OK"));
       const answer = await fx.runtime.wait(session.id, "assignment:slow", 5_000);
-      assert.deepEqual(answer, { status: "answered", text: "PA_LATE_OK" });
+      assert.equal(answer.status, "answered");
+      if (answer.status === "answered") {
+        assert.equal(answer.text, "PA_LATE_OK");
+        assert.ok(answer.usage);
+      }
     } finally {
       await fx.runtime.close();
       await fx.cleanup();

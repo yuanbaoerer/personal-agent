@@ -33,6 +33,7 @@ import {
 } from "../storage/tasks.ts";
 import type { MemoryRepository } from "../storage/personal.ts";
 import type { Store } from "../storage/store.ts";
+import type { UsageRepository } from "../storage/usage.ts";
 import type { EffectDispatcher, EffectOutcome } from "../delivery/effects.ts";
 import type { BudgetService } from "../observability/magpie.ts";
 import { ExtensionPolicyError } from "../domain/errors.ts";
@@ -95,6 +96,8 @@ export interface TaskServiceDeps {
   skills?: SkillRuntime;
   /** Persists verifier-approved issue drafts and invalidates old revisions. */
   verifiedDrafts?: VerifiedDraftSink;
+  /** Model/token/cost/latency ledger; omitted keeps the service statistics-only. */
+  usage?: UsageRepository;
 }
 
 export interface CreateTaskInput {
@@ -156,6 +159,7 @@ export class TaskService {
   readonly #capabilities?: CapabilityView;
   readonly #skills?: SkillRuntime;
   readonly #verifiedDrafts?: VerifiedDraftSink;
+  readonly #usage?: UsageRepository;
   #proposer: ActionProposer | undefined;
 
   constructor(deps: TaskServiceDeps) {
@@ -184,6 +188,7 @@ export class TaskService {
     this.#capabilities = deps.capabilities;
     this.#skills = deps.skills;
     this.#verifiedDrafts = deps.verifiedDrafts;
+    this.#usage = deps.usage;
   }
 
   setActionProposer(proposer: ActionProposer): void {
@@ -1064,6 +1069,37 @@ export class TaskService {
 
     if (answer.status === "unanswered") {
       return this.#failAssignment(assignment, `runtime ended unanswered: ${answer.reason}`);
+    }
+
+    if (answer.usage !== undefined && this.#usage !== undefined) {
+      const task = this.#tasks.get(assignment.taskId);
+      if (task !== undefined) {
+        const nowDate = this.#now();
+        const createdAt = Date.parse(assignment.createdAt);
+        try {
+          this.#usage.record({
+            ownerId: task.ownerId,
+            conversationId: task.conversationId,
+            source: "worker",
+            // One assignment is one worker conversation; the repository still
+            // applies its cumulative-to-delta cursor for replay safety.
+            operationId: assignment.id,
+            sessionId: assignment.sessionId,
+            taskId: task.id,
+            assignmentId: assignment.id,
+            cumulative: answer.usage,
+            ...(Number.isFinite(createdAt)
+              ? { durationMs: nowDate.getTime() - createdAt }
+              : {}),
+            at: nowDate.toISOString(),
+          });
+        } catch (error) {
+          console.warn("usage_record_failed", {
+            taskId: task.id,
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
     }
 
     const report = parseWorkerReport(answer.text);

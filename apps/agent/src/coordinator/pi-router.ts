@@ -8,6 +8,7 @@ import type {
 import { isStateToolName } from "../actions/state.ts";
 import { parseStateQuery } from "./state-query.ts";
 import type { Store } from "../storage/store.ts";
+import type { UsageRepository } from "../storage/usage.ts";
 import type { AgentRuntime } from "../runtime/types.ts";
 import type { RouterModel } from "./router.ts";
 import type { CapabilityView } from "../plugins/fence.ts";
@@ -59,10 +60,19 @@ const ALLOWED_TOOLS: Record<string, true> = {
 export class PiRouterModel implements RouterModel {
   readonly #store: Store;
   readonly #runtime: AgentRuntime;
+  readonly #usage?: UsageRepository;
+  readonly #now: () => Date;
 
-  constructor(store: Store, runtime: AgentRuntime) {
+  constructor(
+    store: Store,
+    runtime: AgentRuntime,
+    usage?: UsageRepository,
+    now: () => Date = () => new Date(),
+  ) {
     this.#store = store;
     this.#runtime = runtime;
+    this.#usage = usage;
+    this.#now = now;
   }
 
   async decide(
@@ -109,6 +119,25 @@ export class PiRouterModel implements RouterModel {
     if (answer.status === "unanswered") {
       console.warn("router_model_unanswered", { reason: answer.reason });
       return { action: "reply", text: "这次没有理解成功，请再说一次。" };
+    }
+
+    if (answer.usage !== undefined && this.#usage !== undefined) {
+      try {
+        this.#usage.record({
+          ownerId: input.ownerId,
+          conversationId: input.conversationId,
+          source: "router",
+          operationId,
+          sessionId,
+          cumulative: answer.usage,
+          at: this.#now().toISOString(),
+        });
+      } catch (error) {
+        console.warn("usage_record_failed", {
+          source: "router",
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
 
     const decision = parseRouterDecision(answer.text, capabilities);
@@ -201,6 +230,7 @@ export function routerPrompt(
     "- Use the transcript only to resolve references to earlier discussion (for example 刚才, 上面说的, 第二步). If two readings remain possible, reply and ask.",
     "- Discussion, a proposed plan, or an agreement to think about work is not an execution request: create_task only when the current Owner message explicitly starts work.",
     "- Route an explicit request to produce a plan to draft_plan, not reply, even when no Task exists or the owner says 不用执行. Use replyKind=plan_proposal only for discussion or hypotheticals. Use revise_plan to edit a displayed plan. Never claim a draft is activated or approved.",
+    "- The final plan step does not inherit the parent's mandate. Declare every resource and tool it needs (including github and github.read, or state and state.summary) on that step itself; otherwise the plan must fail closed.",
     '- Example with no Task — Owner: 先给我一个最小 MVP 实施计划，不用执行. Return {"action":"draft_plan","task":{"goal":"实施最小 MVP","completionCriteria":"一条核心流程可以演示"},"plan":{"steps":[{"key":"A","goal":"确定核心流程","verifierId":"structural"},{"key":"B","goal":"设计最小实现","dependsOn":["A"],"verifierId":"structural"},{"key":"C","goal":"列出验收检查","dependsOn":["B"],"verifierId":"structural"}]}}.',
     "- Read-only questions about current tasks, reminders, memories, schedules or service status must use query_status with the most specific target. Never answer state questions from memory or create a Worker just to restate state.",
     "- query_status fields are validated by the program. Omit fields the target does not support; do not invent task ids or project names.",
