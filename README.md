@@ -334,6 +334,7 @@ flowchart TB
 | [29 · GitHub 一键连接](docs/29-github-one-click-connection.md) | CLI/API 的现有契约、仓库发现与跨端后续阶段 |
 | [12 · Mode Architecture](docs/12-mode-architecture.md) | WorkProfile × ExecutionStrategy：Coding / General / Research 与智能组织工作流（设计提案，未实现） |
 | [13 · Model Routing & Gateway](docs/13-model-routing-gateway.md) | ModelPolicy、Router/Worker 会话级模型绑定、Magpie 可选中转、Fallback 与成本评测（长期设计，未实现） |
+| [30 · Multi-Harness Worker Runtime](docs/30-multi-harness-worker-runtime.md) | Worker Profile、可选 Harness/Provider/Model 绑定与 MH-00–14 验收（目标设计，未实现） |
 | [20 · 本地 Client API / CLI / TUI](docs/20-local-client-api.md) | `/api/v1`、device token/scope、`pa` 命令、TUI 按键与安全边界（E1） |
 | [OpenAPI 契约](docs/api/openapi.json) | `/api/v1` 路径、Bearer 鉴权与请求/响应 schema（OpenAPI 3.1） |
 | [本地 spike](spikes/pi-durable-smoke/README.md) | Pi 本地验证与证据边界 |
@@ -379,6 +380,6 @@ npm run real:multi
 
 它们没有验证真实模型、未完成任务/待审批状态的运行中恢复、完整审批后执行、多个 Worker、云端部署或聊天通知。`kill` 用例只证明已提交 transcript 的持久性，不能替代“任务执行中中断后恢复”的门槛实验。
 
-### Multi-Harness Worker Runtime（目标设计，未实现）
+## Multi-Harness Worker Runtime（目标设计，未实现）
 
 [30 · Multi-Harness Worker Runtime & Model Gateway Integration](docs/30-multi-harness-worker-runtime.md) — 自定义 Worker Profile、Codex / Pi / OMP / Claude Code / ACP Harness、独立 Provider / 可选 magpie Gateway 与 Model binding；保留 One Core 和现有授权、恢复、预算门槛。当前默认仍是内置 Pi Runtime；第三方组合需逐项真实验证。
