@@ -279,3 +279,6 @@ ModelPolicy      = 用哪个模型、满足什么能力、花费多少、怎样�
 - 在 v0.2 开发独立 Magpie 替代品、通用代理服务器、订阅账户聚合或完整账单管理；
 - 在运行中悄悄热换模型、未经核对重放带外部副作用的请求；
 - 为新 Provider 建第二份 Coordinator/Task DB 或把模型选择提升为系统权限。
+
+## 10. Multi-Harness integration（2026-11-24，设计补充）
+[30](30-multi-harness-worker-runtime.md) 将 ModelPolicy 解析与 HarnessInstance 执行绑定分离。MODEL-01 仍负责 native Pi session model binding、ModelCatalog 与角色配置，并复用统一 ExecutionBinding；MODEL-02 仍负责真实 Gateway 推理协议/路由/用量验证，而非现有 MagpieBudget 监控；MODEL-03 动态候选后置。外部 Harness 按其已验证的原生认证、直接 Provider 或 Gateway 配置能力注入；不可覆盖模型时必须显式标记，不能宣称任意模型组合。区分 requested / selected / observed model，严格预算 unknown fail-closed。多实例独立配置与凭据，不修改全局配置。禁止网关成为 Task 权威。

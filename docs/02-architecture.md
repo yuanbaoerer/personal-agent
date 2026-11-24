@@ -365,3 +365,6 @@ Coding Profile 不自动开放 Shell、文件写入或 Git push；Organization �
 **关键故障限制**：模型输出开始、工具调用可能已发生或请求接受状态不明时，不得把 Fallback 视为无副作用透明重试。继续遵守既有 K03、K08–K14 和 unknown/reconcile。Gateway 的出站数据和凭据需要显式授权；Cloudflare 的 loopback 不是用户本地 Mac 的 loopback。
 
 完整领域类型、路由规则、Magpie 集成、预算、MRT 专项评测和分阶段实施见 [13 · Model Routing & Gateway](13-model-routing-gateway.md)。本节是长期架构方案，**当前 v0.2 不开发自建模型网关或自动路由算法**。
+
+## 15. Multi-Harness Worker Runtime（2026-11-24，目标架构）
+新增 [30 · Multi-Harness Worker Runtime](30-multi-harness-worker-runtime.md) 作为 #63 / MODEL-01–03 细化契约。One Core 不变：WorkerProfile（角色及配置）→ HarnessInstance（执行引擎）→ ProviderInstance / ModelRef（推理配置）。保留现有 AgentRuntime v1，通过 RuntimeRouter 与持久 Assignment ExecutionBinding 扩展；Router 保留内置 Pi，外部 Coding Agent 逐个真实验证。Worker Profile 不另设权限/Task DB/调度器；现有 Mandate、Action、revision、input seq、fencing、全局双 Worker 名额和独立 Verifier 继续有效。外部 CLI 必须落实文件/网络/凭据/进程隔离，Worktree 本身不构成 Sandbox。Node 首发，DO 不声称支持本地 CLI。默认固定绑定、magpie 可选，动态路由后置。本文原单模型/单 Runtime 约束仍为当前实现基线，不是长期限制。

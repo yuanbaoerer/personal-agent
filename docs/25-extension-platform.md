@@ -127,3 +127,6 @@ EXT01–10 见 #73：manifest/冲突、无 GitHub Core 正常、Node 不重启�
 ## 12. 开发顺序与约束
 
 先 #67，再 #68（真实 G1 能并行准备），随后 #69 和 #70 loader；#60/62 与兼容评估/skills 业务验收协作。每包独立分支/PR/Review，保留现有 API/CLI/DB 兼容；不启动巨型重构。V1 不等于完整生态，V2/V3 不以“普通可选插件”删除。owner 后续决定真实授权 repo、GitHub App/首个 Coding CLI、隔离机器、网络/命令/硬预算和开放发布时间；计划变更不自动授予凭据或外部副作用。
+
+## 13. Runtime extension kind（2026-11-24）
+[30](30-multi-harness-worker-runtime.md) 明确 Driver / HarnessInstance / ProviderInstance / WorkerProfile 的分离。现有 BuiltinPlugin.createTools 是工具型 V1 契约，不直接用它模拟 Runtime。增量引入受信 Runtime extension kind，复用 ExtensionPolicy、generation fence、凭据及审计；Core 持有 Registry/RuntimeRouter/Assignment lifecycle，具体 Adapter 插件化。先内置、可信已安装 driver，再由 EXT V2 证明第三方隔离/ABI，V3 分发；禁用时需 fence 旧绑定、取消/隔离并核对在途任务。ACP 负责 Agent 控制，MCP 负责工具接入，不互相替代。#73 的生态门槛不变。

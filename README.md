@@ -350,3 +350,7 @@ npm run real:multi
 两个脚本现已对上述字段逐项断言。它们演示了工具调用被 beforeTool 拦截，以及已提交会话在正常关闭和独立进程被杀后仍可重新打开。
 
 它们没有验证真实模型、未完成任务/待审批状态的运行中恢复、完整审批后执行、多个 Worker、云端部署或聊天通知。`kill` 用例只证明已提交 transcript 的持久性，不能替代“任务执行中中断后恢复”的门槛实验。
+
+### Multi-Harness Worker Runtime（目标设计，未实现）
+
+[30 · Multi-Harness Worker Runtime & Model Gateway Integration](docs/30-multi-harness-worker-runtime.md) — 自定义 Worker Profile、Codex / Pi / OMP / Claude Code / ACP Harness、独立 Provider / 可选 magpie Gateway 与 Model binding；保留 One Core 和现有授权、恢复、预算门槛。当前默认仍是内置 Pi Runtime；第三方组合需逐项真实验证。
