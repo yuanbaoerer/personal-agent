@@ -210,3 +210,5 @@ sqlite3 data/agent.sqlite "select event,after_json from pa_audit where event lik
 同一次隔离验收的第三轮在等待新的测试审批时收到 `/code stop`，随后用旧审批号不能完成该轮。Node 入口另以合成配置启动，`/healthz` 返回 200、Unix socket 权限 `0600`。Relay 和会话窗口的 16 个定向用例均通过，涵盖 owner/私聊隔离、超时/重复审批、重启不重放及编程文本不进入普通 Router 历史。
 
 E3 需另记实际服务 SHA、去标识化的飞书入站和出站消息 ID、同一工作区的 diff 与测试结果；勿附配对码、审批号、私聊原文或密钥。本次按 owner 选择不启动真实飞书实例。
+
+状态（2026-11-24）：#133 已合并（E1 + 本地 E2）；真实飞书配对 E3 尚未执行，不能把本地 E2 记作通过。
