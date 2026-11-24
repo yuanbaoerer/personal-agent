@@ -4,6 +4,7 @@ All notable changes are recorded here. This project does not yet have a stable r
 
 ## Unreleased
 
+- The bound Feishu owner can pair an explicitly opened omp session on the Node host through a private Unix socket. Workspace edits, exact one-shot mobile test approvals, progress and cancellation run against that terminal rather than granting the server shell access. Paired turns are excluded from the general Router transcript.
 - Added `node scripts/session-usage.ts <pi.sqlite snapshot> <sessionId>...` for read-only MVP acceptance evidence. It separates measured session tokens from unknown totals and does not estimate billing or change the runtime budget.
 - Plan step deadlines (#126): every dispatched step attempt now persists an absolute deadline no later than `now + step.timeoutMs` and the parent task deadline. A queued attempt past its deadline is failed before any Worker session opens, a running attempt expires its assignment and is rejected if a report arrives late, and a replayed dispatch keeps the original persisted deadline. Deadline equality counts as expired; late results cannot complete the step or unlock dependents. 637 deterministic tests pass.
 - An explicit chat request for a plan can save a draft without an existing task (#123). The draft parent and steps persist atomically; querying and revising the draft does not dispatch Workers or grant tool access.

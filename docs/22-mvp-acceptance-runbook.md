@@ -199,3 +199,20 @@ node scripts/session-usage.ts /path/to/backup/pi.sqlite 12 34
 - E1：CX-01/PL-01/PL-02 的确定性测试与逐用例状态见 [2026-11-22 · Conversational & Autonomous Planning E1 record](acceptance/2026-11-22-conversational-planning-e1.md)。
 - 2026-11-23：空会话草稿（#125）与步骤时限（#127）合并，全量 637 个确定性测试通过；未新增 E3/E4，C04/C11 仍为 PARTIAL，下一步仍是同一次只读运行中的最终报告与真实飞书收件。
 - E3/E4：**C01–C03 已 PASS（E3）；C04/C11 PARTIAL**。2026-11-22 在合并后 main 上完成前置步骤与真实飞书 C01–C03；随后配置只读 GitHub、绑定 `personal-agent` 并执行 C04：Plan `e1ba272e` 的 A/B 两步均通过 `github-read`（file、issues、pulls，14 条结构化 claim），C 在 3 次尝试内未产出最终报告，plan paused；全程 23 个 `github.read` GET、0 POST。另修复 verifier 的 CJK 标点 URL 解析缺陷（PR #119）。C05–C10 仍待后续；C12 无真实成本数据；E4 未测。C06/C07 的代码接线已补：补充会生成新 active 版本与 PlanDiff，可重试的外部失败有一次自动恢复版本（`pa_plans.auto_replans`，schema 26），权限失败转 `needs_review`；但真实 Feishu 补充、429/head-drift E3 与进程重启 E4 仍需重跑并记录本节。证据见 [runbook execution](acceptance/2026-11-22-conversational-planning-runbook.md)。不得把 A/B 或 PARTIAL 记作 C04/C11 PASS 或完整 Pilot 通过；其余 E3/E4 不得据 E1 或 C01–C03 结果宣称 Pilot 通过。
+
+## 10. 飞书配对 omp
+
+按 [README 的本机配对步骤](../README.md#飞书使用本机-omp)准备一个干净的测试工作区，留下一个可复现的失败测试。不要使用生产凭据、业务库或待发布分支。此项检验交互式编程；不要求启用 GitHub 写权限。
+
+| 步骤 | owner 操作 | 通过判据 |
+| --- | --- | --- |
+| 配对 | 终端核对工作目录和权限；在绑定的飞书私聊发送终端配对码。 | 回复显示预期工作区；错误码、群聊和非 owner 均不能提交工作。 |
+| 改动与验证 | 指定失败测试，要求只修实现；核对飞书显示的工具、目录、命令，再允许该次检查。 | 独立检查文件差异；同一工作区的测试由失败变成通过；飞书收到实际工具进度和结论。不能把模型回复当测试日志。 |
+| 追问 | 不重复文件名或问题背景，要求说明刚才的修复。 | 同一 omp 会话引用本轮修改，而非另开 Router Task 猜答案。 |
+| 停止与撤权 | 在等待测试审批时 `/code stop`，再尝试旧审批号；本地断开连接，再从飞书发送普通文字。 | 旧审批不能启动测试；断线不转发、不重放，未确认的在途副作用按未知处理。`/code leave` 后恢复普通助手。 |
+
+**本次本地证据（E2，非真实飞书交付）**：macOS Intel、Node 26.12.0、Bun 1.4.5、omp 19.1.1，模型 `opencode-go/deepseek-v4.1-flash`。临时工作区的 `sum(2,3)` 原返回 `-1`；合成飞书文本事件经 FeishuAdapter、owner ingress、Router 和真实 Unix socket 到达真实 omp。它读写 `sum.mjs`，收到针对 `node --test check.test.mjs` 的一次批准后执行测试，工具返回成功；独立运行该测试也从退出码 1 变为 0。下一轮无需重述即可答回前一轮的标记。结果进了本地 Outbox，未发送到真实飞书。Provider 费用未采集。
+
+同一次隔离验收的第三轮在等待新的测试审批时收到 `/code stop`，随后用旧审批号不能完成该轮。Node 入口另以合成配置启动，`/healthz` 返回 200、Unix socket 权限 `0600`。Relay 和会话窗口的 16 个定向用例均通过，涵盖 owner/私聊隔离、超时/重复审批、重启不重放及编程文本不进入普通 Router 历史。
+
+E3 需另记实际服务 SHA、去标识化的飞书入站和出站消息 ID、同一工作区的 diff 与测试结果；勿附配对码、审批号、私聊原文或密钥。本次按 owner 选择不启动真实飞书实例。

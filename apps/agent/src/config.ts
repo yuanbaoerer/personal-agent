@@ -56,6 +56,8 @@ export interface AppConfig {
   skillsDir?: string;
   /** Optional read-only MCP server config JSON. */
   mcpConfigPath?: string;
+  /** Node-only private Unix socket; never a TCP listener. */
+  codingSocket?: string;
   eventMode: FeishuEventMode;
   feishu: FeishuConfig;
   outbox: {
@@ -250,6 +252,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     ownerOpenId: read("OWNER_FEISHU_OPEN_ID"),
     skillsDir: read("PA_SKILLS_DIR"),
     mcpConfigPath: read("PA_MCP_CONFIG"),
+    codingSocket: read("PA_CODING_SOCKET"),
     eventMode: eventModeRaw,
     feishu: {
       appId,
