@@ -268,7 +268,7 @@ MAGPIE_MIN_REMAINING_PERCENT=5
 | 草稿与确认 | 创建只写 draft；确认前不排期。草稿回复展示频率、时区、目标（仓库或内部状态）、内容、收件会话、截止时间 | 命令草稿/确认测试 |
 | 修改与撤销 | edit 整包替换并 `status=draft, version+1, next_run_at=NULL`；pause/resume/cancel 均按 owner；修改后必须重新确认 | 生命周期测试 |
 | 时间计算 | IANA 墙钟；daily/weekdays/weekly；weekly 需 weekday；DST 春季缺口跳过、秋季重复取第一次；工作日跳周末；错过 >1h 不补跑；`--until` 结束日含 23:59:59.999 | `schedule-policy.test.ts` DST/weekday/边界测试 |
-| 幂等触发 | `source_key=schedule:<policyId>:<scheduledAt>` + Task 唯一键；`pa_schedule_policy_runs(policy_id, scheduled_at)` 抢占；advance 对 `next_run_at` CAS；崩溃窗口可复用 run | 重复 fire、run→task、错过窗口测试 |
+| 幂等触发 | `source_key=schedule:<policyId>:<scheduledAt>` + Task 唯一键；`pa_schedule_policy_runs(policy_id, scheduled_at)` 抢占；advance 对 `next_run_at` CAS；崩溃窗口可复用 run | 重复 fire、run→task、错过窗口、子进程 SIGKILL 后重启测试 |
 | 计划授权 | Task 记录 `schedule_policy_id`；GitHub Action 记录 policy/version + 精确 repo；内部状态 Action 记录 policy/version；active、版本匹配且未过期时自动批准；无后续触发而进入 expired 的最终已派工任务仍可在 expiresAt 前完成该次读取；其他提案拒绝而非审批卡；执行前再次核验 | 自动批准、out-of-plan repo 拒绝、edit/pause/最终触发后执行测试 |
 | 内部状态日报 | `internal` 计划无 repo，创建 `state.summary` + `state` resource 任务，completion criteria 使用 state-read verifier；owner 范围状态读取自动批准但绑定 policy/version | `schedule-policy.test.ts` internal 测试、state-tools 验证 |
 | 宿主唤醒 | `confirm/resume` 立即 `wake()`；DO maintenance 的 `#nextDueAt` 纳入 policy 并重算最早时间；Node 1s 轮询 | 类型检查/wiring；真实 alarm 待验证 |

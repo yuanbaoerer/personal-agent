@@ -83,6 +83,62 @@ sqlite3 data/agent.sqlite "select verification_json from pa_tasks order by creat
 - 发送 `/schedule new internal 09:00 daily 汇总当前任务与提醒`，检查目标为“内部状态”；触发后任务 mandate 只含 `state.summary`/`state`，输出计数与 `/status` 一致，且无 GitHub 读取。暂停或编辑计划后，未执行的 `state.summary` 应在执行前被拒绝。
 - 激活无人值守计划前必须先完成 #7/#28 预算与安全门槛。
 
+### 4.1 Schedule E3 命令（weekly / internal）
+
+前置：Node 服务已启动，owner 私聊已绑定，真实模型 key 已配置；`BUDGET_MAX_MODEL_CALLS_PER_DAY` 已设置（未设置时无人值守计划会以 `budget_unknown` 跳过）。数据库默认 `data/agent.sqlite`，`<id>` 为 `/schedule new` 返回的计划 ID。
+
+**A. weekly GitHub 只读摘要**
+
+```text
+/schedule new owner/name 09:00 weekly 检查待处理 PR 与 CI --dow=mon --tz=Asia/Shanghai --until=2026-12-31
+/schedule confirm <id>
+/schedule list
+```
+
+预期：草稿显示“每周周一”、仓库、时区、截止；确认后 `active`，`next_run_at` 为下一个周一 09:00（Asia/Shanghai）。到点后核对：
+
+```sh
+sqlite3 data/agent.sqlite "select id,status,next_run_at,last_run_at from pa_schedule_policies where id='<id>';"
+sqlite3 data/agent.sqlite "select scheduled_at,task_id,status from pa_schedule_policy_runs where policy_id='<id>' order by scheduled_at;"
+sqlite3 data/agent.sqlite "select id,status,goal from pa_tasks where schedule_policy_id='<id>';"
+```
+
+记录飞书 `platform_message_id`、task/trace；预期 1 个 run → 1 个 task，重复 maintenance 或重启不新增 task。
+
+**B. internal 内部状态日报**
+
+```text
+/schedule new internal 09:00 daily 汇总当前任务与提醒 --tz=Asia/Shanghai --until=2026-12-31
+/schedule confirm <id>
+```
+
+到点后核对：
+
+```sh
+sqlite3 data/agent.sqlite "select id,goal,completion_criteria,mandate_json from pa_tasks where schedule_policy_id='<id>';"
+sqlite3 data/agent.sqlite "select tool,status from pa_actions where task_id='<task-id>';"
+```
+
+预期：目标显示“内部状态”；mandate 只含 `state.summary` + `state`，completion criteria 为 `state-read`/`state_snapshot`；日报中的任务/提醒计数与 `/status` 和快照一致；无 `github.read`，零写入。
+
+**C. 暂停/编辑竞态**
+
+在 Worker 提出 `state.summary` 前执行：
+
+```text
+/schedule pause <id>
+```
+
+预期：未执行的读取提案被拒绝；无新 Action，或 Action 在执行前被标记 `superseded`。编辑计划后退回 draft，必须重新 `/schedule confirm`。
+
+**D. E4 重启**
+
+在周期任务等待/执行中 `kill -9 <node-pid>`，重启服务；核对 `pa_schedule_policy_runs` 与 `pa_tasks` 仍各 1 条，不重复建任务。记录 kill 时间、恢复时间、run/task/outbox 状态。
+
+**E. 费用与预算**
+
+记录一次完整运行的 `/usage`（tokens、provider/catalog 费用、耗时）；未采集时标记 unknown，不填 0。设置 `BUDGET_MAX_MODEL_CALLS_PER_DAY` 和 owner Provider 费用上限；超额/撤权/未知时计划必须跳过或暂停，不发新模型请求。
+
 ## 5. 证据记录
 
 每次验收在 #41 记录：
