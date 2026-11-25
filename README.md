@@ -4,7 +4,7 @@ Personal Agent 是单 owner 自托管助手。默认 Node 服务通过飞书私�
 
 ## 当前实现
 
-以下核对到 2026-11-25 的 schedule 扩展（E1）。[当前 MVP 实施队列](docs/21-mvp-functional-ready.md#4-剩余实施队列)列出已交付项、负责人和下一项验收。**E1 是确定性测试，E3 是指定场景的真实使用，E4 是故障恢复证据**；一个场景通过，不替另一个场景签收。
+以下核对到 2026-11-25 的 schedule 扩展（E1；[#137](https://github.com/yuanbaoerer/personal-agent/pull/137) / [#138](https://github.com/yuanbaoerer/personal-agent/pull/138) 已合并）。[当前 MVP 实施队列](docs/21-mvp-functional-ready.md#4-剩余实施队列)列出已交付项、负责人和下一项验收。**E1 是确定性测试，E3 是指定场景的真实使用，E4 是故障恢复证据**；一个场景通过，不替另一个场景签收。
 
 | 工作线 | 已合并或已验证 | 未通过的门槛 / 跟踪 |
 | --- | --- | --- |
