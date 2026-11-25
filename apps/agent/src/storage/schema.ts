@@ -727,6 +727,63 @@ const migrations: readonly (readonly MigrationStatement[])[] = [
       PRIMARY KEY (source, session_id)
     ) STRICT`,
   ],
+  [
+    // Weekly cadence and owner-scoped internal status reports need a wider
+    // cadence CHECK, a kind, and an optional weekday. SQLite cannot alter the
+    // CHECK in place, so rebuild the policy table and its run ledger while
+    // preserving existing GitHub policies and run history.
+    `ALTER TABLE pa_schedule_policies RENAME TO pa_schedule_policies_old`,
+    `ALTER TABLE pa_schedule_policy_runs RENAME TO pa_schedule_policy_runs_old`,
+    `CREATE TABLE pa_schedule_policies (
+      id TEXT PRIMARY KEY,
+      owner_id TEXT NOT NULL,
+      conversation_id TEXT NOT NULL,
+      kind TEXT NOT NULL DEFAULT 'github' CHECK (kind IN ('github', 'internal')),
+      timezone TEXT NOT NULL,
+      cadence TEXT NOT NULL CHECK (cadence IN ('daily', 'weekdays', 'weekly')),
+      weekday INTEGER CHECK (weekday IS NULL OR (weekday BETWEEN 0 AND 6)),
+      local_time TEXT NOT NULL,
+      repo TEXT NOT NULL DEFAULT '',
+      goal TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (
+        status IN ('draft', 'active', 'paused', 'cancelled', 'expired')
+      ),
+      version INTEGER NOT NULL,
+      expires_at TEXT NOT NULL,
+      next_run_at TEXT,
+      last_run_at TEXT,
+      confirmed_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      CHECK (kind <> 'github' OR length(repo) > 0),
+      CHECK (kind <> 'internal' OR repo = ''),
+      CHECK (cadence <> 'weekly' OR weekday IS NOT NULL)
+    ) STRICT`,
+    `INSERT INTO pa_schedule_policies
+       (id, owner_id, conversation_id, kind, timezone, cadence, weekday,
+        local_time, repo, goal, status, version, expires_at, next_run_at,
+        last_run_at, confirmed_at, created_at, updated_at)
+     SELECT id, owner_id, conversation_id, 'github', timezone, cadence, NULL,
+            local_time, repo, goal, status, version, expires_at, next_run_at,
+            last_run_at, confirmed_at, created_at, updated_at
+     FROM pa_schedule_policies_old`,
+    `CREATE TABLE pa_schedule_policy_runs (
+      policy_id TEXT NOT NULL REFERENCES pa_schedule_policies(id),
+      scheduled_at TEXT NOT NULL,
+      task_id TEXT,
+      status TEXT NOT NULL CHECK (status IN ('dispatched', 'skipped')),
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (policy_id, scheduled_at)
+    ) STRICT`,
+    `INSERT INTO pa_schedule_policy_runs
+       (policy_id, scheduled_at, task_id, status, created_at)
+     SELECT policy_id, scheduled_at, task_id, status, created_at
+     FROM pa_schedule_policy_runs_old`,
+    `DROP TABLE pa_schedule_policy_runs_old`,
+    `DROP TABLE pa_schedule_policies_old`,
+    `CREATE INDEX pa_schedule_policies_due_idx
+       ON pa_schedule_policies (status, next_run_at)`,
+  ],
 ];
 
 /** Highest schema version this build can read/migrate. */

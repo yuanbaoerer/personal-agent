@@ -8,6 +8,10 @@ import type {
 } from "../domain/types.ts";
 import type { TaskRepository } from "../storage/tasks.ts";
 import {
+  scheduleCadenceLabel,
+  scheduleTargetLabel,
+} from "./intent-format.ts";
+import {
   formatStateSummary,
   type StateSnapshot,
 } from "../actions/state.ts";
@@ -462,7 +466,7 @@ export function resolveScheduleReference(
   const matches = eligible.filter(
     (policy) =>
       matchesReference(value, policy.id, policy.goal) ||
-      matchesReference(value, policy.id, policy.repo) ||
+      matchesReference(value, policy.id, scheduleTargetLabel(policy)) ||
       matchesReference(value, policy.id, policy.localTime),
   );
   if (matches.length === 1) {
@@ -494,7 +498,7 @@ export function formatScheduleCandidates(
       : "匹配到多个周期计划，请给出计划编号后再取消：",
     ...candidates.slice(0, AMBIGUOUS_LIST_LIMIT).map(
       (policy) =>
-        `- ${policy.id.slice(0, 8)} [${policy.status}] ${policy.cadence} ${policy.localTime} ${policy.repo} ${policy.goal}`,
+        `- ${policy.id.slice(0, 8)} [${policy.status}] ${scheduleCadenceLabel(policy)} ${policy.localTime} ${scheduleTargetLabel(policy)} ${policy.goal}`,
     ),
   ].join("\n");
 }
@@ -787,11 +791,21 @@ export function formatStateQuery(snapshot: StateSnapshot, timezone: string): str
       lines.push(pageHeader(body, "周期计划"));
       for (const policy of schedules) {
         const id = stringOf(policy, "id")?.slice(0, 8) ?? "?";
-        const cadence = stringOf(policy, "cadence") === "weekdays" ? "工作日" : "每天";
+        const cadenceRaw = stringOf(policy, "cadence");
+        const weekday = numberLike(policy, "weekday");
+        const cadence =
+          cadenceRaw === "weekdays"
+            ? "工作日"
+            : cadenceRaw === "weekly"
+              ? `每周${["周日", "周一", "周二", "周三", "周四", "周五", "周六"][weekday ?? 1] ?? ""}`
+              : "每天";
         const localTime = stringOf(policy, "localTime") ?? "?";
         const tz = stringOf(policy, "timezone") ?? timezone;
         const status = stringOf(policy, "status") ?? "?";
-        const repo = stringOf(policy, "repo") ?? "?";
+        const repo =
+          stringOf(policy, "kind") === "internal"
+            ? "内部状态"
+            : stringOf(policy, "repo") ?? "?";
         const goal = stringOf(policy, "goal") ?? "";
         const next = stringOf(policy, "nextRunAt");
         const expires = stringOf(policy, "expiresAt") ?? "";

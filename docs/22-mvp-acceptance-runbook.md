@@ -79,6 +79,8 @@ sqlite3 data/agent.sqlite "select verification_json from pa_tasks order by creat
 
 - 发送 `记住 我的编辑器是 vim`，确认卡片后回复 `/确认 <id>`，再发送 `我记住了什么`。
 - 发送 `每个工作日 09:00 总结 owner/name 的 PR`，检查草稿展示仓库、频率、时区、接收会话、截止日期；回复 `确认计划 <编号>` 后才激活。
+- 发送 `/schedule new owner/name 09:00 weekly 检查 PR --dow=mon`，检查草稿显示“每周周一”；缺少 `--dow` 时应拒绝。
+- 发送 `/schedule new internal 09:00 daily 汇总当前任务与提醒`，检查目标为“内部状态”；触发后任务 mandate 只含 `state.summary`/`state`，输出计数与 `/status` 一致，且无 GitHub 读取。暂停或编辑计划后，未执行的 `state.summary` 应在执行前被拒绝。
 - 激活无人值守计划前必须先完成 #7/#28 预算与安全门槛。
 
 ## 5. 证据记录

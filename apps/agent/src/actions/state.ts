@@ -880,10 +880,12 @@ function scheduleBrief(policy: SchedulePolicyRecord): Record<string, unknown> {
   return {
     id: policy.id,
     status: policy.status,
+    kind: policy.kind,
     cadence: policy.cadence,
+    weekday: policy.weekday ?? null,
     localTime: policy.localTime,
     timezone: policy.timezone,
-    repo: policy.repo,
+    repo: policy.kind === "internal" ? null : policy.repo,
     goal: truncate(policy.goal, TEXT_LIMIT),
     version: policy.version,
     nextRunAt: policy.nextRunAt ?? null,

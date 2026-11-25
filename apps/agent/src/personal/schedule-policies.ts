@@ -1,5 +1,6 @@
 import type {
   ScheduleCadence,
+  ScheduleKind,
   SchedulePolicyRecord,
   TaskRecord,
 } from "../domain/types.ts";
@@ -42,9 +43,12 @@ export interface SchedulePolicyDeps {
 }
 
 export interface ScheduleDraftInput {
-  repo: string;
+  kind?: ScheduleKind;
+  repo?: string;
   localTime: string;
   cadence: ScheduleCadence;
+  /** 0 = Sunday … 6 = Saturday; required when cadence is weekly. */
+  weekday?: number;
   goal: string;
   timezone?: string;
   /** Local calendar date (YYYY-MM-DD) for the last day the plan may fire. */
@@ -163,9 +167,19 @@ export function nextScheduledAt(
   timezone: string,
   cadence: ScheduleCadence,
   localTime: string,
+  weekday?: number,
 ): string | undefined {
   const after = new Date(afterIso);
   if (Number.isNaN(after.getTime())) {
+    return undefined;
+  }
+  if (
+    cadence === "weekly" &&
+    (weekday === undefined ||
+      !Number.isInteger(weekday) ||
+      weekday < 0 ||
+      weekday > 6)
+  ) {
     return undefined;
   }
   const time = parseLocalTime(localTime);
@@ -176,6 +190,9 @@ export function nextScheduledAt(
   for (let offset = 0; offset <= 8; offset += 1) {
     const day = addLocalDays(start.year, start.month, start.day, offset);
     if (cadence === "weekdays" && (day.weekday === 0 || day.weekday === 6)) {
+      continue;
+    }
+    if (cadence === "weekly" && day.weekday !== weekday) {
       continue;
     }
     const candidate = localToUtc(
@@ -249,9 +266,11 @@ export class SchedulePolicyService {
       createdAt: now.toISOString(),
     });
     this.#audit("schedule_policy.drafted", policy, now, {
+      kind: policy.kind,
       repo: policy.repo,
       localTime: policy.localTime,
       cadence: policy.cadence,
+      weekday: policy.weekday,
       timezone: policy.timezone,
       expiresAt: policy.expiresAt,
       version: policy.version,
@@ -268,7 +287,7 @@ export class SchedulePolicyService {
       return { ok: false, reason: `计划当前状态为 ${policy.status}，只有草稿可以确认。` };
     }
     const now = this.#now();
-    if (!this.#repoStillAllowed(policy.repo)) {
+    if (policy.kind === "github" && !this.#repoStillAllowed(policy.repo)) {
       return { ok: false, reason: "仓库已不在 GITHUB_ALLOWED_REPOS 白名单内。" };
     }
     if (policy.expiresAt <= now.toISOString()) {
@@ -280,6 +299,7 @@ export class SchedulePolicyService {
       policy.timezone,
       policy.cadence,
       policy.localTime,
+      policy.weekday,
     );
     if (next === undefined) {
       return { ok: false, reason: "无法计算下次触发时间。" };
@@ -310,7 +330,7 @@ export class SchedulePolicyService {
     if (policy === undefined) {
       return { ok: false, reason: "找不到属于你的计划。" };
     }
-    const validated = this.#validate(input, policy.timezone);
+    const validated = this.#validate(input, policy.timezone, policy.kind);
     if (!validated.ok) {
       return validated;
     }
@@ -328,9 +348,11 @@ export class SchedulePolicyService {
       fromVersion: policy.version,
       version: updated.version,
       status: updated.status,
+      kind: updated.kind,
       repo: updated.repo,
       localTime: updated.localTime,
       cadence: updated.cadence,
+      weekday: updated.weekday,
       expiresAt: updated.expiresAt,
     });
     return { ok: true, policy: updated };
@@ -359,15 +381,19 @@ export class SchedulePolicyService {
     if (policy.status !== "paused") {
       return { ok: false, reason: `计划当前状态为 ${policy.status}，无法恢复。` };
     }
-    if (policy.expiresAt <= now.toISOString() || !this.#repoStillAllowed(policy.repo)) {
+    if (
+      policy.expiresAt <= now.toISOString() ||
+      (policy.kind === "github" && !this.#repoStillAllowed(policy.repo))
+    ) {
       this.#policies.markExpired(policy.id, now.toISOString());
-      return { ok: false, reason: "计划已过期或仓库不再被允许。" };
+      return { ok: false, reason: "计划已过期或授权范围已失效。" };
     }
     const next = nextScheduledAt(
       now.toISOString(),
       policy.timezone,
       policy.cadence,
       policy.localTime,
+      policy.weekday,
     );
     if (next === undefined || next > policy.expiresAt) {
       this.#policies.markExpired(policy.id, now.toISOString());
@@ -419,6 +445,47 @@ export class SchedulePolicyService {
   }
 
   /**
+   * A confirmed active plan authorizes only its owner, version and unexpired
+   * scope. A policy that expired because the final occurrence was dispatched
+   * still authorizes that occurrence's task until the expiry timestamp, so
+   * the final report is not lost. Internal plans have no repo; GitHub plans
+   * also require the current allowlist.
+   */
+  runAuthorization(
+    policyId: string,
+    ownerId: string,
+    version?: number,
+    taskId?: string,
+  ): SchedulePolicyRecord | undefined {
+    const policy = this.#policies.get(policyId);
+    const now = this.#now().toISOString();
+    if (
+      policy === undefined ||
+      policy.ownerId !== ownerId ||
+      (version !== undefined && policy.version !== version)
+    ) {
+      return undefined;
+    }
+    if (policy.status === "expired") {
+      if (policy.expiresAt <= now || taskId === undefined) {
+        return undefined;
+      }
+      const finalRun = this.#policies
+        .listRuns(policy.id)
+        .some((run) => run.taskId === taskId && run.status === "dispatched");
+      if (!finalRun) {
+        return undefined;
+      }
+    } else if (policy.status !== "active" || policy.expiresAt <= now) {
+      return undefined;
+    }
+    if (policy.kind === "github" && !this.#repoStillAllowed(policy.repo)) {
+      return undefined;
+    }
+    return policy;
+  }
+
+  /**
    * A confirmed active plan authorizes only its exact repo, owner and version.
    * Called by ActionService before auto-approval and again before execution.
    */
@@ -427,16 +494,13 @@ export class SchedulePolicyService {
     ownerId: string,
     repo: string,
     version?: number,
+    taskId?: string,
   ): SchedulePolicyRecord | undefined {
-    const policy = this.#policies.get(policyId);
+    const policy = this.runAuthorization(policyId, ownerId, version, taskId);
     if (
       policy === undefined ||
-      policy.status !== "active" ||
-      policy.ownerId !== ownerId ||
-      policy.repo !== repo.trim().toLowerCase() ||
-      !this.#repoStillAllowed(policy.repo) ||
-      policy.expiresAt <= this.#now().toISOString() ||
-      (version !== undefined && policy.version !== version)
+      policy.kind !== "github" ||
+      policy.repo !== repo.trim().toLowerCase()
     ) {
       return undefined;
     }
@@ -506,7 +570,7 @@ export class SchedulePolicyService {
     }
     const scheduledAt = policy.nextRunAt;
     const nowIso = now.toISOString();
-    if (!this.#repoStillAllowed(policy.repo)) {
+    if (policy.kind === "github" && !this.#repoStillAllowed(policy.repo)) {
       this.#policies.markExpired(policy.id, nowIso);
       this.#audit("schedule_policy.expired", policy, now, {
         scheduledAt,
@@ -532,7 +596,11 @@ export class SchedulePolicyService {
       return 0;
     }
 
-    if (this.#capabilities !== undefined && this.#capabilities.toolInfo("github.read") === undefined) {
+    const requiredTool = policy.kind === "github" ? "github.read" : "state.summary";
+    if (
+      this.#capabilities !== undefined &&
+      this.#capabilities.toolInfo(requiredTool) === undefined
+    ) {
       this.#policies.recordRun(policy.id, scheduledAt, "skipped", undefined, nowIso);
       this.#advanceAfterRun(policy, scheduledAt, now, undefined, nowIso);
       this.#audit("schedule_policy.skipped", policy, now, {
@@ -562,16 +630,31 @@ export class SchedulePolicyService {
       conversationId: policy.conversationId,
       sourceKey: this.#runKey(policy.id, scheduledAt),
       goal: this.#taskGoal(policy),
-      completionCriteria: JSON.stringify({
-        verifier: "github-read",
-        repo: policy.repo,
-        requiredEvidenceKinds: ["github"],
-      }),
-      mandate: {
-        resources: ["chat", "github"],
-        tools: ["github.read"],
-        notes: `由已确认的周期计划 ${policy.id}（版本 ${policy.version}）授权只读访问 ${policy.repo}`,
-      },
+      completionCriteria: JSON.stringify(
+        policy.kind === "github"
+          ? {
+              verifier: "github-read",
+              repo: policy.repo,
+              requiredEvidenceKinds: ["github"],
+            }
+          : {
+              verifier: "state-read",
+              requiredEvidenceKinds: ["state_snapshot"],
+              requireStructuredClaims: true,
+            },
+      ),
+      mandate:
+        policy.kind === "github"
+          ? {
+              resources: ["chat", "github"],
+              tools: ["github.read"],
+              notes: `由已确认的周期计划 ${policy.id}（版本 ${policy.version}）授权只读访问 ${policy.repo}`,
+            }
+          : {
+              resources: ["chat", "state"],
+              tools: ["state.summary"],
+              notes: `由已确认的周期计划 ${policy.id}（版本 ${policy.version}）授权读取 owner 内部状态`,
+            },
       schedulePolicyId: policy.id,
     });
     this.#policies.attachTask(policy.id, scheduledAt, task.id);
@@ -597,6 +680,7 @@ export class SchedulePolicyService {
       policy.timezone,
       policy.cadence,
       policy.localTime,
+      policy.weekday,
     );
     const nextRunAt = next !== undefined && next <= policy.expiresAt ? next : undefined;
     const advanced = this.#policies.advance(
@@ -620,6 +704,13 @@ export class SchedulePolicyService {
   }
 
   #taskGoal(policy: SchedulePolicyRecord): string {
+    if (policy.kind === "internal") {
+      return [
+        `内部状态日报：${policy.goal}`,
+        "只使用 state.summary 读取当前 owner 的任务与提醒状态；不要提出写操作。",
+        `列出关键计数、待处理任务和即将到期提醒，并引用 state_snapshot 的 snapshotHash。计划 ${policy.id}，版本 ${policy.version}。`,
+      ].join("\n");
+    }
     return [
       `周期检查 ${policy.repo}：${policy.goal}`,
       `只使用 github.read 读取 ${policy.repo}；不要提出写操作。`,
@@ -630,12 +721,15 @@ export class SchedulePolicyService {
   #validate(
     input: ScheduleDraftInput,
     fallbackTimezone?: string,
+    fallbackKind: ScheduleKind = "github",
   ):
     | {
         ok: true;
         value: {
+          kind: ScheduleKind;
           timezone: string;
           cadence: ScheduleCadence;
+          weekday?: number;
           localTime: string;
           repo: string;
           goal: string;
@@ -649,18 +743,48 @@ export class SchedulePolicyService {
     } catch {
       return { ok: false, reason: "时区无效，请使用 IANA 名称，例如 Asia/Shanghai。" };
     }
-    if (input.cadence !== "daily" && input.cadence !== "weekdays") {
-      return { ok: false, reason: "频率应为 daily 或 weekdays。" };
+    const kind: ScheduleKind = input.kind ?? fallbackKind;
+    if (kind !== "github" && kind !== "internal") {
+      return { ok: false, reason: "计划类型应为 github 或 internal。" };
+    }
+    if (
+      input.cadence !== "daily" &&
+      input.cadence !== "weekdays" &&
+      input.cadence !== "weekly"
+    ) {
+      return { ok: false, reason: "频率应为 daily、weekdays 或 weekly。" };
     }
     if (parseLocalTime(input.localTime) === undefined) {
       return { ok: false, reason: "时间应为 HH:MM（24 小时制）。" };
     }
-    const repo = input.repo.trim().toLowerCase();
-    if (!REPO_PATTERN.test(repo) || repo.split("/").some((part) => part === "." || part === "..")) {
-      return { ok: false, reason: "仓库格式应为 owner/name。" };
+    let weekday: number | undefined;
+    if (input.cadence === "weekly") {
+      if (
+        input.weekday === undefined ||
+        !Number.isInteger(input.weekday) ||
+        input.weekday < 0 ||
+        input.weekday > 6
+      ) {
+        return { ok: false, reason: "weekly 计划需要 weekday（0=周日 … 6=周六）。" };
+      }
+      weekday = input.weekday;
+    } else if (input.weekday !== undefined) {
+      return { ok: false, reason: "只有 weekly 计划需要 weekday。" };
     }
-    if (!this.#repoStillAllowed(repo)) {
-      return { ok: false, reason: "仓库不在 GITHUB_ALLOWED_REPOS 白名单内。" };
+    let repo = "";
+    if (kind === "github") {
+      repo = (input.repo ?? "").trim().toLowerCase();
+      if (
+        !REPO_PATTERN.test(repo) ||
+        repo.split("/").some((part) => part === "." || part === "..")
+      ) {
+        return { ok: false, reason: "仓库格式应为 owner/name。" };
+      }
+      if (!this.#repoStillAllowed(repo)) {
+        return { ok: false, reason: "仓库不在 GITHUB_ALLOWED_REPOS 白名单内。" };
+      }
+    } else if ((input.repo ?? "").trim().length > 0) {
+      return { ok: false, reason: "内部状态计划不接受仓库参数。" };
     }
     const goal = input.goal.trim();
     if (goal.length === 0 || goal.length > 2_000) {
@@ -682,7 +806,16 @@ export class SchedulePolicyService {
     }
     return {
       ok: true,
-      value: { timezone, cadence: input.cadence, localTime: input.localTime, repo, goal, expiresAt },
+      value: {
+        kind,
+        timezone,
+        cadence: input.cadence,
+        ...(weekday === undefined ? {} : { weekday }),
+        localTime: input.localTime,
+        repo,
+        goal,
+        expiresAt,
+      },
     };
   }
 
