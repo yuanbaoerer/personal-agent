@@ -282,3 +282,7 @@ ModelPolicy      = 用哪个模型、满足什么能力、花费多少、怎样�
 
 ## 11. Multi-Harness integration（2026-11-24，设计补充）
 [30](30-multi-harness-worker-runtime.md) 将 ModelPolicy 解析与 HarnessInstance 执行绑定分离。MODEL-01 仍负责 native Pi session model binding、ModelCatalog 与角色配置，并复用统一 ExecutionBinding；MODEL-02 仍负责真实 Gateway 推理协议/路由/用量验证，而非现有 MagpieBudget 监控；MODEL-03 动态候选后置。外部 Harness 按其已验证的原生认证、直接 Provider 或 Gateway 配置能力注入；不可覆盖模型时必须显式标记，不能宣称任意模型组合。区分 requested / selected / observed model，严格预算 unknown fail-closed。多实例独立配置与凭据，不修改全局配置。禁止网关成为 Task 权威。
+
+## 12. Dual Gateway boundary（2026-11-27，目标设计）
+
+[31 · Dual Gateway Architecture](31-dual-gateway-architecture.md) 明确 Model Gateway 仅承担推理与模型策略相关能力；独立 Tool Gateway 复用 Extension Platform 与 Core ActionService。Magpie 的模型端点与 MCP Router 端点是独立的可选 Adapter、分别验证配置/身份/作用域/数据出站；不能因模型 Gateway 已连接而授予工具权限。保留 direct/native auth，MODEL-01–03 与现有验收不变。
