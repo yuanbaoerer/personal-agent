@@ -214,3 +214,7 @@ Evidence per case: base SHA, driver/model/provider/version/OS, E-level per [08](
 ## 10. Deferred choices / owner checkpoints
 
 First external driver and exact upstream protocol/versions, isolation backend for macOS/Windows/Linux, per-model auth/service terms, actual sandbox test repo, budget thresholds, model selection and remote runner transport need owner confirmation/real spikes. Default fixed binding, Node first, Codex first candidate, no automatic PR merge, no third-party executable installation, no new scheduler or gateway server are this proposal's recommended decisions. No implementation or credentials granted by merging this doc. No actual upstream/runtime tests were executed for this design review.
+
+## 11. Dual Gateway integration（2026-11-27，设计补充）
+
+[31 · Dual Gateway Architecture](31-dual-gateway-architecture.md) extends the target diagram with a separate Tool Gateway plane backed by the existing Extension Platform and Core ActionService. Resolve a scoped ToolBinding alongside Model binding per Assignment; both planes are optional external adapters, not mandatory proxies. Native/auth direct inference and native typed tools remain available. External Harness tool access must be enforceably scoped; generic MCP wrappers cannot bypass concrete leaf authorization. DG-02 depends on MH-01/02 and DG-01; DG-03/04 discovery and Code Mode follow only after isolation and authorization evidence. MH-00–06, existing K/SEC tests and release gates remain unchanged.
