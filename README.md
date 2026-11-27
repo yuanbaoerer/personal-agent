@@ -391,3 +391,7 @@ npm run real:multi
 ## Multi-Harness Worker Runtime（目标设计，未实现）
 
 [30 · Multi-Harness Worker Runtime & Model Gateway Integration](docs/30-multi-harness-worker-runtime.md) — 自定义 Worker Profile、Codex / Pi / OMP / Claude Code / ACP Harness、独立 Provider / 可选 magpie Gateway 与 Model binding；保留 One Core 和现有授权、恢复、预算门槛。当前默认仍是内置 Pi Runtime；第三方组合需逐项真实验证。
+
+## Dual Gateway Architecture（目标设计，未实现）
+
+[31 · Model & Tool Gateway](docs/31-dual-gateway-architecture.md) — One Core / 多 Harness Worker / Model Gateway / Tool Gateway 的统一目标结构与 Mermaid 架构图。复用现有 ModelPolicy、PluginCatalog、Credential Broker、ExtensionPolicy、MCP Host 与 ActionService；优先验证可选 Magpie MCP Router，随后按授权发现工具、评估受限 Code Mode。原生/直连路径保留。DG-00–05 实施包、DG01–12 验收、独立 Review 与安全边界见设计文档；不改变当前 MVP 队列及真实验收门槛。
