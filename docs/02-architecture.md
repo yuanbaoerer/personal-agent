@@ -368,3 +368,7 @@ Coding Profile 不自动开放 Shell、文件写入或 Git push；Organization �
 
 ## 15. Multi-Harness Worker Runtime（2026-11-24，目标架构）
 新增 [30 · Multi-Harness Worker Runtime](30-multi-harness-worker-runtime.md) 作为 #63 / MODEL-01–03 细化契约。One Core 不变：WorkerProfile（角色及配置）→ HarnessInstance（执行引擎）→ ProviderInstance / ModelRef（推理配置）。保留现有 AgentRuntime v1，通过 RuntimeRouter 与持久 Assignment ExecutionBinding 扩展；Router 保留内置 Pi，外部 Coding Agent 逐个真实验证。Worker Profile 不另设权限/Task DB/调度器；现有 Mandate、Action、revision、input seq、fencing、全局双 Worker 名额和独立 Verifier 继续有效。外部 CLI 必须落实文件/网络/凭据/进程隔离，Worktree 本身不构成 Sandbox。Node 首发，DO 不声称支持本地 CLI。默认固定绑定、magpie 可选，动态路由后置。本文原单模型/单 Runtime 约束仍为当前实现基线，不是长期限制。
+
+## 16. Dual Gateway Architecture（2026-11-27，目标设计）
+
+[31 · Dual Gateway Architecture](31-dual-gateway-architecture.md) 将 Multi-Harness Worker 的模型与工具能力明确划分为 Model Gateway 和 Tool Gateway 两个逻辑平面。前者复用 [13](13-model-routing-gateway.md)，后者复用 [25](25-extension-platform.md)/[26](26-mcp-host.md) 的 Catalog、Credential Broker、ExtensionPolicy 与 MCP Host。Core 继续掌握 Mandate、Action/Approval、预算、Plan、Review、Verifier、恢复与审计；Gateway 不构成独立权限主体。可选外部 Magpie，保留原生/直连路径。DG-00–05 及 DG01–12 验收见 31；不改变 MVP/L2/L3 门禁，不宣称已实现。

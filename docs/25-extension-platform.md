@@ -130,3 +130,7 @@ EXT01–10 见 #73：manifest/冲突、无 GitHub Core 正常、Node 不重启�
 
 ## 13. Runtime extension kind（2026-11-24）
 [30](30-multi-harness-worker-runtime.md) 明确 Driver / HarnessInstance / ProviderInstance / WorkerProfile 的分离。现有 BuiltinPlugin.createTools 是工具型 V1 契约，不直接用它模拟 Runtime。增量引入受信 Runtime extension kind，复用 ExtensionPolicy、generation fence、凭据及审计；Core 持有 Registry/RuntimeRouter/Assignment lifecycle，具体 Adapter 插件化。先内置、可信已安装 driver，再由 EXT V2 证明第三方隔离/ABI，V3 分发；禁用时需 fence 旧绑定、取消/隔离并核对在途任务。ACP 负责 Agent 控制，MCP 负责工具接入，不互相替代。#73 的生态门槛不变。
+
+## 14. Tool Gateway plane（2026-11-27，目标设计）
+
+[31 · Dual Gateway Architecture](31-dual-gateway-architecture.md) 将现有 Extension Platform 的 ToolRegistry/PluginCatalog、Credential Broker、ExtensionPolicy、MCP Host 组织为统一 Tool Gateway façade。#69 首先验证可选外部 MCP Router 的只读接入；#70 协同授权后的动态发现、后续受限 Code Mode 与 Skill 沉淀；#63 负责每 Worker binding 和实际隔离；#71/#73 负责长期 SDK/生态。Core ActionService 仍逐个叶子工具重核权限和参数；不允许通用 MCP 写穿透，不允许 Skill 自行启用执行代码。DG-00–05 不改变 EXT01–10 验收或 MVP/L2 优先级，现有只读 MCP 契约仍适用。
